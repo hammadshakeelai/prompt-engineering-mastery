@@ -226,6 +226,26 @@ In high-throughput speculative decoding (Leviathan-style Local-Mask Speculative 
 - **Deterministic Token Leapfrogging:** Grammar states with out-degree 1 (e.g., fixed JSON syntax `": "`, `"status": "`, `}`) are emitted deterministically by draft models with an empirical acceptance rate of **100%**.
 - **Distribution-Preserving Verification:** Target models verify speculative draft tokens against both the language model logits and the grammar state machine in parallel, accelerating structured agentic workflows by 2.5x–4.5x with provable distributional guarantees.
 
+***
+
+## 14. Causal Tracing & Null-Space Model Editing: From MEMIT to AlphaEdit (ICLR 2025)
+
+### 14.1 Causal Tracing of Factual Associations
+Meng et al. (*ROME*, NeurIPS 2022; *MEMIT*, ICLR 2023) established that Transformers store factual associations (Subject, Relation, Object) as associative key-value pairs localized within intermediate Multi-Layer Perceptron (MLP) down-projection layers $W_{\text{proj}}$.
+- **Locate Step (Causal Mediation Analysis):** Corrupts subject token embeddings with Gaussian noise, then restores activations layer-by-layer across intermediate positions. MLP modules at the final subject token act as decisive causal bottlenecks that recall the target factual entity.
+- **Edit Step (Rank-One Updates):** Computes weight updates $\Delta W = (v^* - W k) (C^{-1} k)^T$ to insert new memories by directly rewriting key-value associations without backpropagation.
+
+### 14.2 The Forgetting Problem & AlphaEdit Null-Space Projection (ICLR 2025)
+While MEMIT enabled mass editing of thousands of facts, sequential editing suffered from catastrophic interference: subsequent updates gradually degraded and corrupted the model's non-edited, preserved factual knowledge.
+
+**AlphaEdit (ICLR 2025 Outstanding Paper)** mathematically guarantees non-interference via null-space projection:
+- **Null-Space Constraint:** Let $K_0 = [k_1, k_2, \dots, k_N]$ be the key representation matrix of preserved knowledge. AlphaEdit requires that the weight edit $\Delta W$ lies entirely within the null space of $K_0$:
+  $$\Delta W \cdot K_0 = 0 \implies (W + \Delta W) K_0 = W K_0$$
+- **Projection Formulation:** Projecting the unconstrained edit $\Delta W_{\text{raw}}$ onto the null space using the orthogonal projection operator:
+  $$\Delta W = \Delta W_{\text{raw}} \left( I - K_0 (K_0^T K_0)^{-1} K_0^T \right)$$
+- **Empirical Superiority:** AlphaEdit improves editing benchmark performance by **+36.7%**, completely eliminating catastrophic forgetting across thousands of sequential knowledge updates while preserving general model fluency.
+
+
 
 
 
