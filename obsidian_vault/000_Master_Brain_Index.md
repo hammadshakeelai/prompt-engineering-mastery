@@ -233,6 +233,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/token_smuggling_evasion.md|Token Smuggling Evasion]]
 - [[raw_research/snippets/tool_use.md|Tool Use]]
 - [[raw_research/snippets/toolformer_gorilla.md|Toolformer Gorilla]]
+- [[raw_research/snippets/topk_sparse_autoencoders.md|Topk Sparse Autoencoders]]
 - [[raw_research/snippets/transformerlens_activation_patching.md|Transformerlens Activation Patching]]
 - [[raw_research/snippets/universal_self_consistency.md|Universal Self Consistency]]
 - [[raw_research/snippets/visual_cot_and_spatial_prompting.md|Visual Cot And Spatial Prompting]]
