@@ -243,6 +243,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/structured_outputs_frontier.md|Structured Outputs Frontier]]
 - [[raw_research/snippets/sycophancy.md|Sycophancy]]
 - [[raw_research/snippets/synchromesh_constrained_semantic_decoding.md|Synchromesh Constrained Semantic Decoding]]
+- [[raw_research/snippets/syncode_dfa_mask_stores.md|Syncode Dfa Mask Stores]]
 - [[raw_research/snippets/synthetic_data_generation.md|Synthetic Data Generation]]
 - [[raw_research/snippets/tabular_data_prompting.md|Tabular Data Prompting]]
 - [[raw_research/snippets/test_time_compute_ext.md|Test Time Compute Ext]]

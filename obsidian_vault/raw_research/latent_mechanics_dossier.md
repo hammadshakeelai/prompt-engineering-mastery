@@ -1080,6 +1080,43 @@ Guangxuan Xiao et al. (*DuoAttention: Efficient Long-Context LLM Inference with 
 - **Decoding Latency Speedup:** Decreases decoding latency by **$1.7\times\text{--}2.2\times$** and prefilling latency by **$1.4\times\text{--}1.8\times$** due to reduced HBM memory fetch volume.
 - **3.3 Million Token Scaling:** Composed with 4-bit KV quantization, DuoAttention enables a full LLaMA-3-8B model to process up to **3.3 million tokens on a single 80GB NVIDIA A100 GPU**.
 
+***
+
+## 43. DFA Mask Stores & Incremental Lookahead Parsing (SynCode, Ugare et al., TMLR 2024)
+
+### 43.1 The Computational Complexity of Context-Free Grammar Masking
+Enforcing Context-Free Grammars (CFGs) during autoregressive decoding requires computing the set of syntactically legal next tokens $\mathcal{V}_{\text{valid}}(x_{<t}) \subseteq \mathcal{V}$ at every generation step $t$.
+Existing frameworks exhibit steep scalability trade-offs:
+- **Dynamic Regex Union Bottleneck (FSM-Based, e.g., Outlines):** Compiling union regular expressions $\bigcup_{\tau \in \text{Follow}} r_\tau$ at every step causes combinatorial state explosion when grammars contain recursive or nested rules, making full programming language grammars (e.g., Python, Go) intractable.
+- **Step-Wise Parser Traversals (Earley / Trie-Based, e.g., LLGuidance):** Traversing prefix tries over the full vocabulary $\mathcal{O}(|\mathcal{V}|)$ on every subword token incurs non-trivial CPU serialization overhead ($0.5\text{--}5\,\text{ms}$ per token), throttling GPU utilization in high-throughput serving engines.
+
+### 43.2 The SynCode Architecture & DFA Mask Store
+Shubham Ugare et al. (*SynCode: Grammar-Guided Generation via Context-Free Parsing with Lookahead*, UIUC / TMLR 2024) formulate **SynCode**, an algorithm that decouples lexical DFA simulation from runtime syntax parsing via precomputed mask stores:
+
+1. **Terminal DFA & Lookahead Separation:**
+   A CFG $G = (V, \Sigma, R, S)$ defines syntactic production rules over terminal symbols $\Sigma$, while each terminal $\tau \in \Sigma$ is defined by a regular expression over the character alphabet.
+   SynCode compiles all terminal regular expressions into a single consolidated Deterministic Finite Automaton (DFA) $\mathcal{A} = (Q, \Sigma_{\text{char}}, \delta, q_0, F)$.
+
+2. **The Offline DFA Mask Store:**
+   Before inference, SynCode evaluates the transition behavior of all vocabulary tokens $v \in \mathcal{V}$ through $\mathcal{A}$. For every DFA state $q \in Q$ and every subset of acceptable terminals $\mathcal{T} \subseteq \Sigma$, SynCode precomputes a Boolean bitmask:
+   $$\mathbf{M}(q, \tau) \in \{0, 1\}^{|\mathcal{V}|}$$
+   where $\mathbf{M}(q, \tau)[v] = 1$ if feeding subword token $v$ starting from state $q$ drives the automaton into an accepting state for terminal $\tau$ (or leaves it in an active prefix state that can complete $\tau$).
+   These precomputed bitmasks are stored contiguously in GPU/CPU memory as a **DFA Mask Store**.
+
+3. **Incremental Lookahead LR Parsing:**
+   During autoregressive inference:
+   - SynCode maintains an incremental LR parser stack representing current derivation state $\mathcal{S}_t$.
+   - When sampling next tokens, the LR parser queries its parse table to retrieve the exact set of valid next terminals: $\mathcal{T}_{\text{valid}} = \text{Follow}(\mathcal{S}_t)$.
+   - Instead of running string traversals, the valid vocabulary mask $\mathbf{M}_{\text{step}}$ is synthesized via vectorized bitwise OR operations over the precomputed masks:
+     $$\mathbf{M}_{\text{step}} = \bigvee_{\tau \in \mathcal{T}_{\text{valid}}} \mathbf{M}(q_{\text{curr}}, \tau)$$
+   - The bitwise union evaluates in microseconds ($\sim 12\,\mu\text{s}$ for $|\mathcal{V}| = 128\text{k}$ on modern SIMD hardware), completely eliminating runtime parsing latency.
+
+### 43.3 Theoretical Guarantees & Empirical Results
+- **Soundness and Completeness:** SynCode mathematically guarantees that every completed sequence belongs to the formal grammar $\mathcal{L}(G)$ (soundness) and that no syntactically valid sequence is prematurely masked or blocked (completeness).
+- **Zero Syntax Errors on Complex Languages:** Evaluated across Python, Go, and SQL benchmarks (HumanEval, MBPP, Spider), SynCode achieves **$0\%$ syntax error rates**, completely eliminating indentation errors, unclosed brackets, and illegal keyword sequences.
+- **$2\times\text{--}5\times$ Speedup Over Dynamic Parsers:** By replacing runtime AST traversals with single-instruction bitwise mask retrieval, SynCode matches unconstrained decoding throughput within $3\%\text{--}6\%$ wall-clock overhead.
+
+
 
 
 
