@@ -107,6 +107,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/deepseek_r1_prompting.md|Deepseek R1 Prompting]]
 - [[raw_research/snippets/diffusion_trajectory_search_mctd.md|Diffusion Trajectory Search Mctd]]
 - [[raw_research/snippets/directional_stimulus_prompting.md|Directional Stimulus Prompting]]
+- [[raw_research/snippets/domino_subword_aligned_constraints.md|Domino Subword Aligned Constraints]]
 - [[raw_research/snippets/dora_weight_decomposed.md|Dora Weight Decomposed]]
 - [[raw_research/snippets/dpo_math_formulation.md|Dpo Math Formulation]]
 - [[raw_research/snippets/dual_llm_pattern.md|Dual Llm Pattern]]

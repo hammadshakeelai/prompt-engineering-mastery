@@ -978,6 +978,40 @@ Yifei Cai et al. (*PyramidKV: Dynamic KV Cache Compression based on Pyramidal In
 - **Superiority in Extreme Low-Memory Regimes:** Under aggressive compression retaining only **$0.7\%$** of the KV cache, uniform baselines (SnapKV, H2O) experience catastrophic accuracy collapse ($<15\%$ retrieval on Needle-in-a-Haystack), whereas PyramidKV achieves $>80\%$ retrieval accuracy by preserving wide attention coverage in early layers.
 - **Tuning-Free Deployment:** Operates as a pure post-training inference optimization requiring zero model fine-tuning or architectural modifications.
 
+***
+
+## 40. Subword-Aligned Grammar Constraints & Subterminal Trees (DOMINO, Beurer-Kellner et al., 2024)
+
+### 40.1 The Subword Misalignment Pathology
+Formal grammars (CFGs, JSON Schemas, AST specifications) operate on the level of characters and atomic terminals (tokens in compiler theory, e.g., `STRING_LITERAL`, `NUMBER`, `IDENTIFIER`). In contrast, autoregressive language models generate subword tokens derived from statistical Byte-Pair Encoding (BPE) or WordPiece algorithms.
+When conventional constrained decoding engines enforce grammar rules via character-level or token-level masks:
+- **Token Misalignment Tax:** A grammar rule may permit a character that truncates a natural BPE subword. For example, when opening a JSON string `"city": "New York"`, an unaligned parser may restrict the next token to valid characters, preventing the model from emitting multi-character subwords like ` York` and forcing inefficient single-byte emissions (` `, `Y`, `o`, `r`, `k`).
+- **Probability Distortion:** Forcing sub-optimal tokenization shifts the model out of its trained distribution, degrading factual accuracy and reasoning coherence even while strictly adhering to the grammar syntax.
+
+### 40.2 The DOMINO Architecture & Subterminal Trees
+Luca Beurer-Kellner, Marc Fischer, and Martin Vechev (*Guiding LLMs The Right Way: Fast, Non-Invasive Constrained Generation*, ETH Zurich / arXiv:2403.01895, 2024) formulate **DOMINO**, an algorithm that guarantees non-invasive, subword-aligned grammar constraints with zero runtime overhead:
+
+1. **Subterminal Classification:**
+   Every vocabulary token $t \in \mathcal{V}$ is partitioned relative to the lexer/scanner automata corresponding to grammar terminals:
+   - **Start Subterminals ($\mathcal{S}$):** Tokens whose character prefixes begin a valid terminal from an inter-terminal scanner state.
+   - **Continuation Subterminals ($\mathcal{C}$):** Tokens that strictly extend an active terminal without triggering a scanner transition or syntax reduction.
+   - **End Subterminals ($\mathcal{E}$):** Tokens that cleanly finalize the current terminal, allowing immediate reduction and transition in the underlying Pushdown Automaton (PDA).
+
+2. **Offline Subterminal Tree Construction:**
+   Before inference, DOMINO precomputes a **Subterminal Tree** over the model vocabulary $\mathcal{V}$ and the target grammar terminals:
+   - Nodes represent scanner and lexer match states.
+   - Edges correspond to subword tokens.
+   - Paths through the tree identify valid sequences of subwords that form complete, admissible terminals without requiring character-by-character regular expression re-evaluations during generation.
+
+3. **Fast Speculative Jump Decoding:**
+   - When the LLM decodes inside an active terminal (e.g., inside an unclosed string or identifier), DOMINO queries the subterminal tree in $\mathcal{O}(1)$ time to retrieve the valid subword continuation mask.
+   - Deterministic tokens dictated by grammar syntax (e.g., colons, commas, opening/closing braces) are inserted speculatively without invoking the underlying neural model, executing jump-forward bypasses that accelerate inference.
+
+### 40.3 Empirical Performance & Zero-Overhead Guarantees
+- **Non-Invasive Distribution Preservation:** DOMINO eliminates the token misalignment tax, preserving identical top-1 predictions and perplexity on natural subword paths while achieving $100\%$ grammatical correctness.
+- **Inference Speedup:** In contrast to naive PDA/Earley maskers that slow generation by $2\times\text{--}10\times$, DOMINO incurs **zero latency overhead** and achieves up to **$1.5\times\text{--}2.1\times$ wall-clock speedups** over unconstrained generation on structured JSON and code generation benchmarks due to deterministic token skipping.
+
+
 
 
 
