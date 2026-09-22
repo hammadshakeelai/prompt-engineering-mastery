@@ -1045,6 +1045,42 @@ Recent breakthroughs in multimodal mechanistic interpretability (e.g., *JSAE: Jo
 - **Multimodal Hallucination Suppression:** Intervening on over-active object latents in medical VLMs (e.g., chest X-ray report generation) reduces visual object hallucinations by **$42.6\%$** without degrading overall text generation fluency or clinical BLEU/CIDEr scores.
 - **Causal Zero-Shot Robot Steering:** Applied to Vision-Language-Action (VLA) foundation models, S&P Top-K steering along identified motion-primitive latents enables programmatic direction of robotic manipulator trajectories directly through residual activation addition.
 
+***
+
+## 42. Head-Level Asymmetry & Dual KV Caching (DuoAttention, Xiao et al., MIT 2024 / ICLR 2025)
+
+### 42.1 The Head-Uniform KV Cache Fallacy
+Modern long-context inference engines maintain a full Key-Value cache for every attention head in the network. For sequence length $T$, hidden dimension $d$, and $L$ layers, this demands:
+$$\text{Memory}_{\text{MHA}} = 2 \cdot L \cdot H \cdot T \cdot d_{\text{head}} \cdot b$$
+Existing KV cache compression algorithms (e.g., [[h2o_heavy_hitter_submodular_kv|H2O]], [[streaming_llm_sinks|StreamingLLM]]) apply uniform eviction policies to all heads simultaneously. However, mechanistic probing of long-context attention distributions reveals profound **head-level functional specialization**:
+- **Streaming Heads ($\sim 70\%\text{--}80\%$ of heads):** These heads focus strictly on immediate local n-grams and initial attention sinks ($x_{1:4}$). Their attention scores to historical middle tokens decay rapidly to zero, rendering long-context KV history completely unused.
+- **Retrieval Heads ($\sim 20\%\text{--}30\%$ of heads):** A small, highly specialized subset of heads maintains global, long-distance attention pathways, actively retrieving factual needles and distant dependencies across million-token spans.
+
+### 42.2 The DuoAttention Architecture & Head Pruning Mechanics
+Guangxuan Xiao et al. (*DuoAttention: Efficient Long-Context LLM Inference with Retrieval and Streaming Heads*, MIT / ICLR 2025) exploit this functional dichotomy by bifurcating the KV cache policy at the head level:
+
+1. **Automated Head Identification via Optimization:**
+   DuoAttention learns binary head masks $\mathbf{m} \in \{0, 1\}^{L \times H}$ identifying retrieval vs. streaming heads via continuous relaxation with a sparsity penalty:
+   $$\min_{\mathbf{m}} \mathcal{L}_{\text{task}}(\theta; \mathbf{m}) + \gamma \|\mathbf{m}\|_0$$
+   where $m_{l, h} = 1$ designates a **Retrieval Head** and $m_{l, h} = 0$ designates a **Streaming Head**.
+
+2. **Dual-Cache Allocation Policy:**
+   During autoregressive prefilling and decoding:
+   - **Retrieval Heads ($m_{l, h} = 1$):** Allocated a standard full KV cache across all $T$ positions:
+     $$\text{Cache}_{\text{retrieval}} \in \mathbb{R}^{T \times d_{\text{head}}}$$
+   - **Streaming Heads ($m_{l, h} = 0$):** Allocated a minimal constant-size rolling buffer retaining only $S_{\text{sink}}$ initial tokens and $W_{\text{local}}$ recent tokens:
+     $$\text{Cache}_{\text{streaming}} \in \mathbb{R}^{(S_{\text{sink}} + W_{\text{local}}) \times d_{\text{head}}}$$
+     where typically $S_{\text{sink}} = 4$ and $W_{\text{local}} = 512$, independent of whether $T = 32\text{k}$ or $T = 1\text{M}$.
+
+3. **Hardware-Aligned Kernel Execution:**
+   In contrast to token-level eviction methods that introduce irregular sparse index gathers, DuoAttention's head-level partition maps directly to dense, contiguous GPU memory blocks, executing natively within FlashAttention-2/3 kernels without scatter-gather memory bandwidth overhead.
+
+### 42.3 Empirical Performance & Long-Context Scaling
+- **Substantial Memory Reduction:** Achieves **$2.55\times$ KV cache reduction** on Multi-Head Attention (MHA) and **$1.67\times$ reduction** on Grouped-Query Attention (GQA) with zero degradation on LongBench, Ruler, and Needle-in-a-Haystack benchmarks.
+- **Decoding Latency Speedup:** Decreases decoding latency by **$1.7\times\text{--}2.2\times$** and prefilling latency by **$1.4\times\text{--}1.8\times$** due to reduced HBM memory fetch volume.
+- **3.3 Million Token Scaling:** Composed with 4-bit KV quantization, DuoAttention enables a full LLaMA-3-8B model to process up to **3.3 million tokens on a single 80GB NVIDIA A100 GPU**.
+
+
 
 
 
