@@ -518,6 +518,35 @@ A parallel phenomenon was discovered in Vision Transformers by Timothée Darcet 
 - **Background Patch Exploitation:** Because non-causal bidirectional ViTs have no temporal initial token, the model repurposes arbitrary low-information background patches as "computational registers" to store global scene statistics, generating high-norm activation artifacts in feature maps.
 - **Learnable Register Tokens:** Prepending $4\text{--}8$ explicit, learnable register tokens $[REG]_1, \dots, [REG]_k$ to the visual patch sequence completely eliminates feature artifacts, cleans up object segmentation maps, and stabilizes downstream representation probing.
 
+***
+
+## 25. Token Boundary Bias & Token Healing in Grammar-Constrained Decoding (2023–2026)
+
+### 25.1 Greedy Tokenization & The Token Boundary Problem
+Subword tokenizers (Byte-Pair Encoding, WordPiece) construct vocabulary embeddings greedily by recursively merging frequent adjacent character pairs. While highly efficient for full text blocks, greedy tokenization creates a severe **Token Boundary Bias** when prompts terminate at arbitrary character boundaries:
+- **The Compound Token Dilemma:** Consider a prompt ending with the characters `"http:"`. A greedy BPE tokenizer encodes this as two tokens: `["http", ":"]`.
+- However, standard pre-training corpora contain the single compound token `["http://"]`.
+- Because the prompt already committed to `":"` as a distinct token, the model is mathematically precluded from emitting `["http://"]`. Instead, it is artificially forced to emit `["//"]` or `["/"]`, which frequently possesses a significantly lower prior probability in training distributions.
+- **Syntactic Disruption:** In code generation and structured formats, trailing whitespace (e.g., `def ` vs. `def`), markdown markers, or quote delimiters trigger artificial token fragmentation, degrading downstream reasoning accuracy.
+
+### 25.2 The Token-Healing Algorithm (Lundberg et al., Microsoft Guidance)
+Scott Lundberg et al. (*Guidance*, 2023) developed **Token Healing** to eliminate token boundary bias by dynamically re-aligning the prompt-completion interface:
+1. **Boundary Rollback:** The inference engine pops the terminal token $t_N$ from the prompt context, recovering its raw string representation:
+   $$s = \text{decode}(t_N)$$
+2. **Prefix-Constrained Sampling:** The prompt is truncated to $t_1, \dots, t_{N-1}$. During the very first decoding step, sampling is constrained via a Trie bitmask to tokens whose byte sequence begins with $s$:
+   $$\mathcal{V}_{\text{healed}} = \{ v \in \mathcal{V} \mid \text{decode}(v) \text{ has prefix } s \}$$
+3. **Boundary Synthesis:**
+   - If the model assigns highest probability to a compound token (e.g., `["http://"]`), the boundary is seamlessly healed into a single high-probability token.
+   - If the model prefers the standalone token, it samples $t_N$ again and proceeds normally.
+
+### 25.3 Formal Grammar Co-Design (CFG / FSM Integration)
+When enforcing structured outputs (JSON schemas, regexes, EBNF grammars) via engines like **LLGuidance** or **Outlines**:
+- Token healing is unified with the parser's prefix Trie traversal.
+- The constraint bitmask at step 1 is the intersection:
+  $$\text{Mask}_1 = \text{Mask}_{\text{healed}}(s) \cap \text{Mask}_{\text{grammar}}(\text{State}_0)$$
+- This guarantees that generation never fails due to an awkward tokenizer boundary, eliminating syntax validation errors in structured multi-turn agent pipelines.
+
+
 
 
 
