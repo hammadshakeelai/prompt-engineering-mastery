@@ -152,3 +152,22 @@ Mu et al. (*Gist Tokens*, NeurIPS 2023 / 2024 extensions) implement the IB princ
 - **Modified Attention Masking:** Natural language prompt tokens are mapped into $K$ virtual gist tokens $\mathcal{G} = [g_1, \dots, g_K]$ inserted at prompt boundaries. An attention mask prevents subsequent response tokens from attending to the raw prompt $X$, forcing information to route exclusively through the gist bottleneck $\mathcal{G}$.
 - **Cross-Attention Compaction:** For multi-turn agents, conversation history is distilled into fixed-length gist vectors cached in Key-Value memory. This compresses context by up to 26x, preserving downstream reasoning while reducing quadratic KV cache expansion to a constant $O(K)$ footprint.
 
+***
+
+## 10. Bitmask Automata & Zero-Overhead Grammar Constrained Decoding: XGrammar (2024–2026)
+
+### 10.1 The Computational Cost of Naive Logit Masking
+First-generation constrained decoding engines (Outlines, Guidance, Lark) relied on regex DFAs or dynamic CFG parsers that re-evaluated the entire vocabulary (32k–128k+ tokens) at every autoregressive forward pass. This per-token parsing step introduced severe latency penalties (often 10x–50x slower than unconstrained generation), rendering grammar constraints impractical for high-throughput serving and agentic loops.
+
+### 10.2 Algorithmic Innovations in XGrammar (CMU / MLC-AI, 2024–2026)
+XGrammar eliminated this bottleneck, achieving up to 100x faster execution and "near-zero overhead" structured generation adopted natively across **vLLM, SGLang, and TensorRT-LLM**:
+- **Pre-Compiled Bitmask Automata:** JSON schemas and context-free grammars (CFGs) are compiled offline into optimized bitmask transition tables. Valid token transitions are represented as dense GPU bitmasks rather than evaluated through dynamic pointer-chasing parsers.
+- **Vocabulary Partitioning:** Partitions vocabulary tokens into context-independent tokens (whose syntax validity depends only on the current grammar state, pre-computable as static bitmasks) and context-dependent tokens (evaluated via lightweight persistent parsing stacks).
+- **Persistent Parser Stacks:** Maintains lightweight grammar execution stacks synchronized with the inference engine's KV-cache, completely avoiding redundant re-parsing during multi-token speculative verification and prefix caching.
+
+### 10.3 Integration with Speculative Decoding & Agent Workflows
+In modern agentic architectures, XGrammar bridges deterministic type safety and high inference throughput:
+- **Grammar-Guided Jump-Forward Decoding:** Because fixed syntax tokens (JSON delimiters, quotation marks, boolean keywords) have deterministic transitions in the grammar automaton, XGrammar permits speculative jump-forward generation, emitting multi-token sequences in a single forward pass without sampling.
+- **Structural Tags Protocol:** Standardizes tool-calling schemas and composable nested grammars for multi-agent handoffs, guaranteeing 100% syntactically valid JSON function arguments without retry loops or prompt repair costs.
+
+
