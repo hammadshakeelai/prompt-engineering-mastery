@@ -660,6 +660,37 @@ Gao et al. (*Scaling and Evaluating Sparse Autoencoders*, OpenAI 2024) eliminate
   $$x_{\text{steered}} = x + \alpha \cdot W_{\text{dec}}[:, j]$$
   exhibit linear, predictable behavioral steerability without needing empirical magnitude re-scaling or heuristic threshold clamping.
 
+***
+
+## 30. Decoder-Decoder Architectures & Single-Layer Global KV Caching (YOCO) (Sun et al., Microsoft 2024)
+
+### 30.1 The Multi-Layer KV Cache Explosion
+In standard autoregressive Transformers, every single attention layer $l \in [1, L]$ generates and stores independent Key and Value tensors for every sequence token $t \in [1, T]$:
+$$\text{Memory}_{\text{KV}} = 2 \cdot B \cdot L \cdot T \cdot n_{\text{heads}} \cdot d_{\text{head}} \cdot b$$
+- **The $L$-Layer Redundancy:** For an 8B–70B model with $L = 32\text{--}80$ layers, maintaining full KV caches across sequence lengths $T \ge 128\text{k}$ requires hundreds of gigabytes of high-bandwidth memory (HBM).
+- **Inference Imbalance:** Memory bandwidth spent fetching $L$ distinct KV matrices from HBM into SRAM at every decoding step dominates latency, while compute cores remain chronically underutilized.
+
+### 30.2 The YOCO Bipartite Topology
+Sun et al. (*You Only Cache Once: Decoder-Decoder Architectures for Large Language Models*, Microsoft Research, 2024) restructure the standard Transformer into an asymmetric bipartite **Decoder-Decoder** pipeline:
+1. **The Self-Decoder (First $L/2$ Layers):**
+   - Employs efficient local sliding-window attention with fixed window size $W \ll T$ (e.g., $W = 512$).
+   - KV states within the self-decoder are strictly transient: tokens outside window $W$ are dropped immediately from memory without persistence.
+   - Outputs intermediate contextual trunk representations $X_{\text{mid}} \in \mathbb{R}^{T \times d}$.
+2. **The Global KV Interface Layer:**
+   - At the interface between self-decoder and cross-decoder, a single global Key-Value cache is projected:
+     $$K_{\text{global}} = X_{\text{mid}} W_K, \quad V_{\text{global}} = X_{\text{mid}} W_V$$
+   - This represents the **only** global KV cache materialized across the entire network architecture.
+3. **The Cross-Decoder (Second $L/2$ Layers):**
+   - Each cross-decoder layer replaces standard causal self-attention with causal cross-attention targeting the shared interface cache:
+     $$\text{Attn}_l(Q_l) = \text{Softmax}\left( \frac{Q_l K_{\text{global}}^\top}{\sqrt{d}} + M_{\text{causal}} \right) V_{\text{global}}, \quad \forall l \in [L/2 + 1, L]$$
+   - Cross-decoder layers allocate **zero** private KV cache memory during autoregressive generation.
+
+### 30.3 Systems Impact & Empirical Scaling
+- **Extreme Memory Compression:** Reduces global KV cache storage from $L$ layers down to $1$ layer, achieving an immediate **$L/2 \approx 16\times\text{--}40\times$ reduction** in KV cache memory footprint.
+- **Prefill Early-Exit:** During prompt prefilling, global KV cache is fully written by layer $L/2$. Subsequent cross-decoder layers execute without needing to write to HBM, speeding up prefill throughput by $2.8\times$.
+- **Retrieval Invariance:** Evaluated on "Needle In A Haystack" benchmarks, YOCO maintains $100\%$ retrieval accuracy across context windows exceeding $1\text{,000,000 tokens}$, disproving the dogma that long-context modeling strictly requires layer-wise private KV matrices.
+
+
 
 
 

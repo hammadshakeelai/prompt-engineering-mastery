@@ -52,6 +52,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 ## 🪝 4. Research Hooks & Meta-Prompts
 - [[research_engine/critical_thinking_hook.md]]
 - [[research_engine/research_pivot_05.md]]
+- [[research_engine/research_pivot_06.md]]
 
 ## 🧩 5. Atomic Concept Snippets Knowledge Graph
 - [[raw_research/snippets/activation_steering_vectors.md|Activation Steering Vectors]]
@@ -159,6 +160,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/mt_bench_arena.md|Mt Bench Arena]]
 - [[raw_research/snippets/multi_agent_debate.md|Multi Agent Debate]]
 - [[raw_research/snippets/multi_query_retriever.md|Multi Query Retriever]]
+- [[raw_research/snippets/multi_token_prediction_mtp.md|Multi Token Prediction Mtp]]
 - [[raw_research/snippets/needle_in_haystack.md|Needle In Haystack]]
 - [[raw_research/snippets/negative_prompting.md|Negative Prompting]]
 - [[raw_research/snippets/o1_o3_prompting_rules.md|O1 O3 Prompting Rules]]
@@ -238,4 +240,5 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/universal_self_consistency.md|Universal Self Consistency]]
 - [[raw_research/snippets/visual_cot_and_spatial_prompting.md|Visual Cot And Spatial Prompting]]
 - [[raw_research/snippets/xgrammar_constrained_decoding.md|Xgrammar Constrained Decoding]]
+- [[raw_research/snippets/yoco_you_only_cache_once.md|Yoco You Only Cache Once]]
 - [[raw_research/snippets/zep_memory.md|Zep Memory]]
