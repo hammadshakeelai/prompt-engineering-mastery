@@ -389,9 +389,45 @@ Rimsky et al. (2023) formalized **Contrastive Activation Addition (CAA)** to ste
 ### 20.3 Forward Propagation Dynamics & Orthogonal Concept Ablation
 1. **Propagation Stability:** Because LayerNorm and residual connections preserve linear shifts, small perturbations $\alpha \cdot v_{\text{steer}}$ propagate through subsequent attention and MLP layers without destabilizing language fluency, provided:
    $$\|\alpha \cdot v_{\text{steer}}^{(l)}\|_2 \ll \|h^{(l)}\|_2$$
-2. **Orthogonal Concept Ablation:** To permanently neutralize unwanted behaviors (e.g., sycophancy or bias) rather than dynamically steering them:
-   $$h_{\text{ablated}}^{(l)} = h^{(l)} - \left( \langle h^{(l)}, \hat{v} \rangle \right) \hat{v} \quad \text{where } \hat{v} = \frac{v_{\text{steer}}}{\|v_{\text{steer}}\|_2}$$
-   This removes all projection along the concept axis, guaranteeing zero capability along that behavioral direction while preserving 99%+ of baseline benchmark performance.
+3. **Generalization Across Layers:** Intervening in layers $L/2$ to $3L/4$ yields optimal steering fidelity; earlier layers corrupt low-level syntax, while final layers trigger token distribution saturation.
+
+***
+
+## 21. Multi-Head Latent Attention (MLA) & Matrix Absorption Mechanics (DeepSeek 2024–2026)
+
+### 21.1 The KV Cache Memory Bandwidth Ceiling
+In large-scale serving architectures, generation is memory-bandwidth bound rather than compute bound. Multi-Head Attention (MHA) requires caching full Key and Value tensors for all heads:
+$$\text{Memory}_{\text{MHA}} = 2 \cdot B \cdot T \cdot n_{\text{heads}} \cdot d_h$$
+Grouped-Query Attention (GQA) reduces this by sharing $n_{kv}$ key-value heads among query heads ($n_{kv} \ll n_{\text{heads}}$), but still scales linearly with head count and causes capacity degradation in complex reasoning tasks.
+
+### 21.2 Low-Rank Latent Compression & Decoupled RoPE
+DeepSeek (*DeepSeek-V2 / V3 Technical Reports*, 2024) introduced **Multi-Head Latent Attention (MLA)**, which compresses the entire Key-Value space into a low-dimensional shared latent vector:
+- **Low-Rank Projection:**
+  $$c_t^{KV} = W^{DKV} h_t \quad \text{where } c_t^{KV} \in \mathbb{R}^{d_c}, \; d_c \ll n_h \cdot d_h$$
+  In DeepSeek-V3, $d_c = 512$ while total uncompressed KV dimensions would equal $128 \times 128 = 16,384$.
+- **The RoPE Decoupling Challenge:** Standard Rotary Position Embeddings apply non-linear position-dependent orthogonal rotations $R_{\Theta, t}$, which destroy the associativity required for matrix compression:
+  $$R_{\Theta, t} (W^{UK} c_t^{KV}) \ne W^{UK} (R_{\Theta, t} c_t^{KV})$$
+- **Decoupled Positional Keys:** MLA resolves this by factoring keys into compressed content and a tiny separate decoupled RoPE vector:
+  $$k_t^R = \text{RoPE}(W^{KR} h_t) \quad \text{where } k_t^R \in \mathbb{R}^{d_R}, \; d_R = 64$$
+- **Inference Cache Footprint:** For each token at each layer, the GPU caches only $[c_t^{KV}, k_t^R]$, totaling $512 + 64 = 576$ floating-point scalars—a **93.3% reduction** compared to MHA and **75%+ reduction** compared to GQA.
+
+### 21.3 Inference-Time Matrix Absorption (Zero Key/Value Materialization)
+During generation, MLA avoids ever decompressing the full Key and Value tensors in GPU High Bandwidth Memory through associative matrix absorption:
+
+1. **Query-Key Absorption:**
+   The content attention logit between query $t$ and cached token $j$ is:
+   $$\text{logit}_{t, j}^C = q_t^{C \top} k_j^C = \left( W^{UQ} c_t^Q \right)^\top \left( W^{UK} c_j^{KV} \right) = c_t^{Q \top} \left( W^{UQ \top} W^{UK} \right) c_j^{KV}$$
+   By pre-computing the absorbed projection matrix $W^{Q\_\text{abs}} = W^{UQ \top} W^{UK} \in \mathbb{R}^{d_q' \times d_c}$, the query is projected directly into latent space:
+   $$q_t^{\text{abs}} = c_t^Q W^{Q\_\text{abs}}$$
+   The dot product is evaluated directly between $q_t^{\text{abs}}$ and the cached latent $c_j^{KV}$. **The high-dimensional key tensor $K$ is never materialized.**
+
+2. **Value-Output Absorption:**
+   The attention-weighted output aggregation is:
+   $$O_t = \sum_j A_{t, j} v_j = \sum_j A_{t, j} \left( W^{UV} c_j^{KV} \right) = \left( \sum_j A_{t, j} c_j^{KV} \right) W^{UV \top} W^O$$
+   The model computes the weighted sum directly over the 512-dimensional cached vectors $c_j^{KV}$, and projects the aggregated vector once through the pre-multiplied absorbed output matrix $W^{O\_\text{abs}} = W^{UV \top} W^O$. **The high-dimensional value tensor $V$ is never materialized.**
+
+This allows inference kernels to run directly on the compact latent cache, achieving MHA-level expressive capacity with sub-GQA memory bandwidth requirements.
+
 
 
 

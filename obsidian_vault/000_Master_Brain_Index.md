@@ -146,6 +146,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/meta_prompting_programming.md|Meta Prompting Programming]]
 - [[raw_research/snippets/mha_vs_mqa_vs_gqa.md|Mha Vs Mqa Vs Gqa]]
 - [[raw_research/snippets/mixture_of_experts.md|Mixture Of Experts]]
+- [[raw_research/snippets/mla_matrix_absorption_mechanics.md|Mla Matrix Absorption Mechanics]]
 - [[raw_research/snippets/model_abliteration.md|Model Abliteration]]
 - [[raw_research/snippets/model_context_protocol_mcp.md|Model Context Protocol Mcp]]
 - [[raw_research/snippets/model_merging_slerp_ties_dare.md|Model Merging Slerp Ties Dare]]
