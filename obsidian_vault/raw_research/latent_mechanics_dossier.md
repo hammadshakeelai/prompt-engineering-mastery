@@ -690,6 +690,36 @@ Sun et al. (*You Only Cache Once: Decoder-Decoder Architectures for Large Langua
 - **Prefill Early-Exit:** During prompt prefilling, global KV cache is fully written by layer $L/2$. Subsequent cross-decoder layers execute without needing to write to HBM, speeding up prefill throughput by $2.8\times$.
 - **Retrieval Invariance:** Evaluated on "Needle In A Haystack" benchmarks, YOCO maintains $100\%$ retrieval accuracy across context windows exceeding $1\text{,000,000 tokens}$, disproving the dogma that long-context modeling strictly requires layer-wise private KV matrices.
 
+***
+
+## 31. Constrained Semantic Decoding (CSD) & Scope-Aware Generation (Synchromesh) (Poesia et al., ICLR 2022 / 2024–2026)
+
+### 31.1 The Context-Sensitive Semantic Void
+Grammar-constrained decoding frameworks (such as Outlines, SGLang cFSM, and llguidance) restrict LLM token emissions according to Context-Free Grammars (CFGs, Chomsky Type-2) or Regular Expressions (Type-3).
+- **The Semantic Hallucination Failure:** Real-world programming (Python, Rust, C++) and domain-specific query languages (SQL, GraphQL) are **Context-Sensitive** (Chomsky Type-1):
+  1. *Variable Scoping:* An identifier cannot be referenced before it is declared within an active lexical scope block.
+  2. *Type Soundness:* Operands must satisfy relational typing judgments ($\Gamma \vdash e_1 : \tau_1, \, \Gamma \vdash e_2 : \tau_2$).
+  3. *Relational Schema Compliance:* SQL column selections must exist within the schema of joined database tables.
+- **The CFG Blindspot:** A generated program can be 100% syntactically valid under a CFG parser while failing instantly at compile-time or runtime due to undeclared variables, schema non-existence, or incompatible type unification.
+
+### 31.2 Constrained Semantic Decoding (CSD) Architecture
+Poesia et al. (*Synchromesh: Reliable Code Generation from Pre-trained Language Models through Constrained Decoding*, ICLR 2022) formulate **Constrained Semantic Decoding (CSD)** to enforce context-sensitive semantic validity directly within the token generation loop:
+1. **Dynamic Semantic Execution State ($\sigma_t$):**
+   At decoding step $t$, CSD maintains a structured state tuple:
+   $$\sigma_t = (\mathcal{T}_t, \Gamma_t, \mathcal{S})$$
+   where $\mathcal{T}_t$ is the partial Abstract Syntax Tree (AST), $\Gamma_t$ is the active symbol table / lexical scope environment, and $\mathcal{S}$ is the external environment schema (e.g., relational tables or API type signatures).
+2. **Semantic Token Feasibility Predicate:**
+   A token $v \in \mathcal{V}$ is retained in the valid logit mask $\mathcal{V}_{\text{valid}}(x_{<t})$ if and only if there exists a valid sequence completion $y$ that is both syntactically parseable and semantically well-typed:
+   $$\mathcal{V}_{\text{valid}}(x_{<t}) = \{ v \in \mathcal{V} \mid \exists y \text{ s.t. } x_{<t} \circ v \circ y \in \mathcal{L}(\mathcal{G}) \land \text{WellTyped}(x_{<t} \circ v \circ y, \sigma_t) \}$$
+3. **Partial Program Type Inference:**
+   To evaluate incomplete tokens, CSD defines a conservative type-derivation relation $\Gamma_t \vdash_{\text{partial}} x_{<t} \circ v : \tau$. If no type unification exists (e.g., attempting to append a string method `.split()` to an integer variable), the token $v$ is masked to $-\infty$ immediately.
+
+### 31.3 Dynamic Scope-Trie Pruning & Zero-Error Compilation
+- **Dynamic Scope-Trie Intersection:** When the AST transitions into an identifier or attribute node, CSD extracts the valid subset of identifiers $\text{Symbols}(\sigma_t) \subseteq \Gamma_t$ and dynamically intersects their character prefixes with the model's vocabulary prefix trie. Subwords that would spell undeclared variables are eliminated before logit softmax.
+- **Elimination of Rollback Loops:** In SQL generation benchmarks (Spider, BIRD), CSD completely eliminates semantic runtime errors (table/column mismatch, group-by type inconsistencies), boosting first-pass execution accuracy from $61.2\%$ to $86.7\%$ without fine-tuning model weights.
+- **Neuro-Symbolic Unification:** Bridges generative neural probabilistic models with deterministic symbolic type checkers, providing mathematically guaranteed semantic safety at inference time.
+
+
 
 
 
