@@ -812,6 +812,39 @@ Samarin et al. (*LK Losses: Direct Acceptance Rate Optimization for Speculative 
 - **Enhanced Grammar Synergy:** In grammar-constrained generation (JSON/code), where the candidate set is already filtered to valid transitions, LK losses concentrate draft mass exclusively on the most likely valid tokens, driving grammar acceptance rates $\alpha_\mathcal{G}$ above $93\%$.
 - **Zero Runtime Overhead:** Delivers higher inference speedups purely by modifying the offline distillation objective, requiring zero additional FLOPs or memory during inference.
 
+***
+
+## 35. Copy Suppression Circuits, Negative Eigenvalues & Model Self-Repair (McDougall et al., 2023)
+
+### 35.1 The Over-Copying Dilemma in In-Context Learning
+In-context pattern completion is fundamentally powered by **Induction Heads** (Elhage et al., 2021), which attend to tokens that followed previous occurrences of the current token and copy them into the residual stream.
+- **The Repetition Pathology:** Unchecked, induction circuits induce degenerate repetition loops and severe overconfidence on spurious context matches.
+- **Negative Attention Heads:** Early circuit discoveries (e.g., Wang et al., 2022 on Indirect Object Identification) identified mysterious "Negative Heads" whose direct logit effects systematically favored *incorrect* completions, appearing paradoxical in optimized networks.
+
+### 35.2 The Copy Suppression Circuit Architecture
+Callum McDougall et al. (*Copy Suppression: Comprehensively Understanding an Attention Head*, arXiv:2312.04944, 2023) reverse-engineered the complete functional mechanics of these negative components, defining the **Copy Suppression Head** (e.g., L10H7 in GPT-2 Small, with structural analogues across LLaMA and Claude):
+1. **$QK$ Routing Mechanism:**
+   - The query projection detects that the residual stream is currently predicting candidate token $t$.
+   - The key projection matches prior occurrences of token $t$ in the prompt history:
+     $$A_{\text{dest}, \text{src}} = \text{Softmax}\left( \frac{x_{\text{dest}}^\top W_Q^\top W_K x_{\text{src}}}{\sqrt{d}} \right)$$
+   - Whenever earlier layers prepare to output token $t$, the head shifts substantial attention mass directly onto token $t$ in the prefix.
+2. **Negative $OV$ Projection to Unembedding Space:**
+   - The head reads the attended representation via value matrix $W_V$ and projects it back into the residual stream via output matrix $W_O$.
+   - Analyzing the composition of this output projection with the vocabulary unembedding matrix $W_U$:
+     $$M_{\text{direct}} = W_U^\top W_O W_V W_U \in \mathbb{R}^{|V| \times |V|}$$
+   - The diagonal elements of $M_{\text{direct}}$ are **strictly negative**:
+     $$\text{diag}(M_{\text{direct}})_{i, i} \ll 0, \quad \forall i \in \mathcal{V}$$
+   - Attending to token $t$ directly subtracts from its own output logit in the residual stream:
+     $$\Delta z_t = (W_U[:, t])^\top W_O W_V x_{\text{src}} < 0$$
+
+### 35.3 Calibration Mechanics & The "Self-Repair" Illusion
+- **Logit Calibration & Entropy Regularization:** Copy suppression acts as a dynamic logit damper. If earlier induction layers allocate disproportionate probability mass to a copied token ($P(t) \to 1.0$), the copy suppression head dampens $\Delta z_t$ proportionally, preserving well-calibrated epistemic uncertainty.
+- **Mechanistic Demystification of Self-Repair:**
+  - When upstream copying components are ablated (zeroed out), downstream performance exhibits an apparent "self-repair" resilience.
+  - McDougall et al. proved that self-repair is **not** an active compensatory feedback loop: ablating the upstream copy heads eliminates the signal that triggers the copy suppression head.
+  - As a result, the suppression head ceases firing ($\Delta z_t \to 0$), automatically lifting its inhibitory brake and preserving downstream accuracy without explicit coordination.
+
+
 
 
 

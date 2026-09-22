@@ -90,6 +90,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/continuous_batching_orca.md|Continuous Batching Orca]]
 - [[raw_research/snippets/contrastive_cot.md|Contrastive Cot]]
 - [[raw_research/snippets/contrastive_cot_pairs.md|Contrastive Cot Pairs]]
+- [[raw_research/snippets/copy_suppression_attention_heads.md|Copy Suppression Attention Heads]]
 - [[raw_research/snippets/cot_faithfulness.md|Cot Faithfulness]]
 - [[raw_research/snippets/cot_when_it_helps.md|Cot When It Helps]]
 - [[raw_research/snippets/cove_factored_verification.md|Cove Factored Verification]]
