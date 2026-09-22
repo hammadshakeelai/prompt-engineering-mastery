@@ -603,6 +603,35 @@ Complementary to bit-level quantization, **ThinK** (*Thinner Key Cache by Query-
 - **Query-Guided Pruning:** Selectively prunes $20\text{--}50\%$ of low-utility key channels based on runtime query alignment, halving Key cache memory.
 - **Synergistic Composition:** When composed with KIVI 2-bit quantization, ThinK yields up to a **$2.8\times$ peak memory reduction** beyond 2-bit baselines, enabling million-token generation on commodity GPU hardware without dropping a single token from the prompt.
 
+***
+
+## 28. Parallel Grammar Speculation & Tree-Constrained Speculative Decoding (2024–2026)
+
+### 28.1 The Latency Bottleneck of Serial Constrained Generation
+Grammar-constrained decoding guarantees syntactic compliance (JSON, EBNF, SQL) by evaluating valid token subsets $\mathcal{V}_{\text{valid}}(s_t) \subseteq \mathcal{V}$ using automata (FSMs or Earley tries).
+- **The Microsecond Penalty:** While state transitions take $<50\,\mu\text{s}$, executing autoregressive forward passes token-by-token remains strictly memory-bandwidth bound.
+- **Speculative Acceleration:** Standard speculative decoding (Leviathan et al., 2023) employs a draft model $M_d$ proposing $\gamma$ tokens, verified in parallel by target model $M_t$. However, naive drafting on structured outputs collapses: unconstrained draft models frequently propose tokens outside $\mathcal{V}_{\text{valid}}$, driving acceptance rates $\alpha \to 0$.
+
+### 28.2 Grammar-Constrained Speculative Protocol
+In Grammar-Constrained Speculative Decoding (GSD / Lookahead-then-Verify), both draft and target models are synchronously coupled to the grammar automaton $\mathcal{G}$:
+1. **Synchronized Masking:**
+   At each speculative step $k \in [1, \gamma]$, draft logits are filtered before sampling:
+   $$P_d^\mathcal{G}(x_k \mid x_{<k}) = \frac{P_d(x_k \mid x_{<k}) \cdot \mathbb{I}[x_k \in \mathcal{V}_{\text{valid}}(s_k)]}{\sum_{v \in \mathcal{V}_{\text{valid}}(s_k)} P_d(v \mid x_{<k})}$$
+2. **Constrained Acceptance Criterion:**
+   The target model verifies the drafted candidate sequence $x_1, \dots, x_\gamma$ under the same grammatical constraint:
+   $$\alpha_\mathcal{G}(x_k) = \min\left(1, \frac{P_t^\mathcal{G}(x_k \mid x_{<k})}{P_d^\mathcal{G}(x_k \mid x_{<k})}\right)$$
+   If $x_k$ is rejected, residual resampling is performed strictly within $\mathcal{V}_{\text{valid}}(s_k)$:
+   $$P_{\text{resample}}(x) = \frac{\max\left(0, P_t^\mathcal{G}(x \mid x_{<k}) - P_d^\mathcal{G}(x \mid x_{<k})\right)}{\sum_{v \in \mathcal{V}_{\text{valid}}(s_k)} \max\left(0, P_t^\mathcal{G}(v \mid x_{<k}) - P_d^\mathcal{G}(v \mid x_{<k})\right)}$$
+
+### 28.3 Deterministic Fast-Forwarding & Speculative Grammar Trees
+Structured formats exhibit high structural determinism:
+- **Zero-Compute Path Collapse:** Whenever $|\mathcal{V}_{\text{valid}}(s_k)| = 1$ (e.g., syntax tokens like `": "`, `",\n  "`, `"`), the token is guaranteed. The engine fast-forwards the automaton without invoking the draft model neural network, achieving infinite theoretical drafting speed.
+- **Tree-Attention Verification:** Where grammar allows multiple non-terminal continuations, drafting constructs a **Speculative Grammar Tree** $\mathcal{T}$ branching across high-probability valid tokens.
+- **Batched Verification Matrix:** The target model processes the entire tree in a single forward pass using a custom tree causal mask:
+  $$M_{i, j} = \begin{cases} 0 & \text{if } j \text{ is an ancestor of } i \text{ in } \mathcal{T} \\ -\infty & \text{otherwise} \end{cases}$$
+- **Empirical Throughput:** Grammar-synchronized speculative trees achieve acceptance rates $\alpha > 90\%$ (compared to $<40\%$ for unconstrained drafting), expanding end-to-end decoding throughput by $3.8\times\text{--}6.2\times$ over standard greedy autoregression.
+
+
 
 
 
