@@ -345,6 +345,28 @@ Standard H2O allocates identical KV cache budgets $C_l = C$ across all layers $l
   $$C_l = C_{\text{base}} \cdot \left(1 - \alpha \frac{l}{L}\right)$$
   Yielding up to $55\%$ additional VRAM reduction over flat H2O without sacrificing needle-in-a-haystack retrieval accuracy.
 
+***
+
+## 19. Compressed Finite State Machines & Jump-Forward Constrained Decoding (2024–2026)
+
+### 19.1 Autoregressive Inefficiency in Structured Output
+When enforcing structured generation (e.g., JSON schemas, SQL queries, Python ASTs), standard constrained decoding models every token autoregressively. However, structured formats contain extensive deterministic substrings:
+- In JSON generation (e.g., `{"customer_id": 12049, "status": "active"}`), key names, punctuation, quotes, and structural delimiters (`{"`, `": `, `", "`, `"}`) are 100% deterministic given the schema.
+- Executing standard model forward passes for deterministic tokens wastes memory bandwidth, as each single-token decode step requires loading hundreds of gigabytes of weights across GPU HBM for trivial boilerplate strings.
+
+### 19.2 Compressed Finite State Machines (cFSM) in SGLang
+Zheng et al. (*SGLang: Efficient Execution of Structured Language Model Programs*, ICML 2024) introduced **Compressed Finite State Machines (cFSM)** to eliminate autoregressive overhead on deterministic paths:
+- **Path Compression:** Let an FSM contain a linear transition chain $s_0 \xrightarrow{t_1} s_1 \xrightarrow{t_2} \dots \xrightarrow{t_k} s_k$ where every intermediate state $s_i$ has out-degree 1. The cFSM compresses this sequence into a single macro-transition labeled with the entire multi-token sequence:
+  $$s_0 \xrightarrow{(t_1, t_2, \dots, t_k)} s_k$$
+- **Jump-Forward Execution:** When the engine reaches state $s_0$, it bypasses the LLM's autoregressive decoding loop entirely for $k$ steps. It appends the exact token sequence $(t_1, \dots, t_k)$ directly to the sequence buffer without issuing single-token forward passes.
+
+### 19.3 Co-Design with RadixAttention
+Jump-forward decoding operates in tight synchrony with RadixAttention tree caching:
+- **Batched Chunk Prefill:** Instead of performing $k$ sequential decode forward steps, the jumped tokens are processed in a single chunked prefill forward pass to compute their KV activations simultaneously.
+- **KV Cache Splice:** When combined with cached prefix trees, the KV states for known static schema templates are retrieved directly from RAM/HBM without running any compute.
+- **Throughput Acceleration:** Achieves $2\times\text{--}5\times$ speedups in structured generation throughput while guaranteeing 0% schema non-conformance.
+
+
 
 
 

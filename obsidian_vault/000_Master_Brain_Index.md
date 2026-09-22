@@ -73,6 +73,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/benchmark_contamination.md|Benchmark Contamination]]
 - [[raw_research/snippets/buffer_of_thoughts.md|Buffer Of Thoughts]]
 - [[raw_research/snippets/causal_tracing_and_alphaedit.md|Causal Tracing And Alphaedit]]
+- [[raw_research/snippets/cfsm_jump_forward_decoding.md|Cfsm Jump Forward Decoding]]
 - [[raw_research/snippets/chain_of_symbol.md|Chain Of Symbol]]
 - [[raw_research/snippets/chain_of_verification.md|Chain Of Verification]]
 - [[raw_research/snippets/circuit_breakers_representation_rerouting.md|Circuit Breakers Representation Rerouting]]
