@@ -130,6 +130,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/hyde_embeddings.md|Hyde Embeddings]]
 - [[raw_research/snippets/icl_theory_ext.md|Icl Theory Ext]]
 - [[raw_research/snippets/implicit_gradient_descent_icl.md|Implicit Gradient Descent Icl]]
+- [[raw_research/snippets/induction_circuit_phase_change.md|Induction Circuit Phase Change]]
 - [[raw_research/snippets/instruction_tuning.md|Instruction Tuning]]
 - [[raw_research/snippets/instructor_pydantic.md|Instructor Pydantic]]
 - [[raw_research/snippets/judge_bias_mitigation.md|Judge Bias Mitigation]]

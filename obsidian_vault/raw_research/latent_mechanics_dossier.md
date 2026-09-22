@@ -909,6 +909,43 @@ Yitong Zhang et al. (*Lookahead-then-Verify: Reliable Constrained Decoding for D
 - **High Acceptance with Small Lookahead Budgets:** On Dream-v0-Instruct-7B and LLaDA-8B-Instruct, setting $N = 10$ yields proposal acceptance rates of **$98.1\%$** and **$97.3\%$** respectively.
 - **Negligible Latency Overhead:** Because the $N$ completions are sampled in parallel from the already computed logits and validated via optimized C++/Rust lexers/parsers, LAVE incurs $<12\%$ wall-clock latency overhead compared to unconstrained diffusion decoding.
 
+***
+
+## 38. Induction Circuit Formation Dynamics & The In-Context Learning Phase Change (Olsson et al., Anthropic 2022)
+
+### 38.1 The Algorithmic Architecture of Induction Heads
+In mechanistic interpretability, **induction heads** are attention heads that implement an algorithmic search-and-copy routine across context:
+$$\dots [A][B] \dots [A] \longrightarrow \text{predict } [B]$$
+They operate through a minimal **two-head composition circuit** spanning across layers $l_1 < l_2$:
+
+1. **Previous-Token Head ($H_1$ at Layer $l_1$):**
+   - Attends to position $i$ from position $i+1$ (an offset of $-1$).
+   - Writes the representation of token $x_i$ into the residual stream at token position $i+1$ via its Output-Value circuit:
+     $$\Delta x_{i+1}^{(l_1)} = x_i W_V^{(1)} W_O^{(1)}$$
+
+2. **Induction Head ($H_2$ at Layer $l_2$):**
+   - **$QK$ Matching Subcircuit:** At the current generation position $t$ (where the token is $x_t$), the Query is formed from $x_t$: $q_t = x_t W_Q^{(2)}$.
+   - The Key at prior position $i+1$ reads the composite representation written by $H_1$:
+     $$k_{i+1} = \left( x_{i+1} + \Delta x_{i+1}^{(l_1)} \right) W_K^{(2)} \approx x_i W_V^{(1)} W_O^{(1)} W_K^{(2)}$$
+   - The attention score between current token $x_t$ and historical token position $i+1$ is dictated by the bilinear form:
+     $$A_{t, i+1} \propto x_t \left( W_Q^{(2)} W_K^{(2)\top} (W_V^{(1)} W_O^{(1)})^\top \right) x_i^\top$$
+   - When current token $x_t$ matches historical token $x_i$, this composite matrix produces an overwhelming positive dot product, focusing attention sharply on position $i+1$.
+   - **$OV$ Copying Subcircuit:** $H_2$ reads token $x_{i+1}$ from position $i+1$ and projects it directly to the logits via the unembedding matrix $W_U$:
+     $$\Delta z_t = x_{i+1} W_V^{(2)} W_O^{(2)} W_U$$
+     The composite matrix $W_U^\top W_O^{(2)} W_V^{(2)} W_U$ exhibits dominant positive real eigenvalues ($\lambda_i > 0$), acting as an identity copying operator that amplifies the logit of token $x_{i+1}$.
+
+### 38.2 The "Phase Change" & Training Dynamics
+During pretraining across diverse model families (from small 2-layer transformers up to frontier scales), induction circuits do not form gradually. Instead, they emerge during a sharp, discontinuous **macroscopic phase change**:
+1. **Autocatalytic Compositional Lock-In:**
+   - Unlike single-layer bigram circuits whose gradient updates are uncoupled, an induction circuit requires both $H_1$ (previous-token writing) and $H_2$ (composite $QK$ reading and $OV$ copying) to function.
+   - Initial training exhibits near-zero induction head attention scores. Once stochastic gradient updates marginally align $H_1$ to write previous-token features, $H_2$ receives a strong reward signal to attend to those keys. This creates an exponential, autocatalytic feedback loop: $H_2$'s attention reinforces $H_1$'s previous-token projection, collapsing parameter space into the induction circuit minimum within a narrow token horizon ($\sim 2.5\cdot 10^9$ to $10^{10}$ training tokens).
+2. **Macroscopic Observables:**
+   - **Sharp Drop in In-Context Loss:** Measured by the prefix-loss differential $L_{\text{token 500}} - L_{\text{token 50}}$, the model's ability to exploit long contexts surges precisely during this transition.
+   - **The Pretraining Loss Bump:** A transient inflection or plateau in the training loss curve appears at the exact onset of the phase change, reflecting parameter reorganization from naive memorization to algorithmic subcircuits.
+3. **Emergence of Generalized In-Context Learning:**
+   - Induction head formation is universally correlated with the simultaneous emergence of few-shot prompting abilities, translation capabilities, non-English token completion, and algorithmic pattern continuation across both synthetic and natural corpora.
+
+
 
 
 
