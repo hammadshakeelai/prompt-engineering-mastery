@@ -874,6 +874,42 @@ William Brandon et al. (*Reducing Transformer Key-Value Cache Size with Cross-La
 - **Near-Zero Perplexity Degradation:** Evaluated on 1B and 3B models trained from scratch on 1T+ tokens, CLA-2 matches the pre-training validation perplexity of standard MQA baselines within $<0.02$ cross-entropy loss, while doubling maximum batch sizes and context lengths on commodity GPUs.
 - **Synergistic Quantization:** Composing CLA with 2-bit asymmetric quantization (KIVI) enables serving 128k-token contexts on consumer hardware with an effective KV footprint of $<1.3$ bits per token-layer.
 
+***
+
+## 37. Lookahead-then-Verify & CFG Constrained Decoding for Diffusion LLMs (LAVE, Zhang et al., 2026)
+
+### 37.1 The Prefix Breakdown in Non-Autoregressive Diffusion LLMs
+Standard constrained decoding frameworks (such as Outlines, LLGuidance, and XGrammar) enforce Context-Free Grammars (CFGs) via strict left-to-right deterministic finite automata (DFA) or pushdown automata (PDA):
+- **Autoregressive Assumption:** A partial sequence is always a continuous prefix $x_{<t} = (x_1, x_2, \dots, x_{t-1})$. The next allowable tokens are computed by computing the valid token follow-set $\mathcal{V}(x_{<t}) \subseteq \mathcal{V}_{\text{vocab}}$.
+- **The Diffusion Failure Mode:** Non-autoregressive Diffusion Large Language Models (dLLMs, e.g., Dream, LLaDA) iteratively denoise a sequence of masked tokens:
+  $$x^{(T)} = [\text{MASK}, \dots, \text{MASK}] \to x^{(T-1)} \to \dots \to x^{(0)}$$
+  At intermediate denoising timestep $t$, the state $x^{(t)}$ contains concrete tokens at arbitrary, disconnected indices interspersed with unresolved `[MASK]` tokens. Standard LR/LL parsers cannot evaluate strings with non-terminal holes ("masks") located before or between concrete terminals without suffering combinatorial state explosion.
+
+### 37.2 The LAVE (Lookahead-then-Verify) Architecture
+Yitong Zhang et al. (*Lookahead-then-Verify: Reliable Constrained Decoding for Diffusion LLMs under Context-Free Grammars*, arXiv:2602.00612 / ISSTA 2026) formulate **LAVE** to bridge formal grammatical verification with non-autoregressive parallel token proposal:
+
+1. **Parallel Marginal Distribution Extraction:**
+   In contrast to autoregressive models that generate one token per step, a dLLM forward pass simultaneously outputs categorical probability distributions over the entire vocabulary for all masked positions $\mathcal{M}^{(t)} = \{ i \mid x_i^{(t)} = [\text{MASK}] \}$:
+   $$p_\theta(x_i \mid x^{(t)}), \quad \forall i \in \mathcal{M}^{(t)}$$
+
+2. **Lookahead Sampling:**
+   When the denoising policy proposes a set of concrete token unmaskings $\hat{x}_U$ at positions $U \subseteq \mathcal{M}^{(t)}$, LAVE does not evaluate the incomplete partial string directly. Instead, it performs a parallel lookahead by sampling $N$ complete sequence completions from the predicted product of marginal distributions:
+   $$\tilde{x}^{(j)}_{\mathcal{M} \setminus U} \sim \prod_{k \in \mathcal{M}^{(t)} \setminus U} p_\theta(x_k \mid x^{(t)}), \quad j \in \{1, 2, \dots, N\}$$
+   Each candidate $\tilde{x}^{(j)} = (x^{(t)}_{\setminus \mathcal{M}}, \hat{x}_U, \tilde{x}^{(j)}_{\mathcal{M} \setminus U})$ forms a fully realized terminal string with zero mask tokens.
+
+3. **Context-Free Grammar Verification:**
+   The set of $N$ complete candidate strings is submitted in parallel to a formal deterministic grammar parser $\mathcal{P}_{\text{CFG}}$ (e.g., Python AST, JSON validator):
+   $$\text{Valid}(\tilde{x}^{(j)}) = \begin{cases} 1 & \text{if } \mathcal{P}_{\text{CFG}}(\tilde{x}^{(j)}) \in \mathcal{L}(G) \\ 0 & \text{otherwise} \end{cases}$$
+   The proposed unmasking step $\hat{x}_U$ is **accepted** if at least one lookahead candidate completes into a grammatically admissible terminal sequence:
+   $$\bigvee_{j=1}^N \text{Valid}(\tilde{x}^{(j)}) == 1$$
+   If all $N$ lookahead completions violate the CFG, the candidate unmasking $\hat{x}_U$ is rejected, avoiding irreversible syntactic dead-ends.
+
+### 37.3 Empirical Guarantees & Verification Efficiency
+- **100% Grammatical Conformance:** Evaluated on code generation benchmarks and structured data formats, unconstrained diffusion models suffer a syntax error rate of $18.4\%\text{--}34.2\%$. LAVE guarantees **$100\%$ syntactic validity** across all completed samples.
+- **High Acceptance with Small Lookahead Budgets:** On Dream-v0-Instruct-7B and LLaDA-8B-Instruct, setting $N = 10$ yields proposal acceptance rates of **$98.1\%$** and **$97.3\%$** respectively.
+- **Negligible Latency Overhead:** Because the $N$ completions are sampled in parallel from the already computed logits and validated via optimized C++/Rust lexers/parsers, LAVE incurs $<12\%$ wall-clock latency overhead compared to unconstrained diffusion decoding.
+
+
 
 
 

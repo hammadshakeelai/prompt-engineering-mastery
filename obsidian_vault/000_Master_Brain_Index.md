@@ -139,6 +139,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/kv_cache_flash_attention.md|Kv Cache Flash Attention]]
 - [[raw_research/snippets/langgraph_patterns.md|Langgraph Patterns]]
 - [[raw_research/snippets/lats.md|Lats]]
+- [[raw_research/snippets/lave_diffusion_constrained_decoding.md|Lave Diffusion Constrained Decoding]]
 - [[raw_research/snippets/lean4_formal_theorem_proving.md|Lean4 Formal Theorem Proving]]
 - [[raw_research/snippets/least_to_most.md|Least To Most]]
 - [[raw_research/snippets/lk_losses_speculative_acceptance.md|Lk Losses Speculative Acceptance]]
