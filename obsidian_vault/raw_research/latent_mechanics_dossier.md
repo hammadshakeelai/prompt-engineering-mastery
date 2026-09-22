@@ -546,6 +546,36 @@ When enforcing structured outputs (JSON schemas, regexes, EBNF grammars) via eng
   $$\text{Mask}_1 = \text{Mask}_{\text{healed}}(s) \cap \text{Mask}_{\text{grammar}}(\text{State}_0)$$
 - This guarantees that generation never fails due to an awkward tokenizer boundary, eliminating syntax validation errors in structured multi-turn agent pipelines.
 
+***
+
+## 26. Edge Attribution Patching with Integrated Gradients (EAP-IG) (2024–2026)
+
+### 26.1 Causal Mediation Analysis & The Circuit Discovery Bottleneck
+Mechanistic interpretability aims to isolate **circuits**—minimal subgraphs of attention heads and MLP blocks that perform specific semantic tasks (e.g., indirect object identification, greater-than evaluation, factual recall).
+- **Activation Patching:** The gold-standard causal intervention protocol feeds a clean prompt $x_{\text{clean}}$ and a corrupted counterfactual $x_{\text{corrupted}}$ through the model, swapping intermediate activation $h_u$ from the clean run into the corrupted run to measure the change in metric loss $\Delta \mathcal{L} = \mathcal{L}_{\text{patched}} - \mathcal{L}_{\text{corrupted}}$.
+- **Combinatorial Explosion:** Measuring causal importance across every directed edge $(u \to v)$ in a computational graph containing $L$ layers and $H$ heads requires $O(|E|) \sim 10^5\text{--}10^7$ forward passes, making exhaustive edge patching completely infeasible on frontier 70B+ LLMs.
+
+### 26.2 Edge Attribution Patching (EAP) via Taylor Expansion
+Syed et al. (2023) developed **Edge Attribution Patching (EAP)**, approximating the causal effect of edge intervention via a first-order Taylor series:
+$$\Delta \mathcal{L}_{u \to v} \approx (h_u^{\text{clean}} - h_u^{\text{corrupted}})^\top \nabla_{h_u} \mathcal{L}(x_{\text{clean}})$$
+- **Compute Efficiency:** Because the gradient vector $\nabla_{h_u} \mathcal{L}$ is computed via standard backpropagation, all edge attributions across the entire network are calculated in **a single backward pass** (alongside two forward passes for clean and corrupted states), yielding a $1000\times\text{--}10,000\times$ speedup.
+
+### 26.3 The Saturation / Zero-Gradient Pathology
+Despite massive speedups, standard EAP suffers from severe unfaithfulness due to gradient saturation:
+- **Non-Linear Thresholding:** Because neural networks contain non-linear activations ($\text{ReLU}, \text{GeLU}, \text{SwiGLU}$) and Softmax temperature scaling, gradients evaluated strictly at the clean endpoint $\nabla_{h_u} \mathcal{L}(x_{\text{clean}})$ can evaluate to near zero ($\nabla \mathcal{L} \approx 0$) if the neuron is operating in a flat saturated regime.
+- **False Negatives:** Crucial causal edges that drove the shift between clean and corrupted behaviors are falsely discarded by base EAP because their local derivative at the endpoint is zero.
+
+### 26.4 EAP-IG: Path-Integrated Gradients (Hanna et al., 2024)
+Hanna et al. (*EAP-IG*, ICML/NeurIPS 2024) rectified this saturation failure by integrating the gradient vector along the continuous straight-line path between corrupted and clean activations:
+$$\Delta \mathcal{L}_{u \to v}^{\text{IG}} = (h_u^{\text{clean}} - h_u^{\text{corrupted}})^\top \int_0^1 \nabla_{h_u} \mathcal{L}\left( h_u^{\text{corrupted}} + \alpha (h_u^{\text{clean}} - h_u^{\text{corrupted}}) \right) d\alpha$$
+- **Numerical Quadrature:** In practice, the continuous integral is approximated using $m$-step Gauss-Legendre quadrature (typically $m = 5\text{--}10$ interpolation points $\alpha_k$):
+  $$\Delta \mathcal{L}_{u \to v}^{\text{IG}} \approx (h_u^{\text{clean}} - h_u^{\text{corrupted}})^\top \sum_{k=1}^m w_k \nabla_{h_u} \mathcal{L}\left( h_u^{\text{corrupted}} + \alpha_k (h_u^{\text{clean}} - h_u^{\text{corrupted}}) \right)$$
+- **Axiomatic Completeness:** By the fundamental theorem of calculus, EAP-IG satisfies the **Completeness Axiom**:
+  $$\sum_{(u, v) \in E} \Delta \mathcal{L}_{u \to v}^{\text{IG}} = \mathcal{L}(x_{\text{clean}}) - \mathcal{L}(x_{\text{corrupted}})$$
+  guaranteeing that 100% of the model's behavioral difference is rigorously accounted for across the discovered circuit edges.
+- **Empirical Superiority:** EAP-IG achieves $>95\%$ circuit faithfulness (matching exhaustive activation patching) while running orders of magnitude faster, establishing it as the standard engine for large-scale automated circuit discovery.
+
+
 
 
 
