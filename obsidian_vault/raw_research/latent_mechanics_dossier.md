@@ -1011,6 +1011,41 @@ Luca Beurer-Kellner, Marc Fischer, and Martin Vechev (*Guiding LLMs The Right Wa
 - **Non-Invasive Distribution Preservation:** DOMINO eliminates the token misalignment tax, preserving identical top-1 predictions and perplexity on natural subword paths while achieving $100\%$ grammatical correctness.
 - **Inference Speedup:** In contrast to naive PDA/Earley maskers that slow generation by $2\times\text{--}10\times$, DOMINO incurs **zero latency overhead** and achieves up to **$1.5\times\text{--}2.1\times$ wall-clock speedups** over unconstrained generation on structured JSON and code generation benchmarks due to deterministic token skipping.
 
+***
+
+## 41. Multimodal Sparse Autoencoders & Cross-Modal Feature Steering (JSAE & SAE-V, 2024–2026)
+
+### 41.1 The Cross-Modal Entanglement Pathology in VLMs
+In Vision-Language Models (VLMs, e.g., LLaVA, Qwen2-VL, Gemma-2-Vision), visual patch representations $x_v \in \mathbb{R}^{P \times d_v}$ and textual token representations $x_l \in \mathbb{R}^{T \times d_l}$ are projected into a unified multimodal residual stream $h \in \mathbb{R}^{(P+T) \times d}$.
+While unimodal Sparse Autoencoders (SAEs) successfully decompose pure text or pure image representations into monosemantic latents:
+- **Projector Polysemantic Distortion:** Passing patch tokens through non-linear cross-attention or MLP projection bottlenecks entangles visual spatial features (edge orientations, texture frequencies) with textual semantic labels.
+- **Unimodal Steering Transfer Failure:** Attempting to steer multimodal outputs by clamping unimodal text SAE features fails when the target concept originates from the visual input, inducing hallucinated text descriptions or conflicting cross-modal attention maps.
+
+### 41.2 Joint Sparse Autoencoders (JSAE) & Cross-Modal Alignment
+Recent breakthroughs in multimodal mechanistic interpretability (e.g., *JSAE: Joint Sparse Autoencoders for Multimodal Alignment*, 2024–2025; *SAE-V*, 2024) formulate joint feature dictionaries equipped with explicit cross-modal alignment regularization:
+
+1. **Bimodal Feature Decomposition:**
+   Let $h_v$ and $h_l$ denote the activations of visual patch tokens and language tokens at a target intermediate transformer layer. JSAE trains a dual-encoder, shared-dictionary autoencoder:
+   $$f_v = \operatorname{TopK}\left( W_e^{(v)} (h_v - b_{\text{dec}}) + b_e^{(v)} \right), \quad f_l = \operatorname{TopK}\left( W_e^{(l)} (h_l - b_{\text{dec}}) + b_e^{(l)} \right)$$
+   where both modalities reconstruct back through a single shared decoder dictionary $W_d \in \mathbb{R}^{d \times M}$:
+   $$\hat{h}_v = W_d f_v + b_{\text{dec}}, \quad \hat{h}_l = W_d f_l + b_{\text{dec}}$$
+
+2. **Cross-Modal Alignment Regularization:**
+   To guarantee that feature $j \in [1, M]$ encodes the exact same semantic entity across both visual and linguistic manifestations, the training objective incorporates a cross-modal consistency term:
+   $$\mathcal{L}_{\text{JSAE}} = \frac{1}{2}\left( \|h_v - \hat{h}_v\|_2^2 + \|h_l - \hat{h}_l\|_2^2 \right) + \lambda_{\text{align}} \sum_{j=1}^M \mathcal{D}\left( f_{v, j}(x), \, f_{l, j}(y) \right)$$
+   where $(x, y)$ are paired image-caption pairs and $\mathcal{D}$ measures cosine distance between activated latent vectors.
+
+3. **Encoder-Centric Select-and-Project (S&P) Steering:**
+   Rather than intervening solely in decoder space (which can introduce out-of-distribution activation norms), S&P Top-K identifies the causal direction $\mathbf{v}_j = W_{d, j} / \|W_{d, j}\|_2$ and projects control offsets directly into the native visual token representations:
+   $$h_v' = h_v + \alpha \mathbf{v}_j$$
+   Clamping or amplifying $\alpha$ selectively modulates visual perception (e.g., object presence, color attribute, spatial relation) with zero modification to the frozen autoregressive language decoder weights.
+
+### 41.3 Empirical Guarantees & Hallucination Mitigation
+- **Monosemantic Disentanglement:** JSAE factorizes visual features into cleanly separated clusters: pure visual features ($>85\%$ variance on visual patches, e.g., low-level contours), shared multimodal features (active simultaneously on image regions and corresponding nouns), and pure linguistic syntax features.
+- **Multimodal Hallucination Suppression:** Intervening on over-active object latents in medical VLMs (e.g., chest X-ray report generation) reduces visual object hallucinations by **$42.6\%$** without degrading overall text generation fluency or clinical BLEU/CIDEr scores.
+- **Causal Zero-Shot Robot Steering:** Applied to Vision-Language-Action (VLA) foundation models, S&P Top-K steering along identified motion-primitive latents enables programmatic direction of robotic manipulator trajectories directly through residual activation addition.
+
+
 
 
 

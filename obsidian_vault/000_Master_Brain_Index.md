@@ -25,6 +25,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 ## 🔬 2. Raw Subagent Research (Web & Factual Dumps)
 - [[raw_research/agentic_memory.md]]
 - [[raw_research/agent_orchestration_frameworks.md]]
+- [[raw_research/agent_swarm_actor_orchestration.md]]
 - [[raw_research/icl_theory.md]]
 - [[raw_research/latent_mechanics_dossier.md]]
 - [[raw_research/llm_as_a_judge.md]]
@@ -59,6 +60,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/activation_steering_vectors.md|Activation Steering Vectors]]
 - [[raw_research/snippets/active_prompting.md|Active Prompting]]
 - [[raw_research/snippets/active_prompting_uncertainty.md|Active Prompting Uncertainty]]
+- [[raw_research/snippets/actor_model_agent_swarms.md|Actor Model Agent Swarms]]
 - [[raw_research/snippets/adaptive_computation.md|Adaptive Computation]]
 - [[raw_research/snippets/agent_memory_taxonomy.md|Agent Memory Taxonomy]]
 - [[raw_research/snippets/agent_planning.md|Agent Planning]]
@@ -170,6 +172,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/multi_agent_debate.md|Multi Agent Debate]]
 - [[raw_research/snippets/multi_query_retriever.md|Multi Query Retriever]]
 - [[raw_research/snippets/multi_token_prediction_mtp.md|Multi Token Prediction Mtp]]
+- [[raw_research/snippets/multimodal_joint_sparse_autoencoders.md|Multimodal Joint Sparse Autoencoders]]
 - [[raw_research/snippets/needle_in_haystack.md|Needle In Haystack]]
 - [[raw_research/snippets/negative_prompting.md|Negative Prompting]]
 - [[raw_research/snippets/o1_o3_prompting_rules.md|O1 O3 Prompting Rules]]
