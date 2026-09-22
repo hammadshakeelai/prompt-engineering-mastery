@@ -945,6 +945,40 @@ During pretraining across diverse model families (from small 2-layer transformer
 3. **Emergence of Generalized In-Context Learning:**
    - Induction head formation is universally correlated with the simultaneous emergence of few-shot prompting abilities, translation capabilities, non-English token completion, and algorithmic pattern continuation across both synthetic and natural corpora.
 
+***
+
+## 39. Pyramidal Information Funneling & Layer-Adaptive KV Eviction (PyramidKV, Cai et al., 2024)
+
+### 39.1 The Uniform Budget Fallacy in KV Cache Eviction
+Dynamic Key-Value cache pruning frameworks (such as [[h2o_heavy_hitter_submodular_kv|H2O]], SnapKV, and Scissorhands) select critical tokens based on accumulated attention mass or query-observation windows. However, these methods uniformly impose an identical cache capacity $C$ across all $L$ layers:
+$$C_l = C, \quad \forall l \in \{1, 2, \dots, L\}$$
+This uniform allocation contradicts the intrinsic layer-wise entropy mechanics of deep autoregressive transformers:
+- **Lower Layers (Broad Syntactic Dispersion):** Early transformer layers feature high-entropy attention distributions, attending broadly across the entire sequence to resolve syntactic dependencies, POS tagging, and local n-gram structures. Imposing a tight cache budget $C$ on lower layers truncates essential contextual foundations.
+- **Higher Layers (Semantic Consolidation):** As representations propagate to higher layers, attention entropy collapses sharply ("information funneling"). Deeper layers direct almost all attention mass to a sparse collection of task-relevant tokens, entity anchors, and initial attention sinks. Maintaining a large KV cache in top layers wastes memory bandwidth on irrelevant tokens.
+
+### 39.2 The PyramidKV Architecture & Layer Allocation Mechanics
+Yifei Cai et al. (*PyramidKV: Dynamic KV Cache Compression based on Pyramidal Information Funneling*, arXiv:2406.02069 / COLM 2024) formulate **PyramidKV**, introducing layer-adaptive cache allocation that aligns memory budgets with information funneling:
+
+1. **Pyramidal Capacity Formulation:**
+   Given a total token cache budget $C_{\text{total}}$, the per-layer capacity $C_l$ is defined as a monotonically decreasing function of layer depth $l \in [1, L]$:
+   $$\sum_{l=1}^L C_l = C_{\text{total}}, \quad C_1 > C_2 > \dots > C_L$$
+   Under a linear decay schedule parameterized by base capacity $C_{\text{min}}$ and slope $\Delta C$:
+   $$C_l = C_{\text{min}} + \Delta C \cdot \left( \frac{L - l}{L - 1} \right)$$
+   Lower layers retain wide context windows (up to $3\times\text{--}4\times$ standard uniform budgets), while the highest layers retain strictly essential attention sinks and immediate local sliding windows.
+
+2. **Synergistic Heavy-Hitter Eviction:**
+   Within each layer's assigned budget $C_l$, PyramidKV identifies essential keys via observation window pooling:
+   - Preserves $S_{\text{sink}}$ initial attention sink tokens ($x_{1:4}$).
+   - Preserves $W_{\text{local}}$ recent sliding-window tokens.
+   - For remaining historical tokens, selects the top $C_l - S_{\text{sink}} - W_{\text{local}}$ tokens maximizing max-pooled attention weights computed from the prompt observation window $W_{\text{obs}}$:
+     $$I_l = \operatorname{argTopK}_{j}\left( \max_{t \in W_{\text{obs}}} A_{l, t, j}, \, C_l - S_{\text{sink}} - W_{\text{local}} \right)$$
+
+### 39.3 Empirical Performance & Long-Context Efficiency
+- **Near-Lossless $8\times$ Compression:** Evaluated across LLaMA-2/3 (7B/8B) and Mistral-7B on LongBench and L-Eval, PyramidKV maintains $99.2\%$ of full KV cache performance while retaining only **$12\%$ of total KV tokens** (an $8.3\times$ memory reduction).
+- **Superiority in Extreme Low-Memory Regimes:** Under aggressive compression retaining only **$0.7\%$** of the KV cache, uniform baselines (SnapKV, H2O) experience catastrophic accuracy collapse ($<15\%$ retrieval on Needle-in-a-Haystack), whereas PyramidKV achieves $>80\%$ retrieval accuracy by preserving wide attention coverage in early layers.
+- **Tuning-Free Deployment:** Operates as a pure post-training inference optimization requiring zero model fine-tuning or architectural modifications.
+
+
 
 
 

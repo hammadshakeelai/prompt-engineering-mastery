@@ -194,6 +194,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/prompt_injection.md|Prompt Injection]]
 - [[raw_research/snippets/promptbreeder.md|Promptbreeder]]
 - [[raw_research/snippets/promptbreeder_evolutionary_optimization.md|Promptbreeder Evolutionary Optimization]]
+- [[raw_research/snippets/pyramidkv_adaptive_compression.md|Pyramidkv Adaptive Compression]]
 - [[raw_research/snippets/raft_ra_dit.md|Raft Ra Dit]]
 - [[raw_research/snippets/rag_evaluation.md|Rag Evaluation]]
 - [[raw_research/snippets/rag_fusion_ext.md|Rag Fusion Ext]]
