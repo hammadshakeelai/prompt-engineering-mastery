@@ -206,6 +206,27 @@ Traditional inference architectures treated KV caches as strictly model-specific
   $$K_{\text{large}} \approx W_K \cdot K_{\text{small}}, \quad V_{\text{large}} \approx W_V \cdot V_{\text{small}}$$
 - **Zero-Compute Handoff:** Enables small, low-latency models to ingest and compress multi-turn dialogue or massive prompts, then pass the pre-computed KV representation directly to a larger reasoning model without re-running the expensive prefill forward pass, retaining $>70-85\%$ downstream accuracy.
 
+***
+
+## 13. Distributional Distortion in Grammar Decoding: From Hard Masking to Grammar-Aligned Decoding (GAD) (2024–2026)
+
+### 13.1 The Distributional Bias of Naive Logit Masking
+While Grammar-Constrained Decoding (GCD) guarantees 100% syntactic validity, recent theoretical analyses reveal that naive logit masking fundamentally alters the model's posterior distribution.
+Under greedy or temperature sampling with hard masks:
+$$p_{\text{GCD}}(x_t \mid x_{<t}) = \frac{p(x_t \mid x_{<t}) \cdot \mathbb{I}(x_t \in \mathcal{V}_{\text{valid}})}{\sum_{v \in \mathcal{V}_{\text{valid}}} p(v \mid x_{<t})}$$
+Because normalization occurs locally per token without lookahead, a token that appears locally probable can trap the generator in future syntactic dead ends or force it into low-probability semantic branches. Consequently, the output distribution $p_{\text{GCD}}(x_{1:T})$ significantly diverges from the true grammar-conditional distribution $p(x_{1:T} \mid x \in \mathcal{L}(\mathcal{G}))$, causing semantic degradation and reasoning failures in structured QA.
+
+### 13.2 Grammar-Aligned Decoding (GAD) & The ASAp Algorithm
+To eliminate local distributional distortion, **Grammar-Aligned Decoding (GAD)** (2024–2025) incorporates future reachable validity:
+- **Adaptive Sampling with Approximate Expected Futures (ASAp):** Estimates the probability that a currently candidate token $x_t$ permits a valid completion of length $T$ that preserves semantic fidelity.
+- **Lookahead Correction:** Re-weights local candidate logits by their expected future probability mass under the grammar $\mathcal{G}$, ensuring that samples strictly match the true joint conditional distribution without semantic degradation.
+
+### 13.3 Grammar-Constrained Speculative Decoding (LMS Decoders)
+In high-throughput speculative decoding (Leviathan-style Local-Mask Speculative / LMS):
+- **Deterministic Token Leapfrogging:** Grammar states with out-degree 1 (e.g., fixed JSON syntax `": "`, `"status": "`, `}`) are emitted deterministically by draft models with an empirical acceptance rate of **100%**.
+- **Distribution-Preserving Verification:** Target models verify speculative draft tokens against both the language model logits and the grammar state machine in parallel, accelerating structured agentic workflows by 2.5x–4.5x with provable distributional guarantees.
+
+
 
 
 
