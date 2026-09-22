@@ -37,6 +37,14 @@ def build_index(vault_dir="obsidian_vault", repo_dir="."):
         for hook_file in glob.glob(f"{repo_dir}/research_engine/*.md"):
             f.write(f"- [[research_engine/{os.path.basename(hook_file)}]]\n")
             
+        f.write("\n## 🧩 5. Atomic Concept Snippets Knowledge Graph\n")
+        snippets_dir = os.path.join(raw_dir, "snippets")
+        if os.path.exists(snippets_dir):
+            for snippet_file in sorted(glob.glob(f"{snippets_dir}/*.md")):
+                basename = os.path.basename(snippet_file)
+                f.write(f"- [[raw_research/snippets/{basename}|{basename[:-3].replace('_', ' ').title()}]]\n")
+
+            
 if __name__ == "__main__":
     print("Building Obsidian Master Graph Index...")
     build_index()
