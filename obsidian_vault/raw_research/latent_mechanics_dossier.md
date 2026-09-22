@@ -719,6 +719,38 @@ Poesia et al. (*Synchromesh: Reliable Code Generation from Pre-trained Language 
 - **Elimination of Rollback Loops:** In SQL generation benchmarks (Spider, BIRD), CSD completely eliminates semantic runtime errors (table/column mismatch, group-by type inconsistencies), boosting first-pass execution accuracy from $61.2\%$ to $86.7\%$ without fine-tuning model weights.
 - **Neuro-Symbolic Unification:** Bridges generative neural probabilistic models with deterministic symbolic type checkers, providing mathematically guaranteed semantic safety at inference time.
 
+***
+
+## 32. Function Vectors & Task Representation Geometry (Todd et al., ICLR 2024)
+
+### 32.1 How Transformers Distill In-Context Learning
+When an autoregressive language model performs In-Context Learning (ICL) from demonstration pairs:
+$$\mathcal{P} = \{ (x_1, y_1), (x_2, y_2), \dots, (x_k, y_k), x_* \}$$
+a fundamental mechanistic question arises: how does the network represent the abstract input-output transformation $f: X \to Y$?
+- **The Ephemeral Computation Hypothesis:** The network computes the mapping dynamically and diffusely across all layers and attention heads at every generation step.
+- **The Compact Task Vector Hypothesis:** The network distills the demonstrated relationship into a localized, transportable vector representation that acts as an internal execution program.
+
+### 32.2 Causal Identification & Extraction of Function Vectors (FVs)
+Todd et al. (*Function Vectors in Large Language Models*, ICLR 2024) proved the existence of **Function Vectors (FVs)** using causal mediation analysis (activation patching):
+1. **Localization of Task Heads ($H_{\text{task}}$):**
+   - Systematically patching individual attention head outputs from demonstration runs into corrupted/zero-shot runs reveals that task execution is mediated by a compact subset of attention heads (often $<10\text{--}15$ heads out of hundreds).
+   - These **Task Heads** are strongly concentrated in the middle-to-late layers of the transformer (e.g., layers $14\text{--}24$ in a 32-layer model) and fire specifically at the final delimiter/prompt token.
+2. **Mathematical Formulation:**
+   The Function Vector $\mathbf{v}_f \in \mathbb{R}^d$ for an abstract task $f$ is computed by averaging the projection outputs of all task heads across a set of diverse demonstration prompts $\mathcal{D}_f$:
+   $$\mathbf{v}_f = \frac{1}{|\mathcal{D}_f|} \sum_{p \in \mathcal{D}_f} \sum_{(l, h) \in H_{\text{task}}} W_O^{(l, h)} \text{Attn}^{(l, h)}(p)_{-1}$$
+   where $\text{Attn}^{(l, h)}(p)_{-1}$ denotes the head activation at the final prompt token and $W_O^{(l, h)}$ is the head's down-projection matrix into the residual stream.
+
+### 32.3 Cross-Context Steering & Vector Compositionality
+- **Promptless Zero-Shot Steering:**
+  Injecting the function vector $\mathbf{v}_f$ into the residual stream during zero-shot evaluation without any natural language instructions:
+  $$h_l' = h_l + \beta \cdot \mathbf{v}_f$$
+  causes the model to spontaneously execute task $f$ (e.g., English-to-French translation, country-to-capital mapping, word antonyms) with accuracy rivaling standard multi-shot ICL prompts.
+- **Template Invariance:** Function vectors extracted from simple key-value prompts (`"apple: red\nbanana: yellow"`) steer generation accurately across completely alien prompt formats (`"Query: apple, Color:"`), proving that $\mathbf{v}_f$ encodes the semantic function rather than surface formatting syntax.
+- **Vector Arithmetic & Task Composition:** Function vectors exhibit linear compositionality in activation space:
+  $$\mathbf{v}_{\text{composite}} = \alpha_1 \mathbf{v}_{f_1} + \alpha_2 \mathbf{v}_{f_2}$$
+  demonstrating that Transformers represent procedural algorithmic operations as linear geometric directions in high-dimensional latent space.
+
+
 
 
 

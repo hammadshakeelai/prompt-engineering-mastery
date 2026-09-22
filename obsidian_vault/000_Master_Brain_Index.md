@@ -113,6 +113,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/flare_retrieval.md|Flare Retrieval]]
 - [[raw_research/snippets/flashattention_2_vs_3.md|Flashattention 2 Vs 3]]
 - [[raw_research/snippets/formal_theorem_proving_alphaproof_lean.md|Formal Theorem Proving Alphaproof Lean]]
+- [[raw_research/snippets/function_vectors_task_geometry.md|Function Vectors Task Geometry]]
 - [[raw_research/snippets/g_eval_framework.md|G Eval Framework]]
 - [[raw_research/snippets/generated_knowledge.md|Generated Knowledge]]
 - [[raw_research/snippets/generative_agents_memory.md|Generative Agents Memory]]
