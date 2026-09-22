@@ -488,6 +488,37 @@ When an LLM is prompted with a glitch token (e.g., `"Please repeat the word ' So
 - **Embedding Space k-Means Auditing:** Unsupervised clustering of the $W_E$ and $W_U$ weight matrices easily isolates isolated outliers and dense centroid clusters with zero training frequency.
 - **Vocabulary Compaction & Re-initialization:** Modern training recipes explicitly prune low-frequency tokenizer entries before pre-training or tie un-updated token embeddings to subword character decompositions.
 
+***
+
+## 24. Attention Sinks, Register Tokens & Infinite Context Streaming (StreamingLLM) (2024–2026)
+
+### 24.1 The Softmax Normalization Dilemma
+The self-attention mechanism computes token interactions via normalized Softmax:
+$$A_{t, j} = \frac{\exp(q_t k_j^T / \sqrt{d})}{\sum_{m=1}^t \exp(q_t k_m^T / \sqrt{d})}$$
+By mathematical definition, the attention weights must sum to exactly 1: $\sum_{j=1}^t A_{t, j} = 1$.
+- When the model is predicting a token that does not strongly depend on preceding context (e.g., punctuation, syntactic transitions, or common words), the query vector $q_t$ does not require strong semantic conditioning.
+- However, Softmax forces the allocation of probability mass. The network cannot output zero attention everywhere.
+- Because the initial $2\text{--}4$ tokens ($[x_0, x_1, x_2, x_3]$) are visible to every subsequent token across causal attention masks, early layers spontaneously repurpose these initial positions as **Attention Sinks**—dumping excess probability mass into them regardless of their semantic content.
+
+### 24.2 The Sliding Window Perplexity Collapse
+In long-horizon deployment, naive sliding window attention evicts tokens outside a fixed context window $W$ ($j < t - W$).
+- **Instantaneous Collapse:** When token $t = W + 1$ evicts the initial attention sinks ($x_0, \dots, x_3$), the model's internal Softmax denominator experiences catastrophic numerical disruption.
+- **Perplexity Explosion:** Perplexity skyrockets exponentially ($\text{PPL} \to 10^3\text{--}10^4$), transforming coherent text generation into repetitive gibberish, even though the evicted initial tokens were purely generic introductions or system headers.
+
+### 24.3 StreamingLLM Architecture (Xiao et al., ICLR 2024)
+Guangxuan Xiao et al. (*Efficient Streaming Language Models with Attention Sinks*, ICLR 2024) introduced **StreamingLLM**, decoupling local context retention from attention normalization:
+- **Dual-Region Cache Partitioning:**
+  $$\text{Cache}_t = \underbrace{\{x_0, x_1, x_2, x_3\}}_{\text{Attention Sinks (Fixed)}} \cup \underbrace{\{x_{t-W+4}, \dots, x_t\}}_{\text{Rolling Context Window}}$$
+  The initial 4 tokens are permanently retained in GPU memory, while the remaining $W - 4$ positions operate as a circular FIFO buffer.
+- **Positional Re-centering:** Under Rotary Position Embeddings (RoPE), position IDs within the rolling window are mapped to relative cache coordinates $[4, W]$ rather than absolute token indices $t$, ensuring that local attention patterns match the model's pre-trained distance distributions.
+- **Empirical Longevity:** StreamingLLM maintains stable, non-exploding perplexity across **4,000,000+ tokens** of continuous streaming text without requiring any model fine-tuning or weight modification.
+
+### 24.4 Cross-Modal Equivalence: Register Tokens in ViTs (Darcet et al., ICLR 2024)
+A parallel phenomenon was discovered in Vision Transformers by Timothée Darcet et al. (*Vision Transformers Need Registers*, ICLR 2024):
+- **Background Patch Exploitation:** Because non-causal bidirectional ViTs have no temporal initial token, the model repurposes arbitrary low-information background patches as "computational registers" to store global scene statistics, generating high-norm activation artifacts in feature maps.
+- **Learnable Register Tokens:** Prepending $4\text{--}8$ explicit, learnable register tokens $[REG]_1, \dots, [REG]_k$ to the visual patch sequence completely eliminates feature artifacts, cleans up object segmentation maps, and stabilizes downstream representation probing.
+
+
 
 
 
