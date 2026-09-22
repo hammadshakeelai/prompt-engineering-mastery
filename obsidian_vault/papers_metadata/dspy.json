@@ -1,0 +1,48 @@
+[
+  {
+    "id": "2604.04869v1",
+    "title": "Optimizing LLM Prompt Engineering with DSPy Based Declarative Learning",
+    "authors": [
+      "Shiek Ruksana",
+      "Sailesh Kiran Kurra",
+      "Thipparthi Sanjay Baradwaj"
+    ],
+    "summary": "Large Language Models (LLMs) have shown strong performance across a wide range of natural language processing tasks; however, their effectiveness is highly dependent on prompt design, structure, and embedded reasoning signals. Conventional prompt engineering methods largely rely on heuristic trial-and-error processes, which limits scalability, reproducibility, and generalization across tasks. DSPy, a declarative framework for optimizing text-processing pipelines, offers an alternative approach by enabling automated, modular, and learnable prompt construction for LLM-based systems.This paper presents a systematic study of DSPy-based declarative learning for prompt optimization, with emphasis on prompt synthesis, correction, calibration, and adaptive reasoning control. We introduce a unified DSPy LLM architecture that combines symbolic planning, gradient free optimization, and automated module rewriting to reduce hallucinations, improve factual grounding, and avoid unnecessary prompt complexity. Experimental evaluations conducted on reasoning tasks, retrieval-augmented generation, and multi-step chain-of-thought benchmarks demonstrate consistent gains in output reliability, efficiency, and generalization across models. The results show improvements of up to 30 to 45% in factual accuracy and a reduction of approximately 25% in hallucination rates. Finally, we outline key limitations and discuss future research directions for declarative prompt optimization frameworks.",
+    "published": "2026-04-06 17:17:57+00:00",
+    "pdf_url": "https://arxiv.org/pdf/2604.04869v1"
+  },
+  {
+    "id": "2310.03714v1",
+    "title": "DSPy: Compiling Declarative Language Model Calls into Self-Improving Pipelines",
+    "authors": [
+      "Omar Khattab",
+      "Arnav Singhvi",
+      "Paridhi Maheshwari",
+      "Zhiyuan Zhang",
+      "Keshav Santhanam",
+      "Sri Vardhamanan",
+      "Saiful Haq",
+      "Ashutosh Sharma",
+      "Thomas T. Joshi",
+      "Hanna Moazam",
+      "Heather Miller",
+      "Matei Zaharia",
+      "Christopher Potts"
+    ],
+    "summary": "The ML community is rapidly exploring techniques for prompting language models (LMs) and for stacking them into pipelines that solve complex tasks. Unfortunately, existing LM pipelines are typically implemented using hard-coded \"prompt templates\", i.e. lengthy strings discovered via trial and error. Toward a more systematic approach for developing and optimizing LM pipelines, we introduce DSPy, a programming model that abstracts LM pipelines as text transformation graphs, i.e. imperative computational graphs where LMs are invoked through declarative modules. DSPy modules are parameterized, meaning they can learn (by creating and collecting demonstrations) how to apply compositions of prompting, finetuning, augmentation, and reasoning techniques. We design a compiler that will optimize any DSPy pipeline to maximize a given metric. We conduct two case studies, showing that succinct DSPy programs can express and optimize sophisticated LM pipelines that reason about math word problems, tackle multi-hop retrieval, answer complex questions, and control agent loops. Within minutes of compiling, a few lines of DSPy allow GPT-3.5 and llama2-13b-chat to self-bootstrap pipelines that outperform standard few-shot prompting (generally by over 25% and 65%, respectively) and pipelines with expert-created demonstrations (by up to 5-46% and 16-40%, respectively). On top of that, DSPy programs compiled to open and relatively small LMs like 770M-parameter T5 and llama2-13b-chat are competitive with approaches that rely on expert-written prompt chains for proprietary GPT-3.5. DSPy is available at https://github.com/stanfordnlp/dspy",
+    "published": "2023-10-05 17:37:25+00:00",
+    "pdf_url": "https://arxiv.org/pdf/2310.03714v1"
+  },
+  {
+    "id": "2507.03620v1",
+    "title": "Is It Time To Treat Prompts As Code? A Multi-Use Case Study For Prompt Optimization Using DSPy",
+    "authors": [
+      "Francisca Lemos",
+      "Victor Alves",
+      "Filipa Ferraz"
+    ],
+    "summary": "Although prompt engineering is central to unlocking the full potential of Large Language Models (LLMs), crafting effective prompts remains a time-consuming trial-and-error process that relies on human intuition. This study investigates Declarative Self-improving Python (DSPy), an optimization framework that programmatically creates and refines prompts, applied to five use cases: guardrail enforcement, hallucination detection in code, code generation, routing agents, and prompt evaluation. Each use case explores how prompt optimization via DSPy influences performance. While some cases demonstrated modest improvements - such as minor gains in the guardrails use case and selective enhancements in hallucination detection - others showed notable benefits. The prompt evaluation criterion task demonstrated a substantial performance increase, rising accuracy from 46.2% to 64.0%. In the router agent case, the possibility of improving a poorly performing prompt and of a smaller model matching a stronger one through optimized prompting was explored. Although prompt refinement increased accuracy from 85.0% to 90.0%, using the optimized prompt with a cheaper model did not improve performance. Overall, this study's findings suggest that DSPy's systematic prompt optimization can enhance LLM performance, particularly when instruction tuning and example selection are optimized together. However, the impact varies by task, highlighting the importance of evaluating specific use cases in prompt optimization research.",
+    "published": "2025-07-04 14:46:56+00:00",
+    "pdf_url": "https://arxiv.org/pdf/2507.03620v1"
+  }
+]

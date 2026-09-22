@@ -1,0 +1,68 @@
+[
+  {
+    "id": "0804.4584v1",
+    "title": "Feature Unification in TAG Derivation Trees",
+    "summary": "The derivation trees of a tree adjoining grammar provide a first insight into the sentence semantics, and are thus prime targets for generation systems. We define a formalism, feature-based regular tree grammars, and a translation from feature based tree adjoining grammars into this new formalism. The translation preserves the derivation structures of the original grammar, and accounts for feature unification.",
+    "authors": [
+      "Sylvain Schmitz",
+      "Joseph Le Roux"
+    ],
+    "published": "2008-04-29T11:39:18Z",
+    "pdf_url": "https://arxiv.org/pdf/0804.4584v1"
+  },
+  {
+    "id": "2512.08188v1",
+    "title": "Embodied Tree of Thoughts: Deliberate Manipulation Planning with Embodied World Model",
+    "summary": "World models have emerged as a pivotal component in robot manipulation planning, enabling agents to predict future environmental states and reason about the consequences of actions before execution. While video-generation models are increasingly adopted, they often lack rigorous physical grounding, leading to hallucinations and a failure to maintain consistency in long-horizon physical constraints. To address these limitations, we propose Embodied Tree of Thoughts (EToT), a novel Real2Sim2Real planning framework that leverages a physics-based interactive digital twin as an embodied world model. EToT formulates manipulation planning as a tree search expanded through two synergistic mechanisms: (1) Priori Branching, which generates diverse candidate execution paths based on semantic and spatial analysis; and (2) Reflective Branching, which utilizes VLMs to diagnose execution failures within the simulator and iteratively refine the planning tree with corrective actions. By grounding high-level reasoning in a physics simulator, our framework ensures that generated plans adhere to rigid-body dynamics and collision constraints. We validate EToT on a suite of short- and long-horizon manipulation tasks, where it consistently outperforms baselines by effectively predicting physical dynamics and adapting to potential failures. Website at https://embodied-tree-of-thoughts.github.io .",
+    "authors": [
+      "Wenjiang Xu",
+      "Cindy Wang",
+      "Rui Fang",
+      "Mingkang Zhang",
+      "Lusong Li",
+      "Jing Xu",
+      "Jiayuan Gu",
+      "Zecui Zeng",
+      "Rui Chen"
+    ],
+    "published": "2025-12-09T02:36:26Z",
+    "pdf_url": "https://arxiv.org/pdf/2512.08188v1"
+  },
+  {
+    "id": "2305.10601v2",
+    "title": "Tree of Thoughts: Deliberate Problem Solving with Large Language Models",
+    "summary": "Language models are increasingly being deployed for general problem solving across a wide range of tasks, but are still confined to token-level, left-to-right decision-making processes during inference. This means they can fall short in tasks that require exploration, strategic lookahead, or where initial decisions play a pivotal role. To surmount these challenges, we introduce a new framework for language model inference, Tree of Thoughts (ToT), which generalizes over the popular Chain of Thought approach to prompting language models, and enables exploration over coherent units of text (thoughts) that serve as intermediate steps toward problem solving. ToT allows LMs to perform deliberate decision making by considering multiple different reasoning paths and self-evaluating choices to decide the next course of action, as well as looking ahead or backtracking when necessary to make global choices. Our experiments show that ToT significantly enhances language models' problem-solving abilities on three novel tasks requiring non-trivial planning or search: Game of 24, Creative Writing, and Mini Crosswords. For instance, in Game of 24, while GPT-4 with chain-of-thought prompting only solved 4% of tasks, our method achieved a success rate of 74%. Code repo with all prompts: https://github.com/princeton-nlp/tree-of-thought-llm.",
+    "authors": [
+      "Shunyu Yao",
+      "Dian Yu",
+      "Jeffrey Zhao",
+      "Izhak Shafran",
+      "Thomas L. Griffiths",
+      "Yuan Cao",
+      "Karthik Narasimhan"
+    ],
+    "published": "2023-05-17T23:16:17Z",
+    "pdf_url": "https://arxiv.org/pdf/2305.10601v2"
+  },
+  {
+    "id": "2512.11833v1",
+    "title": "Soft Decision Tree classifier: explainable and extendable PyTorch implementation",
+    "summary": "We implemented a Soft Decision Tree (SDT) and a Short-term Memory Soft Decision Tree (SM-SDT) using PyTorch. The methods were extensively tested on simulated and clinical datasets. The SDT was visualized to demonstrate the potential for its explainability. SDT, SM-SDT, and XGBoost demonstrated similar area under the curve (AUC) values. These methods were better than Random Forest, Logistic Regression, and Decision Tree. The results on clinical datasets suggest that, aside from a decision tree, all tested classification methods yield comparable results.   The code and datasets are available online on GitHub: https://github.com/KI-Research-Institute/Soft-Decision-Tree",
+    "authors": [
+      "Reuben R Shamir"
+    ],
+    "published": "2025-12-03T09:46:34Z",
+    "pdf_url": "https://arxiv.org/pdf/2512.11833v1"
+  },
+  {
+    "id": "2605.06040v1",
+    "title": "Novelty-based Tree-of-Thought Search for LLM Reasoning and Planning",
+    "summary": "Although advances such as chain-of-thought, tree-of-thought or reinforcement learning have improved the performance of LLMs in reasoning and planning tasks, they are still brittle and have not achieved human-level performance in many domains, and often suffer from high time and token costs. Inspired by the success of width-based search in planning, we explore how the concept of novelty can be transferred to language domains and how it can improve tree-of-thought reasoning. A tree of thoughts relies on building possible \"paths\" of consecutive ideas or thoughts. These are generated by repeatedly prompting an LLM. In our paper, a measurable concept of novelty is proposed that describes the uniqueness of a new node (thought) in comparison to nodes previously seen in the search tree. Novelty is estimated by prompting an LLM and making use of embedded general knowledge from pre-training. This metric can then be used to prune branches and reduce the scope of the search. Although this method introduces more prompts per state, the overall token cost can be reduced by pruning and reducing the overall tree size. This procedure is tested and compared using several benchmarks in language-based planning and general reasoning.",
+    "authors": [
+      "Leon Hamm",
+      "Zlatan Ajanovic"
+    ],
+    "published": "2026-05-07T11:28:53Z",
+    "pdf_url": "https://arxiv.org/pdf/2605.06040v1"
+  }
+]

@@ -1,0 +1,73 @@
+[
+  {
+    "id": "2410.05451v3",
+    "title": "SecAlign: Defending Against Prompt Injection with Preference Optimization",
+    "summary": "Large language models (LLMs) are becoming increasingly prevalent in modern software systems, interfacing between the user and the Internet to assist with tasks that require advanced language understanding. To accomplish these tasks, the LLM often uses external data sources such as user documents, web retrieval, results from API calls, etc. This opens up new avenues for attackers to manipulate the LLM via prompt injection. Adversarial prompts can be injected into external data sources to override the system's intended instruction and instead execute a malicious instruction. To mitigate this vulnerability, we propose a new defense called SecAlign based on the technique of preference optimization. Our defense first constructs a preference dataset with prompt-injected inputs, secure outputs (ones that respond to the legitimate instruction), and insecure outputs (ones that respond to the injection). We then perform preference optimization on this dataset to teach the LLM to prefer the secure output over the insecure one. This provides the first known method that reduces the success rates of various prompt injections to <10%, even against attacks much more sophisticated than ones seen during training. This indicates our defense generalizes well against unknown and yet-to-come attacks. Also, SecAlign models are still practical with similar utility to the one before defensive training in our evaluations. Our code is at https://github.com/facebookresearch/SecAlign",
+    "authors": [
+      "Sizhe Chen",
+      "Arman Zharmagambetov",
+      "Saeed Mahloujifar",
+      "Kamalika Chaudhuri",
+      "David Wagner",
+      "Chuan Guo"
+    ],
+    "published": "2024-10-07T19:34:35Z",
+    "pdf_url": "https://arxiv.org/pdf/2410.05451v3"
+  },
+  {
+    "id": "2402.06363v2",
+    "title": "StruQ: Defending Against Prompt Injection with Structured Queries",
+    "summary": "Recent advances in Large Language Models (LLMs) enable exciting LLM-integrated applications, which perform text-based tasks by utilizing their advanced language understanding capabilities. However, as LLMs have improved, so have the attacks against them. Prompt injection attacks are an important threat: they trick the model into deviating from the original application's instructions and instead follow user directives. These attacks rely on the LLM's ability to follow instructions and inability to separate prompts and user data. We introduce structured queries, a general approach to tackle this problem. Structured queries separate prompts and data into two channels. We implement a system that supports structured queries. This system is made of (1) a secure front-end that formats a prompt and user data into a special format, and (2) a specially trained LLM that can produce high-quality outputs from these inputs. The LLM is trained using a novel fine-tuning strategy: we convert a base (non-instruction-tuned) LLM to a structured instruction-tuned model that will only follow instructions in the prompt portion of a query. To do so, we augment standard instruction tuning datasets with examples that also include instructions in the data portion of the query, and fine-tune the model to ignore these. Our system significantly improves resistance to prompt injection attacks, with little or no impact on utility. Our code is released at https://github.com/Sizhe-Chen/StruQ.",
+    "authors": [
+      "Sizhe Chen",
+      "Julien Piet",
+      "Chawin Sitawarin",
+      "David Wagner"
+    ],
+    "published": "2024-02-09T12:15:51Z",
+    "pdf_url": "https://arxiv.org/pdf/2402.06363v2"
+  },
+  {
+    "id": "2512.12583v1",
+    "title": "Detecting Prompt Injection Attacks Against Application Using Classifiers",
+    "summary": "Prompt injection attacks can compromise the security and stability of critical systems, from infrastructure to large web applications. This work curates and augments a prompt injection dataset based on the HackAPrompt Playground Submissions corpus and trains several classifiers, including LSTM, feed forward neural networks, Random Forest, and Naive Bayes, to detect malicious prompts in LLM integrated web applications. The proposed approach improves prompt injection detection and mitigation, helping protect targeted applications and systems.",
+    "authors": [
+      "Safwan Shaheer",
+      "G. M. Refatul Islam",
+      "Mohammad Rafid Hamid",
+      "Md. Abrar Faiaz Khan",
+      "Md. Omar Faruk",
+      "Yaseen Nur"
+    ],
+    "published": "2025-12-14T07:35:32Z",
+    "pdf_url": "https://arxiv.org/pdf/2512.12583v1"
+  },
+  {
+    "id": "2403.04957v1",
+    "title": "Automatic and Universal Prompt Injection Attacks against Large Language Models",
+    "summary": "Large Language Models (LLMs) excel in processing and generating human language, powered by their ability to interpret and follow instructions. However, their capabilities can be exploited through prompt injection attacks. These attacks manipulate LLM-integrated applications into producing responses aligned with the attacker's injected content, deviating from the user's actual requests. The substantial risks posed by these attacks underscore the need for a thorough understanding of the threats. Yet, research in this area faces challenges due to the lack of a unified goal for such attacks and their reliance on manually crafted prompts, complicating comprehensive assessments of prompt injection robustness. We introduce a unified framework for understanding the objectives of prompt injection attacks and present an automated gradient-based method for generating highly effective and universal prompt injection data, even in the face of defensive measures. With only five training samples (0.3% relative to the test data), our attack can achieve superior performance compared with baselines. Our findings emphasize the importance of gradient-based testing, which can avoid overestimation of robustness, especially for defense mechanisms.",
+    "authors": [
+      "Xiaogeng Liu",
+      "Zhiyuan Yu",
+      "Yizhe Zhang",
+      "Ning Zhang",
+      "Chaowei Xiao"
+    ],
+    "published": "2024-03-07T23:46:20Z",
+    "pdf_url": "https://arxiv.org/pdf/2403.04957v1"
+  },
+  {
+    "id": "2502.13141v1",
+    "title": "UniGuardian: A Unified Defense for Detecting Prompt Injection, Backdoor Attacks and Adversarial Attacks in Large Language Models",
+    "summary": "Large Language Models (LLMs) are vulnerable to attacks like prompt injection, backdoor attacks, and adversarial attacks, which manipulate prompts or models to generate harmful outputs. In this paper, departing from traditional deep learning attack paradigms, we explore their intrinsic relationship and collectively term them Prompt Trigger Attacks (PTA). This raises a key question: Can we determine if a prompt is benign or poisoned? To address this, we propose UniGuardian, the first unified defense mechanism designed to detect prompt injection, backdoor attacks, and adversarial attacks in LLMs. Additionally, we introduce a single-forward strategy to optimize the detection pipeline, enabling simultaneous attack detection and text generation within a single forward pass. Our experiments confirm that UniGuardian accurately and efficiently identifies malicious prompts in LLMs.",
+    "authors": [
+      "Huawei Lin",
+      "Yingjie Lao",
+      "Tong Geng",
+      "Tan Yu",
+      "Weijie Zhao"
+    ],
+    "published": "2025-02-18T18:59:00Z",
+    "pdf_url": "https://arxiv.org/pdf/2502.13141v1"
+  }
+]

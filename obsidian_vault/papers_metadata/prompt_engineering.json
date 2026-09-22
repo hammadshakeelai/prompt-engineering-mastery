@@ -1,0 +1,75 @@
+[
+  {
+    "id": "2604.26615v1",
+    "title": "TDD Governance for Multi-Agent Code Generation via Prompt Engineering",
+    "summary": "Large language models (LLMs) accelerate software development but often exhibit instability, non-determinism, and weak adherence to development discipline in unconstrained workflows. While test-driven development (TDD) provides a structured Red-Green-Refactor process, existing LLM-based approaches typically use tests as auxiliary inputs rather than enforceable process constraints. We present an AI-native TDD framework that operationalizes classical TDD principles as structured prompt-level and workflow-level governance mechanisms. Extracted principles are formalized in a machine-readable manifesto and distributed across planning, generation, repair, and validation stages within a layered architecture that separates model proposal from deterministic engine authority. The system enforces phase ordering, bounded repair loops, validation gates, and atomic mutation control to improve stability and reproducibility. We describe architecture and discuss encoding software engineering discipline directly into prompt orchestration, which we think offers a promising direction for reliable LLM-assisted development.",
+    "authors": [
+      "Tarlan Hasanli",
+      "Shahbaz Siddeeq",
+      "Bishwash Khanal",
+      "Pyry Kotilainen",
+      "Tommi Mikkonen",
+      "Pekka Abrahamsson"
+    ],
+    "published": "2026-04-29T12:43:22Z",
+    "pdf_url": "https://arxiv.org/pdf/2604.26615v1"
+  },
+  {
+    "id": "2605.07422v1",
+    "title": "Prompt Engineering Strategies for LLM-based Qualitative Coding of Psychological Safety in Software Engineering Communities: A Controlled Empirical Study",
+    "summary": "Qualitative analysis plays a pivotal role in understanding the human and social aspects of software engineering. However, it remains a demanding process shaped by the subjective interpretation of individual researchers and sensitive to methodological choices such as prompt design. Recent advancements in Large Language Models (LLMs) offer promising opportunities to support this type of analysis, although their reliability in reproducing human qualitative reasoning under varying prompting conditions remains largely untested. This study presents a controlled empirical evaluation of three LLMs -- Claude Haiku, DeepSeek-Chat, and Gemini 2.5 Flash -- across two prompt engineering strategies (zero-shot and multi-shot closed coding), using Cohen's kappa as the primary agreement metric over ten independent runs per configuration. Results suggest that multi-shot prompting significantly improves agreement for Claude Haiku (Delta kappa = +0.034, Wilcoxon p = 0.004) but not for DeepSeek-Chat or Gemini 2.5 Flash. Intra-model stability varies substantially -- DeepSeek-Chat and Claude Haiku exhibit the lowest variance (SD approx. 0.017), while Gemini 2.5 Flash is the least stable (SD = 0.038). A systematic over-prediction of \"Sharing Negative Feedback\" is identified across all models (bias ratios up to 5.25x), alongside consistent under-prediction of \"Expressing Concerns.\" Collectively, these findings provide empirical evidence for prompt engineering guidelines in LLM-assisted qualitative coding for software engineering research.",
+    "authors": [
+      "Moaath Alshaikh",
+      "Tasneem Alshaher",
+      "Ricardo Vieira",
+      "Beatriz Santana",
+      "Clelio Xavier",
+      "Jose Amancio",
+      "Glauco Carneiro",
+      "Julio Leite",
+      "Savio Freire",
+      "Manoel Mendonca"
+    ],
+    "published": "2026-05-08T08:16:01Z",
+    "pdf_url": "https://arxiv.org/pdf/2605.07422v1"
+  },
+  {
+    "id": "2401.14043v3",
+    "title": "Towards Goal-oriented Prompt Engineering for Large Language Models: A Survey",
+    "summary": "Large Language Models (LLMs) have shown prominent performance in various downstream tasks and prompt engineering plays a pivotal role in optimizing LLMs' performance. This paper, not only as an overview of current prompt engineering methods, but also aims to highlight the limitation of designing prompts based on an anthropomorphic assumption that expects LLMs to think like humans. From our review of 50 representative studies, we demonstrate that a goal-oriented prompt formulation, which guides LLMs to follow established human logical thinking, significantly improves the performance of LLMs. Furthermore, We introduce a novel taxonomy that categorizes goal-oriented prompting methods into five interconnected stages and we demonstrate the broad applicability of our framework. With four future directions proposed, we hope to further emphasize the power and potential of goal-oriented prompt engineering in all fields.",
+    "authors": [
+      "Haochen Li",
+      "Jonathan Leung",
+      "Zhiqi Shen"
+    ],
+    "published": "2024-01-25T09:47:55Z",
+    "pdf_url": "https://arxiv.org/pdf/2401.14043v3"
+  },
+  {
+    "id": "2503.02400v2",
+    "title": "Promptware Engineering: Software Engineering for Prompt-Enabled Systems",
+    "summary": "Large Language Models (LLMs) are increasingly integrated into software applications, giving rise to a broad class of prompt-enabled systems, in which prompts serve as the primary 'programming' interface for guiding system behavior. Building on this trend, a new software paradigm, promptware, has emerged, which treats natural language prompts as first-class software artifacts for interacting with LLMs. Unlike traditional software, which relies on formal programming languages and deterministic runtime environments, promptware is based on ambiguous, unstructured, and context-dependent natural language and operates on LLMs as runtime environments, which are probabilistic and non-deterministic. These fundamental differences introduce unique challenges in prompt development. In practice, prompt development remains largely ad hoc and relies heavily on time-consuming trial-and-error, a challenge we term the promptware crisis. To address this, we propose promptware engineering, a new methodology that adapts established Software Engineering (SE) principles to prompt development. Drawing on decades of success in traditional SE, we envision a systematic framework encompassing prompt requirements engineering, design, implementation, testing, debugging, evolution, deployment, and monitoring. Our framework re-contextualizes emerging prompt-related challenges within the SE lifecycle, providing principled guidance beyond ad-hoc practices. Without the SE discipline, prompt development is likely to remain mired in trial-and-error. This paper outlines a comprehensive roadmap for promptware engineering, identifying key research directions and offering actionable insights to advance the development of prompt-enabled systems.",
+    "authors": [
+      "Zhenpeng Chen",
+      "Chong Wang",
+      "Weisong Sun",
+      "Xuanzhe Liu",
+      "Jie M. Zhang",
+      "Yang Liu"
+    ],
+    "published": "2025-03-04T08:43:16Z",
+    "pdf_url": "https://arxiv.org/pdf/2503.02400v2"
+  },
+  {
+    "id": "2507.03405v1",
+    "title": "Prompt Engineering Guidelines for Using Large Language Models in Requirements Engineering",
+    "summary": "The rapid emergence of generative AI models like Large Language Models (LLMs) has demonstrated its utility across various activities, including within Requirements Engineering (RE). Ensuring the quality and accuracy of LLM-generated output is critical, with prompt engineering serving as a key technique to guide model responses. However, existing literature provides limited guidance on how prompt engineering can be leveraged, specifically for RE activities. The objective of this study is to explore the applicability of existing prompt engineering guidelines for the effective usage of LLMs within RE. To achieve this goal, we began by conducting a systematic review of primary literature to compile a non-exhaustive list of prompt engineering guidelines. Then, we conducted interviews with RE experts to present the extracted guidelines and gain insights on the advantages and limitations of their application within RE. Our literature review indicates a shortage of prompt engineering guidelines for domain-specific activities, specifically for RE. Our proposed mapping contributes to addressing this shortage. We conclude our study by identifying an important future line of research within this field.",
+    "authors": [
+      "Krishna Ronanki",
+      "Simon Arvidsson",
+      "Johan Axell"
+    ],
+    "published": "2025-07-04T09:13:50Z",
+    "pdf_url": "https://arxiv.org/pdf/2507.03405v1"
+  }
+]

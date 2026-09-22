@@ -1,0 +1,83 @@
+[
+  {
+    "id": "2410.03595v1",
+    "title": "Understanding Reasoning in Chain-of-Thought from the Hopfieldian View",
+    "summary": "Large Language Models have demonstrated remarkable abilities across various tasks, with Chain-of-Thought (CoT) prompting emerging as a key technique to enhance reasoning capabilities. However, existing research primarily focuses on improving performance, lacking a comprehensive framework to explain and understand the fundamental factors behind CoT's success. To bridge this gap, we introduce a novel perspective grounded in the Hopfieldian view of cognition in cognitive neuroscience. We establish a connection between CoT reasoning and key cognitive elements such as stimuli, actions, neural populations, and representation spaces. From our view, we can understand the reasoning process as the movement between these representation spaces. Building on this insight, we develop a method for localizing reasoning errors in the response of CoTs. Moreover, we propose the Representation-of-Thought (RoT) framework, which leverages the robustness of low-dimensional representation spaces to enhance the robustness of the reasoning process in CoTs. Experimental results demonstrate that RoT improves the robustness and interpretability of CoT reasoning while offering fine-grained control over the reasoning process.",
+    "authors": [
+      "Lijie Hu",
+      "Liang Liu",
+      "Shu Yang",
+      "Xin Chen",
+      "Zhen Tan",
+      "Muhammad Asif Ali",
+      "Mengdi Li",
+      "Di Wang"
+    ],
+    "published": "2024-10-04T16:55:30Z",
+    "pdf_url": "https://arxiv.org/pdf/2410.03595v1"
+  },
+  {
+    "id": "2311.09277v1",
+    "title": "Contrastive Chain-of-Thought Prompting",
+    "summary": "Despite the success of chain of thought in enhancing language model reasoning, the underlying process remains less well understood. Although logically sound reasoning appears inherently crucial for chain of thought, prior studies surprisingly reveal minimal impact when using invalid demonstrations instead. Furthermore, the conventional chain of thought does not inform language models on what mistakes to avoid, which potentially leads to more errors. Hence, inspired by how humans can learn from both positive and negative examples, we propose contrastive chain of thought to enhance language model reasoning. Compared to the conventional chain of thought, our approach provides both valid and invalid reasoning demonstrations, to guide the model to reason step-by-step while reducing reasoning mistakes. To improve generalization, we introduce an automatic method to construct contrastive demonstrations. Our experiments on reasoning benchmarks demonstrate that contrastive chain of thought can serve as a general enhancement of chain-of-thought prompting.",
+    "authors": [
+      "Yew Ken Chia",
+      "Guizhen Chen",
+      "Luu Anh Tuan",
+      "Soujanya Poria",
+      "Lidong Bing"
+    ],
+    "published": "2023-11-15T18:54:01Z",
+    "pdf_url": "https://arxiv.org/pdf/2311.09277v1"
+  },
+  {
+    "id": "2201.11903v6",
+    "title": "Chain-of-Thought Prompting Elicits Reasoning in Large Language Models",
+    "summary": "We explore how generating a chain of thought -- a series of intermediate reasoning steps -- significantly improves the ability of large language models to perform complex reasoning. In particular, we show how such reasoning abilities emerge naturally in sufficiently large language models via a simple method called chain of thought prompting, where a few chain of thought demonstrations are provided as exemplars in prompting. Experiments on three large language models show that chain of thought prompting improves performance on a range of arithmetic, commonsense, and symbolic reasoning tasks. The empirical gains can be striking. For instance, prompting a 540B-parameter language model with just eight chain of thought exemplars achieves state of the art accuracy on the GSM8K benchmark of math word problems, surpassing even finetuned GPT-3 with a verifier.",
+    "authors": [
+      "Jason Wei",
+      "Xuezhi Wang",
+      "Dale Schuurmans",
+      "Maarten Bosma",
+      "Brian Ichter",
+      "Fei Xia",
+      "Ed Chi",
+      "Quoc Le",
+      "Denny Zhou"
+    ],
+    "published": "2022-01-28T02:33:07Z",
+    "pdf_url": "https://arxiv.org/pdf/2201.11903v6"
+  },
+  {
+    "id": "1808.06295v1",
+    "title": "Space Weather Prediction from the Ground: Case of CHAIN",
+    "summary": "In this article, we insist on the importance and the challenges of the prediction of solar eruptive phenomena including flares, coronal mass ejections (CME), and filament eruptions fully based on the ground-based telescopes. It is true that satellites' data are indispensable for the space weather prediction, but they are vulnerable to the space weather effects. Therefore, the ground-based telescopes can be complementary to them from the viewpoint of space weather prediction. From this view point, one possible new flare prediction method that makes use of H-alpha, red wings, and blue wings images obtained by the SDDI/SMART, the ground-based telescope at Hida Observatory, is presented. And in order to show the possibility for the actual operation based on that method, the recent progress of CHAIN project, the international observation network, is mentioned in terms of their outcomes and capacity buildings.",
+    "authors": [
+      "Daikichi Seki",
+      "Satoru Ueno",
+      "Hiroaki Isobe",
+      "Kenichi Otsuji",
+      "Denis P. Cabezas",
+      "Kiyoshi Ichimoto",
+      "Kazunari Shibata",
+      "CHAIN team"
+    ],
+    "published": "2018-08-20T03:24:10Z",
+    "pdf_url": "https://arxiv.org/pdf/1808.06295v1"
+  },
+  {
+    "id": "2305.17306v1",
+    "title": "Chain-of-Thought Hub: A Continuous Effort to Measure Large Language Models' Reasoning Performance",
+    "summary": "As large language models (LLMs) are continuously being developed, their evaluation becomes increasingly important yet challenging. This work proposes Chain-of-Thought Hub, an open-source evaluation suite on the multi-step reasoning capabilities of large language models. We are interested in this setting for two reasons: (1) from the behavior of GPT and PaLM model family, we observe that complex reasoning is likely to be a key differentiator between weaker and stronger LLMs; (2) we envisage large language models to become the next-generation computational platform and foster an ecosystem of LLM-based new applications, this naturally requires the foundation models to perform complex tasks that often involve the composition of linguistic and logical operations. Our approach is to compile a suite of challenging reasoning benchmarks to track the progress of LLMs. Our current results show that: (1) model scale clearly correlates with reasoning capabilities; (2) As of May 2023, Claude-v1.3 and PaLM-2 are the only two models that are comparable with GPT-4, while open-sourced models still lag behind; (3) LLaMA-65B performs closely to code-davinci-002, indicating that with successful further development such as reinforcement learning from human feedback (RLHF), it has great potential to be close to GPT-3.5-Turbo. Our results also suggest that for the open-source efforts to catch up, the community may focus more on building better base models and exploring RLHF.",
+    "authors": [
+      "Yao Fu",
+      "Litu Ou",
+      "Mingyu Chen",
+      "Yuhao Wan",
+      "Hao Peng",
+      "Tushar Khot"
+    ],
+    "published": "2023-05-26T23:46:42Z",
+    "pdf_url": "https://arxiv.org/pdf/2305.17306v1"
+  }
+]
