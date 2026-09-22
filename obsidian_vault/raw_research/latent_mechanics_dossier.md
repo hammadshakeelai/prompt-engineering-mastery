@@ -245,6 +245,23 @@ While MEMIT enabled mass editing of thousands of facts, sequential editing suffe
   $$\Delta W = \Delta W_{\text{raw}} \left( I - K_0 (K_0^T K_0)^{-1} K_0^T \right)$$
 - **Empirical Superiority:** AlphaEdit improves editing benchmark performance by **+36.7%**, completely eliminating catastrophic forgetting across thousands of sequential knowledge updates while preserving general model fluency.
 
+***
+
+## 15. Semantic Entropy & Information-Theoretic Prompt Pruning (2024–2026)
+
+### 15.1 Token Surprisal vs. Semantic Entropy
+Traditional prompt compression relies on token-level surprisal $S(x_t) = -\log p(x_t \mid x_{<t})$. However, naive token entropy conflates syntactic variance (e.g., synonym choices, formatting whitespaces) with true epistemic uncertainty.
+
+Kuhn et al. (*Semantic Entropy*, Nature 2023 / 2024 extensions) formalized **Semantic Entropy (SE)** by clustering model generations into semantic equivalence classes $[s]$ via bi-directional entailment models (NLI):
+$$\mathcal{H}_{\text{sem}}(x) = -\sum_{[s]} p([s] \mid x) \log p([s] \mid x)$$
+- **Epistemic vs. Syntactic Uncertainty:** High token entropy with low semantic entropy indicates stylistic richness without factual ambiguity. Conversely, high semantic entropy signals genuine model uncertainty, identifying prompt regions prone to confabulation and hallucination.
+
+### 15.2 The Directional Blindness of Causal Compressors
+First-generation prompt compressors (LLMLingua, Selective-Context) relied on small causal language models (e.g., GPT-2, LLaMA-7B) to calculate token perplexity sequentially from left to right.
+- **Unidirectional Failure:** In long prompts, earlier tokens cannot condition on later key facts. A crucial entity appearing at the start may exhibit low causal surprisal locally and get pruned, corrupting downstream task execution.
+- **Bidirectional Distillation (LLMLingua-2):** Replaces causal perplexity with small bidirectional encoders (XLM-RoBERTa / mBERT) trained via teacher distillation from frontier models (GPT-4o). Capturing full past and future context simultaneously achieves superior prompt compression (up to 80% reduction) with $3\times\text{--}6\times$ lower compression latency.
+
+
 
 
 
