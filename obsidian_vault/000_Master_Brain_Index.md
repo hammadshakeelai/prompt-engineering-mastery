@@ -51,6 +51,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 
 ## 🪝 4. Research Hooks & Meta-Prompts
 - [[research_engine/critical_thinking_hook.md]]
+- [[research_engine/research_pivot_05.md]]
 
 ## 🧩 5. Atomic Concept Snippets Knowledge Graph
 - [[raw_research/snippets/activation_steering_vectors.md|Activation Steering Vectors]]
@@ -113,6 +114,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/g_eval_framework.md|G Eval Framework]]
 - [[raw_research/snippets/generated_knowledge.md|Generated Knowledge]]
 - [[raw_research/snippets/generative_agents_memory.md|Generative Agents Memory]]
+- [[raw_research/snippets/glitch_tokens_embedding_geometry.md|Glitch Tokens Embedding Geometry]]
 - [[raw_research/snippets/glitch_tokens_mechanics.md|Glitch Tokens Mechanics]]
 - [[raw_research/snippets/grammar_aligned_decoding.md|Grammar Aligned Decoding]]
 - [[raw_research/snippets/graph_of_thoughts.md|Graph Of Thoughts]]
@@ -221,6 +223,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/test_time_compute_scaling.md|Test Time Compute Scaling]]
 - [[raw_research/snippets/textgrad.md|Textgrad]]
 - [[raw_research/snippets/thread_of_thought.md|Thread Of Thought]]
+- [[raw_research/snippets/titans_neural_long_term_memory.md|Titans Neural Long Term Memory]]
 - [[raw_research/snippets/token_smuggling_evasion.md|Token Smuggling Evasion]]
 - [[raw_research/snippets/tool_use.md|Tool Use]]
 - [[raw_research/snippets/toolformer_gorilla.md|Toolformer Gorilla]]
