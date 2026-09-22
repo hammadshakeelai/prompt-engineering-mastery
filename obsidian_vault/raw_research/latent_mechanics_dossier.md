@@ -575,6 +575,35 @@ $$\Delta \mathcal{L}_{u \to v}^{\text{IG}} = (h_u^{\text{clean}} - h_u^{\text{co
   guaranteeing that 100% of the model's behavioral difference is rigorously accounted for across the discovered circuit edges.
 - **Empirical Superiority:** EAP-IG achieves $>95\%$ circuit faithfulness (matching exhaustive activation patching) while running orders of magnitude faster, establishing it as the standard engine for large-scale automated circuit discovery.
 
+***
+
+## 27. Sub-Token Channel Pruning & Asymmetric 2-Bit Quantization (KIVI & ThinK) (2024–2026)
+
+### 27.1 Beyond Whole-Token Eviction
+Standard KV cache compression strategies (such as H2O, SnapKV, or StreamingLLM) operate at the coarse granularity of entire tokens.
+- **The Information Loss Paradox:** Evicting a single token drops its entire key and value representation. In precision-critical retrieval tasks (e.g., extracting phone numbers, cryptographic hashes, or legal statute citations), losing even one "low-attention" token permanently corrupts retrieval accuracy.
+- **Sub-Token Geometry:** To preserve 100% of tokens without context truncation, modern architectures compress the representation along bit-width and channel dimensions rather than dropping sequence steps.
+
+### 27.2 KIVI: Asymmetric 2-Bit Quantization (Liu et al., ICML 2024)
+Zirui Liu et al. (*KIVI: A Tuning-Free Asymmetric 2-bit Quantization for KV Cache*, ICML 2024) discovered that Key and Value states exhibit radically divergent outlier distributions:
+1. **Per-Channel Key Quantization:**
+   - Keys exhibit persistent **channel outliers**: a small subset of channel indices maintain extreme magnitude variances across the entire sequence length $T$.
+   - Quantizing Keys per-token collapses these outlier channels into low-precision clipping noise.
+   - KIVI quantizes Keys **per-channel** (grouping across time $T$), isolating outlier channels with dedicated dynamic scaling factors:
+     $$\tilde{K}_{c, t} = \text{round}\left( \frac{K_{c, t} - \min_{t'} K_{c, t'}}{\Delta_c} \right) \quad \text{where } \Delta_c = \frac{\max_{t'} K_{c, t'} - \min_{t'} K_{c, t'}}{2^b - 1}$$
+2. **Per-Token Value Quantization:**
+   - In contrast, Values exhibit **token outliers**: individual token states have high overall norms, while individual channels within that token share similar dynamic ranges.
+   - KIVI quantizes Values **per-token** (grouping across channel dimension $D$):
+     $$\tilde{V}_{t, c} = \text{round}\left( \frac{V_{t, c} - \min_{c'} V_{t, c'}}{\Delta_t} \right) \quad \text{where } \Delta_t = \frac{\max_{c'} V_{t, c'} - \min_{c'} V_{t, c'}}{2^b - 1}$$
+3. **Inference Footprint:** Achieves tuning-free 2-bit KV cache storage ($b = 2$, $\sim 2.6$ bits effective with metadata), expanding serving throughput by up to $3.47\times$ and allowing $4\times$ larger batch sizes with $<0.1$ perplexity degradation on LLaMA-2/3.
+
+### 27.3 ThinK: Query-Driven Key Channel Pruning (2024)
+Complementary to bit-level quantization, **ThinK** (*Thinner Key Cache by Query-Driven Pruning*, 2024) targets channel-dimension redundancy:
+- **Redundant Key Channels:** Singular value decomposition reveals that over $30\%$ of channels in key vectors contribute negligible variance to the dot-product query-key attention distribution.
+- **Query-Guided Pruning:** Selectively prunes $20\text{--}50\%$ of low-utility key channels based on runtime query alignment, halving Key cache memory.
+- **Synergistic Composition:** When composed with KIVI 2-bit quantization, ThinK yields up to a **$2.8\times$ peak memory reduction** beyond 2-bit baselines, enabling million-token generation on commodity GPU hardware without dropping a single token from the prompt.
+
+
 
 
 
