@@ -844,6 +844,37 @@ Callum McDougall et al. (*Copy Suppression: Comprehensively Understanding an Att
   - McDougall et al. proved that self-repair is **not** an active compensatory feedback loop: ablating the upstream copy heads eliminates the signal that triggers the copy suppression head.
   - As a result, the suppression head ceases firing ($\Delta z_t \to 0$), automatically lifting its inhibitory brake and preserving downstream accuracy without explicit coordination.
 
+***
+
+## 36. Cross-Layer Attention (CLA) & Inter-Layer KV Sharing (Brandon et al., NeurIPS 2024)
+
+### 36.1 The Head-Dimension Ceiling of MQA and GQA
+To alleviate the memory bandwidth bottleneck of autoregressive inference, modern architectures compress Key and Value caches along the head dimension:
+- **Multi-Query Attention (MQA):** Collapses all attention heads to a single shared Key-Value head ($H_{\text{KV}} = 1$).
+- **Grouped-Query Attention (GQA):** Partitions $H_Q$ query heads into $G$ groups, assigning one Key-Value head per group ($H_{\text{KV}} = G$, typically $G = 8$).
+- **The Depth Bottleneck:** While MQA/GQA compress the head dimension by $4\times\text{--}8\times$, they treat network depth as immutable. In an $L$-layer model (e.g., $L = 64\text{--}80$ in modern 70B models), the engine still must materialize, store, and fetch $L$ distinct Key-Value matrices across sequence length $T$:
+  $$\text{Memory}_{\text{MQA}} = 2 \cdot B \cdot L \cdot T \cdot 1 \cdot d_{\text{head}} \cdot b$$
+  At long context lengths ($T \ge 64\text{k}$), memory bandwidth spent fetching $L$ separate KV caches remains the dominant latency bottleneck.
+
+### 36.2 The Cross-Layer Attention (CLA) Mechanism
+William Brandon et al. (*Reducing Transformer Key-Value Cache Size with Cross-Layer Attention*, MIT / NeurIPS 2024) introduce **Cross-Layer Attention (CLA)**, compressing the KV cache along the layer dimension $L$ by sharing Key-Value projections across adjacent transformer blocks:
+1. **Layer Grouping & Key-Value Materialization:**
+   Let the network layers be partitioned into contiguous sharing groups of size $S$ (typically $S = 2$):
+   $$\mathcal{G}_k = \{ (k-1)S + 1, \, (k-1)S + 2, \, \dots, \, kS \}, \quad k \in [1, L/S]$$
+   Within each group $\mathcal{G}_k$, only the base layer $l_{\text{base}} = (k-1)S + 1$ computes and stores Key-Value projections into GPU HBM:
+   $$K_{\mathcal{G}_k} = x_{l_{\text{base}}} W_K^{(k)}, \quad V_{\mathcal{G}_k} = x_{l_{\text{base}}} W_V^{(k)}$$
+2. **Independent Query Execution with Shared KV:**
+   Every layer $l \in \mathcal{G}_k$ computes its own independent Query projection $Q_l = x_l W_Q^{(l)}$ and retains its own Multi-Layer Perceptron (MLP) weights, but performs attention directly over the group's shared Key-Value cache:
+   $$\text{Attn}_l(Q_l) = \text{Softmax}\left( \frac{Q_l K_{\mathcal{G}_k}^\top}{\sqrt{d}} \right) V_{\mathcal{G}_k}$$
+3. **Contrast with Global Caching (YOCO):**
+   Unlike Microsoft's YOCO (which imposes an asymmetric bipartite Self-Decoder / Cross-Decoder pipeline with a single global cache at $L/2$), CLA preserves standard local residual and MLP connections uniformly throughout the stack, requiring zero alterations to standard transformer parallelization frameworks (e.g., Megatron-LM, vLLM).
+
+### 36.3 Empirical Memory-Accuracy Frontier
+- **Compounding $2\times$ KV Reduction:** When applied on top of MQA, CLA with $S = 2$ (CLA-2) reduces the total KV cache memory footprint by an additional **$2\times$** (and up to $8\times\text{--}16\times$ over standard Multi-Head Attention).
+- **Near-Zero Perplexity Degradation:** Evaluated on 1B and 3B models trained from scratch on 1T+ tokens, CLA-2 matches the pre-training validation perplexity of standard MQA baselines within $<0.02$ cross-entropy loss, while doubling maximum batch sizes and context lengths on commodity GPUs.
+- **Synergistic Quantization:** Composing CLA with 2-bit asymmetric quantization (KIVI) enables serving 128k-token contexts on consumer hardware with an effective KV footprint of $<1.3$ bits per token-layer.
+
+
 
 
 

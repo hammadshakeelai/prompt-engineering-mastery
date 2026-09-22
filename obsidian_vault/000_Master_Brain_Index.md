@@ -53,6 +53,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[research_engine/critical_thinking_hook.md]]
 - [[research_engine/research_pivot_05.md]]
 - [[research_engine/research_pivot_06.md]]
+- [[research_engine/research_pivot_07.md]]
 
 ## 🧩 5. Atomic Concept Snippets Knowledge Graph
 - [[raw_research/snippets/activation_steering_vectors.md|Activation Steering Vectors]]
@@ -97,6 +98,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/crag_corrective_rag.md|Crag Corrective Rag]]
 - [[raw_research/snippets/crescendo_jailbreak.md|Crescendo Jailbreak]]
 - [[raw_research/snippets/crewai_delegation.md|Crewai Delegation]]
+- [[raw_research/snippets/cross_layer_attention_cla.md|Cross Layer Attention Cla]]
 - [[raw_research/snippets/crosscoders_and_transcoders.md|Crosscoders And Transcoders]]
 - [[raw_research/snippets/cursor_system_prompt_design.md|Cursor System Prompt Design]]
 - [[raw_research/snippets/cutting_edge_2025.md|Cutting Edge 2025]]
@@ -206,6 +208,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/role_prompting.md|Role Prompting]]
 - [[raw_research/snippets/ruler_benchmark_long_context.md|Ruler Benchmark Long Context]]
 - [[raw_research/snippets/sae_monosemanticity.md|Sae Monosemanticity]]
+- [[raw_research/snippets/score_entropy_discrete_diffusion_sedd.md|Score Entropy Discrete Diffusion Sedd]]
 - [[raw_research/snippets/self_consistency.md|Self Consistency]]
 - [[raw_research/snippets/self_rag.md|Self Rag]]
 - [[raw_research/snippets/self_rag_ext.md|Self Rag Ext]]
