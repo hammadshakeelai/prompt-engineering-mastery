@@ -261,6 +261,28 @@ First-generation prompt compressors (LLMLingua, Selective-Context) relied on sma
 - **Unidirectional Failure:** In long prompts, earlier tokens cannot condition on later key facts. A crucial entity appearing at the start may exhibit low causal surprisal locally and get pruned, corrupting downstream task execution.
 - **Bidirectional Distillation (LLMLingua-2):** Replaces causal perplexity with small bidirectional encoders (XLM-RoBERTa / mBERT) trained via teacher distillation from frontier models (GPT-4o). Capturing full past and future context simultaneously achieves superior prompt compression (up to 80% reduction) with $3\times\text{--}6\times$ lower compression latency.
 
+***
+
+## 16. Grammar-Pruned Speculative Tree Verification & Adaptive Constraint Propagation (2025–2026)
+
+### 16.1 Moving Beyond Linear Speculation: Tree-Attention
+Standard speculative decoding evaluates a single linear trajectory of $K$ draft tokens. However, in structured generation (e.g., JSON schemas with enums or branching fields), linear drafts suffer from low acceptance rates at semantic branching points.
+- **Speculative Tree Drafting:** Draft models emit candidate token trees $\mathcal{T}$ branching across multiple valid grammar continuations.
+- **Tree-Structured Attention:** The target verification model verifies all tree nodes in a single forward pass using a custom ancestor attention mask:
+  $$M_{i, j} = \begin{cases} 0 & \text{if node } j \text{ is an ancestor of node } i \\ -\infty & \text{otherwise} \end{cases}$$
+  This checks multiple branching paths concurrently without multiplying prefill/decode forward-pass compute.
+
+### 16.2 Pre-Verification Grammar Pruning
+Before dispatching candidate draft trees to GPU verification kernels, modern engines (XGrammar co-design) apply state-machine bitmasks to prune invalid tree branches:
+- **Zero-Compute Branch Eviction:** Any candidate branch that violates the compiled pushdown automaton is pruned before target model verification, ensuring that 100% of verified tokens are syntactically admissible.
+- **Leaf-to-Root Traversal Verification:** Unlike rigid top-down pruning that discards valid downstream tokens if a single parent node diverges, traversal verification preserves valid suffix sequences, maximizing the token-acceptance yield per decoding step.
+
+### 16.3 Adaptive Constraint Propagation (MetaJuLS, 2025)
+Standard pushdown automata struggle with context-sensitive, dynamic constraints (e.g., cross-field dependencies where `field_B`'s allowed enum values depend on the generated value of `field_A`).
+- **Adaptive Scheduling:** MetaJuLS dynamically compiles and swaps sub-grammars at runtime based on preceding token outputs.
+- **Deterministic Pipeline Alignment:** Eliminates brittle application-level validation loops by guaranteeing that complex, relational JSON objects satisfy relational and cross-attribute invariants natively during generation.
+
+
 
 
 
