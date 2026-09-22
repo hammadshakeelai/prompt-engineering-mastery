@@ -784,6 +784,35 @@ Tri Dao and Albert Gu (*Transformers are SSMs: Generalized Models and Efficient 
   - The KV cache does **not** grow with sequence length $T$.
   - Generates tokens with **constant $\mathcal{O}(1)$ memory consumption and constant $\mathcal{O}(1)$ time complexity** across contexts exceeding $1\text{,000,000 tokens}$, running $2\times\text{--}8\times$ faster than FlashAttention-2 while matching Transformer expressivity.
 
+***
+
+## 34. Direct Acceptance Rate Optimization & LK Losses for Speculative Decoding (Samarin et al., 2026 / vLLM)
+
+### 34.1 The Surrogate Gap: KL Divergence vs. Total Variation
+In speculative decoding (Leviathan et al., Chen et al.), small draft model $P_d$ proposes $\gamma$ tokens verified in parallel by target model $P_t$.
+- **The Acceptance Probability Identity:** A proposed token $x$ is accepted with probability $\alpha(x) = \min(1, P_t(x) / P_d(x))$. The expected acceptance rate under draft distribution $P_d$ is mathematically bounded by the **Total Variation (TV) distance**:
+  $$\mathbb{E}_{x \sim P_d}[\alpha(x)] = \sum_{x \in \mathcal{V}} P_d(x) \min\left(1, \frac{P_t(x)}{P_d(x)}\right) = \sum_{x \in \mathcal{V}} \min(P_d(x), P_t(x)) = 1 - \frac{1}{2} \|P_t - P_d\|_{\text{TV}}$$
+  where $\|P_t - P_d\|_{\text{TV}} = \sum_{x \in \mathcal{V}} |P_t(x) - P_d(x)|$.
+- **The Failure of Standard Distillation:** Speculator models are traditionally trained via forward Kullback-Leibler (KL) divergence:
+  $$\mathcal{D}_{\text{KL}}(P_t \parallel P_d) = \sum_{x \in \mathcal{V}} P_t(x) \log \frac{P_t(x)}{P_d(x)}$$
+  Forward KL is strictly **zero-avoiding**: whenever $P_t(x) > 0$, letting $P_d(x) \to 0$ incurs infinite loss. For compact draft models with constrained capacity (e.g., 1B draft for 70B target), this forces $P_d$ to spread probability mass diffusely across low-probability vocabulary tails, starving probability mass from the target's top-1 and top-5 tokens and driving down the acceptance rate.
+
+### 34.2 The LK Loss Family Formulation
+Samarin et al. (*LK Losses: Direct Acceptance Rate Optimization for Speculative Decoding*, arXiv:2602.23881, 2026) replace KL divergence with loss functions directly aligned with the Total Variation identity:
+1. **Total Variation Loss:**
+   $$\mathcal{L}_{\text{TV}}(P_d, P_t) = 1 - \sum_{x \in \mathcal{V}} \min(P_d(x), P_t(x)) = \sum_{x \in \mathcal{V}} \max\left(0, P_t(x) - P_d(x)\right)$$
+   This directly penalizes under-allocation of probability mass on tokens where $P_t(x) > P_d(x)$, without penalizing the draft model for assigning zero probability to irrelevant tokens in the tail.
+2. **Hybrid LK Optimization (`lk_hybrid`):**
+   To provide smooth subgradient optimization through draft logits $z_d$ while maintaining numerical stability, the hybrid objective blends TV with an adaptive asymmetric margin:
+   $$\mathcal{L}_{\text{LK}}(z_d, P_t) = \sum_{x \in \mathcal{V}} w_t(x) \cdot \max\left(0, P_t(x) - P_d(x)\right)^\gamma + \lambda \mathcal{D}_{\text{KL}}(P_t \parallel P_d)$$
+   where $w_t(x) = \mathbb{I}[P_t(x) \ge \tau]$ focuses the gradient update on high-confidence target tokens.
+
+### 34.3 Empirical Impact & Speculative Length Scaling
+- **Increased Acceptance Length:** Implemented as a drop-in loss in speculator distillation pipelines (SpecForge, vLLM), LK losses consistently increase the mean acceptance length $\mathbb{E}[L]$ by **$+8\%\text{--}+10\%$** over standard KL baselines across target models ranging from 8B to 685B parameters.
+- **Enhanced Grammar Synergy:** In grammar-constrained generation (JSON/code), where the candidate set is already filtered to valid transitions, LK losses concentrate draft mass exclusively on the most likely valid tokens, driving grammar acceptance rates $\alpha_\mathcal{G}$ above $93\%$.
+- **Zero Runtime Overhead:** Delivers higher inference speedups purely by modifying the offline distillation objective, requiring zero additional FLOPs or memory during inference.
+
+
 
 
 

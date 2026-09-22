@@ -138,6 +138,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/lats.md|Lats]]
 - [[raw_research/snippets/lean4_formal_theorem_proving.md|Lean4 Formal Theorem Proving]]
 - [[raw_research/snippets/least_to_most.md|Least To Most]]
+- [[raw_research/snippets/lk_losses_speculative_acceptance.md|Lk Losses Speculative Acceptance]]
 - [[raw_research/snippets/llguidance_cfg_earley_trie.md|Llguidance Cfg Earley Trie]]
 - [[raw_research/snippets/llm_calibration.md|Llm Calibration]]
 - [[raw_research/snippets/llm_watermarking.md|Llm Watermarking]]
