@@ -314,6 +314,38 @@ Traditional mechanistic circuit tracing treats multi-layer perceptron (MLP) bloc
 - **Cross-Layer Transcoders (CLTs):** Allow sparse features to read directly from the residual stream at layer $l$ and write outputs to MLPs across subsequent layers $l + k$.
 - **Faithful Attribution Graphs:** Linearizes MLP computation into discrete, sparse feature interactions, enabling exact end-to-end attribution graphs that trace reasoning and knowledge recall without intervening non-linearities.
 
+***
+
+## 18. Dynamic Submodular KV Cache Eviction & Heavy-Hitter Dynamics (2023–2026)
+
+### 18.1 The Heavy-Hitter ($H_2$) Power Law in Attention
+The memory footprint of the Key-Value (KV) cache scales linearly with context length $T$, batch size $B$, and model dimension $d$, creating a primary hardware bottleneck during long-horizon generation.
+
+Zhenyu Zhang et al. (*H2O: Heavy-Hitter Oracle*, NeurIPS 2023) established that self-attention distributions follow an extreme power law:
+- **Attention Concentration:** A small subset ($\le 20\%$) of tokens—termed **Heavy Hitters ($H_2$)**—accumulates more than $80\%$ of total cumulative attention mass:
+  $$S_j = \sum_{t=j}^T A_{t, j} = \sum_{t=j}^T \frac{\exp(q_t k_j^T / \sqrt{d})}{\sum_{m=1}^t \exp(q_t k_m^T / \sqrt{d})}$$
+- **Three Token Taxonomies:**
+  1. *Attention Sinks:* The initial $2\text{--}4$ prompt tokens absorb residual unallocated softmax probability mass, stabilizing numerical dynamic range.
+  2. *Structural Anchors:* Delimiters, punctuation, and markdown syntax markers that direct routing across clauses.
+  3. *Semantic Heavy Hitters:* Domain-specific key entities and operational variables that downstream generation repeatedly references.
+
+### 18.2 Dynamic Submodular Eviction Formulation
+H2O frames KV cache management as a constrained submodular optimization problem: maximizing retained attention utility under a strict cache budget $C$:
+$$\max_{S \subseteq \{1, \dots, T\}, |S| \le C} \sum_{j \in S} S_j$$
+- **Greedy Cache Eviction Policy:** At step $t$, the cache maintains a local sliding window $W_{\text{recent}}$ and a heavy-hitter pool $H_2$. When cache size exceeds capacity $C$, the token with the lowest cumulative attention score in $H_2$ is greedily evicted:
+  $$j^* = \arg\min_{j \in H_2 \setminus W_{\text{recent}}} S_j$$
+- **Theoretical Approximation:** Due to the submodular properties of attention coverage, greedy eviction guarantees a $(1 - 1/e) \approx 63.2\%$ approximation bound compared to an omniscient offline oracle.
+- **Hardware Performance:** H2O achieves up to $29\times$ higher inference throughput and $1.9\times$ latency reduction while retaining $>95\%$ generation accuracy across long-context benchmarks.
+
+### 18.3 Layer-Asymmetric Budgets (SnapKV & PyramidKV, 2024–2025)
+Standard H2O allocates identical KV cache budgets $C_l = C$ across all layers $l \in [1, L]$. However, mechanistic probing reveals profound layer-wise functional divergence:
+- **Exploratory Lower Layers:** Early layers perform broad, diffuse syntactic aggregation across large token spans, requiring larger sliding context windows.
+- **Abstract Upper Layers:** Higher layers engage in task-specific reasoning and exhibit extreme attention sparsity, where only a tiny fraction of semantic tokens receive active queries.
+- **Pyramidal Allocation:** PyramidKV dynamically tapers the cache budget geometrically:
+  $$C_l = C_{\text{base}} \cdot \left(1 - \alpha \frac{l}{L}\right)$$
+  Yielding up to $55\%$ additional VRAM reduction over flat H2O without sacrificing needle-in-a-haystack retrieval accuracy.
+
+
 
 
 

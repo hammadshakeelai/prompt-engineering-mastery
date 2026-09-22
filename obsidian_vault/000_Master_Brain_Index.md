@@ -116,6 +116,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/graph_of_thoughts.md|Graph Of Thoughts]]
 - [[raw_research/snippets/grok_system_prompt_steering.md|Grok System Prompt Steering]]
 - [[raw_research/snippets/grpo_mechanics.md|Grpo Mechanics]]
+- [[raw_research/snippets/h2o_heavy_hitter_submodular_kv.md|H2O Heavy Hitter Submodular Kv]]
 - [[raw_research/snippets/hyde_embeddings.md|Hyde Embeddings]]
 - [[raw_research/snippets/icl_theory_ext.md|Icl Theory Ext]]
 - [[raw_research/snippets/implicit_gradient_descent_icl.md|Implicit Gradient Descent Icl]]
