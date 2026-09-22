@@ -366,6 +366,34 @@ Jump-forward decoding operates in tight synchrony with RadixAttention tree cachi
 - **KV Cache Splice:** When combined with cached prefix trees, the KV states for known static schema templates are retrieved directly from RAM/HBM without running any compute.
 - **Throughput Acceleration:** Achieves $2\times\text{--}5\times$ speedups in structured generation throughput while guaranteeing 0% schema non-conformance.
 
+***
+
+## 20. The Linear Representation Hypothesis & Contrastive Activation Addition (CAA) Geometry (2023–2026)
+
+### 20.1 Theoretical Foundation: The Linear Representation Hypothesis
+Do high-level conceptual abstractions (truthfulness, refusal, sycophancy, harmlessness) reside in complex non-linear manifolds, or are they geometrically simple?
+Marks & Tegmark (*The Geometry of Truth*, 2023) and Park et al. (2023) proved the **Linear Representation Hypothesis**:
+- **Linear Separability:** In intermediate transformer layers (typically layers $L/2$ to $3L/4$), conceptual features are encoded as 1-dimensional directions $d \in \mathbb{R}^D$ in activation space.
+- **Concept Evaluation:** The presence or salience of a concept in hidden state $h$ is computed via simple linear projection:
+  $$\text{Score}(h) = \langle h, \hat{d} \rangle = \hat{d}^T h$$
+- **Cross-Domain Generalization:** A truth direction extracted from simple factual statements (e.g., geographic facts) transfers cleanly to evaluating mathematical and historical statements without recalibration.
+
+### 20.2 Contrastive Activation Addition (CAA)
+Rimsky et al. (2023) formalized **Contrastive Activation Addition (CAA)** to steer LLM behavior at inference time without gradient descent or parameter updates:
+- **Steering Vector Extraction:** Given a dataset $D = \{(x_i^+, x_i^-)\}_{i=1}^N$ of contrastive prompt pairs differing only along the target trait (e.g., sycophantic vs. objective responses):
+  $$v_{\text{steer}}^{(l)} = \frac{1}{|D|} \sum_{i=1}^{|D|} \left( h^{(l)}(x_i^+) - h^{(l)}(x_i^-) \right)$$
+- **Inference-Time Injection:** At generation step $t$, the residual activation at layer $l$ is perturbed by:
+  $$h^{(l)} \leftarrow h^{(l)} + \alpha \cdot v_{\text{steer}}^{(l)}$$
+  where $\alpha \in \mathbb{R}$ controls intervention intensity. Positive $\alpha$ reinforces the target trait; negative $\alpha$ suppresses it.
+
+### 20.3 Forward Propagation Dynamics & Orthogonal Concept Ablation
+1. **Propagation Stability:** Because LayerNorm and residual connections preserve linear shifts, small perturbations $\alpha \cdot v_{\text{steer}}$ propagate through subsequent attention and MLP layers without destabilizing language fluency, provided:
+   $$\|\alpha \cdot v_{\text{steer}}^{(l)}\|_2 \ll \|h^{(l)}\|_2$$
+2. **Orthogonal Concept Ablation:** To permanently neutralize unwanted behaviors (e.g., sycophancy or bias) rather than dynamically steering them:
+   $$h_{\text{ablated}}^{(l)} = h^{(l)} - \left( \langle h^{(l)}, \hat{v} \rangle \right) \hat{v} \quad \text{where } \hat{v} = \frac{v_{\text{steer}}}{\|v_{\text{steer}}\|_2}$$
+   This removes all projection along the concept axis, guaranteeing zero capability along that behavioral direction while preserving 99%+ of baseline benchmark performance.
+
+
 
 
 
