@@ -170,4 +170,21 @@ In modern agentic architectures, XGrammar bridges deterministic type safety and 
 - **Grammar-Guided Jump-Forward Decoding:** Because fixed syntax tokens (JSON delimiters, quotation marks, boolean keywords) have deterministic transitions in the grammar automaton, XGrammar permits speculative jump-forward generation, emitting multi-token sequences in a single forward pass without sampling.
 - **Structural Tags Protocol:** Standardizes tool-calling schemas and composable nested grammars for multi-agent handoffs, guaranteeing 100% syntactically valid JSON function arguments without retry loops or prompt repair costs.
 
+***
+
+## 11. Automated Circuit Discovery & The Induction Engine of ICL (2024–2025)
+
+### 11.1 Induction Circuits as the Microscopic Engine of ICL
+Olsson et al. (Anthropic) identified **Induction Heads** as the primary mechanistic circuit enabling in-context learning. An induction circuit implements the abstract completion rule $[A][B] \dots [A] \to [B]$ via a two-layer attention composition:
+1. **Previous-Token Head (Layer $L$):** Writes the identity of the preceding token $[A]$ into the residual stream at the position of token $[B]$.
+2. **Induction Head (Layer $L+1$):** At a later occurrence of token $[A]$, the query vector $q_{[A]}$ searches back across the sequence for key vectors $k_{[B]}$ written by the previous-token head. The head then attends to position $[B]$ and copies token $[B]$ via the Value-Output matrix ($W_O W_V$) to the final prediction logit.
+This circuit universally emerges across transformer scale during training and coincides with sudden phase-change drops in in-context loss.
+
+### 11.2 Automated Circuit Discovery (ACDC) & Edge Attribution Patching (EAP)
+Historically, tracing circuits required human intuition and brute-force ablation of thousands of attention heads:
+- **ACDC (Conmy et al., NeurIPS 2023):** Automates computational sub-graph discovery via recursive, greedy edge-pruning. Starting from the complete model graph, ACDC systematically patches corrupt activations into edges and prunes any connection whose removal does not alter task loss beyond a threshold $\tau$.
+- **Edge Attribution Patching (EAP / EAP-IG, 2024):** Computes linear first-order gradient approximations ($g_e \approx \nabla_{a} \mathcal{L} \cdot \Delta a$) over clean/corrupted activation deltas. EAP recovers identical circuits to ACDC in seconds rather than GPU hours, scaling automated circuit discovery to 70B+ parameter models.
+- **Contextual Decomposition for Transformers (CD-T, 2025):** Decomposes non-linear MLP and attention interactions algebraically without repeated forward-pass sampling, mapping end-to-end task circuits with zero intervention overhead.
+
+
 
