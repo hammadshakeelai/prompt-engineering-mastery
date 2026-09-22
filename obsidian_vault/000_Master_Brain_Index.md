@@ -23,8 +23,17 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[04_programmatic_and_automated_optimization/textgrad_and_gradient_free_opt.md]]
 
 ## 🔬 2. Raw Subagent Research (Web & Factual Dumps)
+- [[raw_research/agentic_memory.md]]
+- [[raw_research/agent_orchestration_frameworks.md]]
+- [[raw_research/icl_theory.md]]
+- [[raw_research/latent_mechanics_dossier.md]]
+- [[raw_research/llm_as_a_judge.md]]
+- [[raw_research/multimodal_vlm_prompting.md]]
 - [[raw_research/programmatic_optimization.md]]
+- [[raw_research/prompt_compression.md]]
+- [[raw_research/prompt_sensitivity.md]]
 - [[raw_research/security_jailbreaks.md]]
+- [[raw_research/system_prompt_patterns.md]]
 - [[raw_research/test_time_compute.md]]
 - [[raw_research/OBLITERATUS]] - (Abliteration & Orthogonal Direction Modification Toolkit)
 - [[raw_research/chatgpt_system_prompts]] - (Extracted System Prompts for ChatGPT, Claude, Apple Intelligence)
