@@ -750,6 +750,41 @@ Todd et al. (*Function Vectors in Large Language Models*, ICLR 2024) proved the 
   $$\mathbf{v}_{\text{composite}} = \alpha_1 \mathbf{v}_{f_1} + \alpha_2 \mathbf{v}_{f_2}$$
   demonstrating that Transformers represent procedural algorithmic operations as linear geometric directions in high-dimensional latent space.
 
+***
+
+## 33. Structured State Space Duality (SSD) & Mamba-2 Constant Memory (Dao & Gu, ICML 2024)
+
+### 33.1 The Quadratic Transformer vs. Linear SSM Dilemma
+Standard autoregressive Transformers suffer from the quadratic memory and compute wall:
+- **Prefill Complexity:** Full self-attention requires $\mathcal{O}(T^2)$ dot products.
+- **Decoding Memory Wall:** Autoregressive generation must load an accumulating Key-Value cache of size $\mathcal{O}(B \cdot L \cdot T \cdot d)$ from high-bandwidth GPU memory (HBM) at every single forward step.
+- Conversely, classical Structured State Space Models (SSMs like S4 and Mamba-1) compress past history into a fixed-size recurrent state vector $h_t \in \mathbb{R}^d$ ($\mathcal{O}(1)$ memory footprint), but relied on sequential associative scan algorithms that underutilize specialized hardware matrix engines (NVIDIA Tensor Cores).
+
+### 33.2 The Semiseparable Matrix Duality
+Tri Dao and Albert Gu (*Transformers are SSMs: Generalized Models and Efficient Algorithms Through Structured State Space Duality*, ICML 2024) establish a mathematical unification between linear Attention and selective SSMs via **1-Semiseparable Matrices**:
+1. **The Discretized State Space View (Recurrent Mode):**
+   $$h_t = A_t h_{t-1} + B_t x_t, \quad y_t = C_t h_t$$
+   When $A_t$ is restricted to scalar-times-identity scaling ($A_t = a_t \mathbf{I}$, where $a_t \in (0, 1)$), the recurrence updates the state via a cumulative decay:
+   $$h_t = \sum_{s=0}^t \left( \prod_{k=s+1}^t a_k \right) B_s x_s$$
+2. **The Masked Linear Attention View (Matrix Mode):**
+   Expanding the recurrence across all timesteps yields an exact matrix transformation:
+   $$Y = (M \circ (C B^\top)) X$$
+   where $M \in \mathbb{R}^{T \times T}$ is a lower-triangular **1-semiseparable decay matrix**:
+   $$M_{j, i} = \begin{cases} \prod_{k=i+1}^j a_k & \text{if } j \ge i \\ 0 & \text{otherwise} \end{cases}$$
+   Setting $C = Q$ (queries), $B = K$ (keys), and $X = V$ (values) reveals that **selective SSMs are mathematically equivalent to causal linear attention** equipped with exponential relative position decay.
+
+### 33.3 Block Matrix Multiplications & $\mathcal{O}(1)$ Decoding State
+- **Hardware-Aware Chunked Computation:**
+  To maximize Tensor Core throughput during training and prefilling, Mamba-2 partitions the sequence into blocks of size $Q$ (e.g., $Q = 64$).
+  - *Intra-Chunk:* Diagonal block computation is cast as dense matrix multiplications computed directly via Tensor Cores.
+  - *Inter-Chunk:* Off-diagonal historical information passes between blocks through a low-dimensional recurrent state matrix $H \in \mathbb{R}^{d_{\text{in}} \times d_{\text{out}}}$.
+- **Constant Memory Autoregressive Decoding:**
+  During generation, Mamba-2 operates strictly in recurrent mode:
+  $$H_t = a_t H_{t-1} + K_t^\top V_t, \quad Y_t = Q_t H_t$$
+  - The KV cache does **not** grow with sequence length $T$.
+  - Generates tokens with **constant $\mathcal{O}(1)$ memory consumption and constant $\mathcal{O}(1)$ time complexity** across contexts exceeding $1\text{,000,000 tokens}$, running $2\times\text{--}8\times$ faster than FlashAttention-2 while matching Transformer expressivity.
+
+
 
 
 
