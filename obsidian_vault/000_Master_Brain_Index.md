@@ -131,6 +131,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/langgraph_patterns.md|Langgraph Patterns]]
 - [[raw_research/snippets/lats.md|Lats]]
 - [[raw_research/snippets/least_to_most.md|Least To Most]]
+- [[raw_research/snippets/llguidance_cfg_earley_trie.md|Llguidance Cfg Earley Trie]]
 - [[raw_research/snippets/llm_calibration.md|Llm Calibration]]
 - [[raw_research/snippets/llm_watermarking.md|Llm Watermarking]]
 - [[raw_research/snippets/logit_bias.md|Logit Bias]]
