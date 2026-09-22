@@ -137,3 +137,18 @@ Google DeepMind released Gemma Scope as an open-access "microscope" across the G
 - **Universal Layer Coverage:** Provides JumpReLU SAEs trained across all residual streams, attention head outputs, and MLP sub-layers.
 - **Skip-Transcoders:** Unlike standard SAEs that analyze static residual snapshots, skip-transcoders model input-output transformations across intermediate Transformer blocks, replacing entire MLP layers with sparse, interpretable linear maps.
 - **Causal Feature Steering:** Enables researchers to causally patch or clamp monosemantic concept directions (e.g., factual recall circuits, deception flags, safety boundaries) with mathematically predictable behavioral steering at test time.
+
+***
+
+## 9. Information Bottlenecks & Gist Activation Distillation (2024–2025)
+
+### 9.1 The Information Bottleneck Principle in Context Processing
+Prompt compression can be formalized using Tishby’s **Information Bottleneck (IB)** principle:
+$$\min_{p(z|x)} I(X; Z) - \beta I(Z; Y)$$
+Where $X$ represents the raw natural language prompt, $Z$ is the compressed latent representation (or minimal token subset), and $Y$ is the downstream generation target. Standard human prompts exhibit high mutual information redundancy $I(X; Z)$ with respect to linguistic scaffolding (syntax, punctuation, polite qualifiers) that contributes near-zero mutual information to the task objective $I(Z; Y)$. Optimal compression discovers a minimal sufficient statistic $Z$ that preserves task prediction while minimizing sequence length.
+
+### 9.2 Virtual Gist Tokens & Attention Bottlenecking
+Mu et al. (*Gist Tokens*, NeurIPS 2023 / 2024 extensions) implement the IB principle within the Transformer's self-attention mechanism:
+- **Modified Attention Masking:** Natural language prompt tokens are mapped into $K$ virtual gist tokens $\mathcal{G} = [g_1, \dots, g_K]$ inserted at prompt boundaries. An attention mask prevents subsequent response tokens from attending to the raw prompt $X$, forcing information to route exclusively through the gist bottleneck $\mathcal{G}$.
+- **Cross-Attention Compaction:** For multi-turn agents, conversation history is distilled into fixed-length gist vectors cached in Key-Value memory. This compresses context by up to 26x, preserving downstream reasoning while reducing quadratic KV cache expansion to a constant $O(K)$ footprint.
+
