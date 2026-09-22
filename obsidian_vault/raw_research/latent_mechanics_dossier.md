@@ -186,5 +186,26 @@ Historically, tracing circuits required human intuition and brute-force ablation
 - **Edge Attribution Patching (EAP / EAP-IG, 2024):** Computes linear first-order gradient approximations ($g_e \approx \nabla_{a} \mathcal{L} \cdot \Delta a$) over clean/corrupted activation deltas. EAP recovers identical circuits to ACDC in seconds rather than GPU hours, scaling automated circuit discovery to 70B+ parameter models.
 - **Contextual Decomposition for Transformers (CD-T, 2025):** Decomposes non-linear MLP and attention interactions algebraically without repeated forward-pass sampling, mapping end-to-end task circuits with zero intervention overhead.
 
+***
+
+## 12. Hardware-Level Prefix Routing: Chunked Prefill, Paged KV-Sharing, and Cross-Model Cache Transfer (2024–2026)
+
+### 12.1 The Prefill Stall & Chunked Prefill Scheduling
+In production serving engines (vLLM, SGLang, TensorRT-LLM), long context prompts (>8k tokens) trigger compute-bound "prefill stalls." Processing massive prompt sequences locks GPU Tensor Cores, preventing concurrent latency-sensitive token generation for other active requests and degrading Time-to-First-Token (TTFT).
+- **Chunked Prefill:** Breaks long prefill prompt tokens into fixed batch chunks (e.g., 512 or 1024 tokens) and schedules them alongside ongoing token decoding steps in continuous batch iterations.
+- **Latency Balancing:** Eliminates TTFT latency spikes, transforming prompt processing from a disruptive batch operation into smooth, interleaved background compute.
+
+### 12.2 Automatic Prefix Caching & Distributed KV Storage (LMCache)
+Prompt engineering architectures heavily rely on static prefix blocks: system prompts, API tool definitions, few-shot exemplars, and document repositories.
+- **Physical Page Mapping:** PagedAttention assigns identical prefix tokens to shared physical memory blocks via hash-indexed block tables. Requests sharing identical prompt prefixes bypass the compute-bound prefill phase entirely, converting prompt ingestion into a constant-time memory lookup.
+- **Tiered Distributed Caching (LMCache):** Extends prefix caching across heterogeneous hardware tiers (GPU HBM $\to$ Host CPU DRAM $\to$ Local NVMe SSD $\to$ Distributed Object Stores). Multi-agent systems can spin up new worker nodes with pre-warmed context caches in milliseconds.
+
+### 12.3 Cross-Model KV Cache Transfer in LLM Families
+Traditional inference architectures treated KV caches as strictly model-specific artifacts. Recent theoretical breakthroughs (2025–2026) establish that representations across different parameter sizes within the same model family (e.g., Qwen 14B to 32B, LLaMA 8B to 70B) share near-isometric latent geometries:
+- **Linear Representation Mapping:** A lightweight linear projection matrix $W_{\text{trans}}$ maps Key-Value tensors from a small "draft" model directly into the KV space of a large foundation model:
+  $$K_{\text{large}} \approx W_K \cdot K_{\text{small}}, \quad V_{\text{large}} \approx W_V \cdot V_{\text{small}}$$
+- **Zero-Compute Handoff:** Enables small, low-latency models to ingest and compress multi-turn dialogue or massive prompts, then pass the pre-computed KV representation directly to a larger reasoning model without re-running the expensive prefill forward pass, retaining $>70-85\%$ downstream accuracy.
+
+
 
 
