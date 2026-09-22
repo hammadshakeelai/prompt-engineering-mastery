@@ -1,21 +1,5 @@
-# PromptBreeder (Fernando et al., Google DeepMind, 2023)
+# Promptbreeder: Self-Referential Prompt Evolution (Fernando et al., 2023)
 
-**Citation:** arXiv:2309.16797
-
-## Core Concept
-Evolutionary algorithm that co-evolves task-prompts AND the mutation-prompts that modify them (self-referential self-improvement).
-
-## Evolutionary Units
-1. **Task-Prompt (P):** Guides LLM to solve target task.
-2. **Mutation-Prompt (M):** Meta-instruction specifying how to mutate P.
-3. **Thinking-Style:** Cognitive heuristic for reasoning patterns.
-
-## Mutation Operators
-1. **Direct Mutation:** Zero-shot mutation of P without M.
-2. **First-Order:** Applies M to P to yield improved P'.
-3. **Hyper-Mutation (Self-Referential):** Mutates the mutation prompts themselves.
-4. **Lamarckian Mutation:** Reverse-engineers prompts from correct solution traces.
-5. **EDA Shuffling:** Maintains diversity via semantic embeddings.
-
-## Results
-Outperforms CoT and Plan-and-Solve on GSM8K, SVAMP, hate speech detection.
+- **Co-Evolution**: Evolves task-prompts coupled with meta-level mutation-prompts simultaneously. Mutation-prompts undergo "hypermutation," refining the optimizer itself.
+- **Evolutionary Strategies**: Population-based genetic algorithm driven by binary tournament selection, mutation operators, and estimation-of-distribution algorithms.
+- **Fitness Landscapes**: Traverses rugged, non-differentiable discrete prompt spaces by dynamically adapting mutation operators to landscape geometry.
