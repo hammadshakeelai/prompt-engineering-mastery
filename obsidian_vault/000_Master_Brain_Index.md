@@ -257,6 +257,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/mla_matrix_absorption_mechanics.md|Mla Matrix Absorption Mechanics]]
 - [[raw_research/snippets/model_abliteration.md|Model Abliteration]]
 - [[raw_research/snippets/model_abliteration_refusal_geometry.md|Model Abliteration Refusal Geometry]]
+- [[raw_research/snippets/model_abliteration_subspace_surgery.md|Model Abliteration Subspace Surgery]]
 - [[raw_research/snippets/model_context_protocol_mcp.md|Model Context Protocol Mcp]]
 - [[raw_research/snippets/model_merging_slerp_ties_dare.md|Model Merging Slerp Ties Dare]]
 - [[raw_research/snippets/mooncake_disaggregated_kv_architecture.md|Mooncake Disaggregated Kv Architecture]]
