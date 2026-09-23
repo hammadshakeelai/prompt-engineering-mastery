@@ -131,6 +131,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/cot_faithfulness.md|Cot Faithfulness]]
 - [[raw_research/snippets/cot_when_it_helps.md|Cot When It Helps]]
 - [[raw_research/snippets/cove_factored_verification.md|Cove Factored Verification]]
+- [[raw_research/snippets/cpo_contrastive_preference_optimization.md|Cpo Contrastive Preference Optimization]]
 - [[raw_research/snippets/crag_corrective_rag.md|Crag Corrective Rag]]
 - [[raw_research/snippets/crescendo_jailbreak.md|Crescendo Jailbreak]]
 - [[raw_research/snippets/crescendo_multi_turn_jailbreak.md|Crescendo Multi Turn Jailbreak]]
