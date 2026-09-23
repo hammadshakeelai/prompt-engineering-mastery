@@ -1220,3 +1220,81 @@ Unlike standard refusal training:
 - **Attack Agnosticism:** Circuit breakers do not pattern-match against prompt surface forms. Whether attacked by GCG, AutoDAN, PAIR, or token smuggling, any prompt that traverses into harmful latent concepts triggers the internal circuit breaker, causing the intermediate representation to collapse into benign geometry.
 - **Ablation Resistance:** Because the harmful feature representations are erased across high-dimensional activation space rather than projected along a single line, orthogonal projection techniques (such as Arditi et al.'s refusal ablation) cannot restore the corrupted concept representations.
 
+## 47. Recurrent Feature Drafting & Context-Aware Dynamic Draft Trees (EAGLE-2) (Li et al., EMNLP 2024 / arXiv:2406.16858)
+
+### 47.1 The Bottleneck of Static Speculative Draft Trees
+Standard tree-based speculative decoding frameworks (e.g., SpecInfer, original EAGLE) employ static tree topologies: the branching factor and search depth at each tree node are pre-fixed hyper-parameters determined solely by position index rather than sequence context.
+Yuhui Li et al. (*EAGLE-2: Faster Inference of Language Models with Dynamic Draft Trees*, EMNLP 2024 / arXiv:2406.16858) identify a fundamental inefficiency: token predictability varies dramatically across prompt contexts. In low-entropy contexts (e.g., code syntax, boilerplate, common factual chains), static trees waste compute testing spurious alternative branches; in high-entropy contexts (e.g., open-ended generation), static trees over-speculate deep paths that are deterministically rejected.
+
+### 47.2 Recurrent Feature-Level Autoregression
+EAGLE bypasses the parameter overhead of maintaining a separate draft model by training a single lightweight transformer decoder layer $\mathcal{M}_{\text{draft}}$ that operates directly in the **latent feature space** of the target model $\mathcal{M}_{\text{target}}$:
+1. **Feature Input:** At step $t$, the draft layer takes the top-layer hidden activation $h_t \in \mathbb{R}^d$ of the target model concatenated with the embedding of the current token $e(x_t)$.
+2. **Autoregressive Feature Evolution:** The draft layer recurrently predicts future hidden features $\hat{f}_{t+1}, \dots, \hat{f}_{t+k}$:
+   $$\hat{f}_{t+m} = \mathcal{M}_{\text{draft}}\left(\hat{f}_{t+m-1}, e(x_{t+m-1})\right)$$
+3. **Logit Projection:** Draft token probabilities are obtained via the frozen target unembedding matrix:
+   $$P_d(x_{t+m} \mid \hat{f}_{t+m}) = \text{softmax}\left( W_U \hat{f}_{t+m} \right)$$
+
+### 47.3 Context-Aware Dynamic Tree Construction
+EAGLE-2 establishes that because $\mathcal{M}_{\text{draft}}$ operates on high-dimensional target features, its draft prediction confidence scores are well-calibrated approximations of target model acceptance:
+$$s(v) = \max_{v \in \mathcal{V}} P_d(v \mid \hat{f}) \approx \alpha(v)$$
+
+Instead of a fixed tree, EAGLE-2 constructs a dynamic draft tree $\mathcal{T}$ via priority-queue beam expansion:
+1. **Confidence Accumulation:** For any path $p = (v_1, v_2, \dots, v_m)$ in the draft tree, its cumulative survival score is the product of marginal confidences:
+   $$S(p) = \prod_{i=1}^m s(v_i)$$
+2. **Dynamic Leaf Allocation:** At each drafting step, EAGLE-2 expands the leaf node with the highest cumulative confidence $S(p)$, regardless of depth.
+   - **Low-Entropy Scenarios:** Allocates tree budget into a single deep linear chain (up to $7\text{--}10$ tokens deep), maximizing accepted tokens per step.
+   - **High-Entropy Scenarios:** Allocates tree budget into broad, shallow branching hypotheses, avoiding wasted speculative depth.
+3. **Lossless Tree-Attention Verification:**
+   The dynamic tree is flattened into a single batch and verified using a 2D causal tree-attention mask:
+   $$M_{i,j} = \begin{cases} 1, & \text{if node } j \text{ is an ancestor of node } i \\ 0, & \text{otherwise} \end{cases}$$
+   guaranteeing mathematical equivalence to target model sampling.
+
+### 47.4 Empirical Acceleration
+- Delivers **$3.05\times\text{--}4.26\times$ wall-clock speedup** over non-speculative autoregressive decoding across LLaMA-2/3, Mistral, and Mixtral.
+- Outperforms EAGLE-1 by **$20\%\text{--}40\%$** across diverse benchmarks (MT-Bench, GSM8K, HumanEval) with zero degradation in generation distribution.
+
+---
+
+## 48. Semantic Entropy & Epistemic Uncertainty Estimation (Farquhar et al., Nature 2024 / Kuhn et al., ICLR 2023)
+
+### 48.1 The Lexical Diversity Pathology in Hallucination Detection
+Evaluating hallucination and model uncertainty via standard sequence log-likelihood or token-level Shannon entropy:
+$$H(S \mid x) = -\sum_{s \in \mathcal{S}} P(s \mid x) \ln P(s \mid x)$$
+is fundamentally confounded by natural language polymorphism: an LLM can express the identical underlying fact using dozens of divergent syntactic paraphrases, punctuation choices, and synonyms. Consequently, a model can exhibit high sequence token entropy while possessing complete epistemic confidence in the core semantic fact, or exhibit low sequence token entropy on memorized false sequences.
+
+### 48.2 Semantic Equivalence Partitioning & Semantic Entropy
+Lorenz Kuhn et al. (*Semantic Uncertainty*, ICLR 2023) and Sebastian Farquhar et al. (*Detecting Hallucinations in Large Language Models Using Semantic Entropy*, Nature 2024) formulate uncertainty at the level of **semantic meaning equivalence classes**:
+
+```mermaid
+flowchart TD
+    Prompt["Input Query x"] --> Sample["Sample N Completions s_1, ..., s_N ~ P(s | x)"]
+    Sample --> NLI["Bidirectional NLI Equivalence Clustering"]
+    NLI --> C1["Semantic Cluster C_1: 'Paris' / 'The capital is Paris'"]
+    NLI --> C2["Semantic Cluster C_2: 'Lyon'"]
+    C1 --> SumP["Aggregate Class Probabilities P(C_k | x)"]
+    C2 --> SumP
+    SumP --> CalcSE["Compute Semantic Entropy SE(x) = - Sum P(C_k) ln P(C_k)"]
+    CalcSE --> Decision{"SE(x) > Threshold?"}
+    Decision -->|"Yes (High Epistemic Uncertainty)"| Hallucination["Flagged Confabulation / Hallucination"]
+    Decision -->|"No (Low Semantic Entropy)"| Verified["Semantically Grounded Factual Answer"]
+```
+
+### 48.3 Mathematical Formulation
+1. **Bidirectional Entailment Equivalence Relation:**
+   Two sampled sequences $s^{(i)}, s^{(j)} \sim P(s \mid x)$ belong to the same semantic equivalence class ($s^{(i)} \sim s^{(j)}$) if and only if they mutually entail each other under a formal Natural Language Inference (NLI) model:
+   $$s^{(i)} \sim s^{(j)} \iff \text{Entails}(s^{(i)}, s^{(j)}) \land \text{Entails}(s^{(j)}, s^{(i)})$$
+   This partitions the set of sampled completions into $K$ disjoint semantic equivalence classes $\{C_1, C_2, \dots, C_K\}$.
+
+2. **Cluster Probability Marginalization:**
+   The semantic probability of cluster $C_k$ is the sum of probabilities of all completions within that cluster:
+   $$P(C_k \mid x) = \sum_{s \in C_k} P(s \mid x) \approx \frac{1}{N} \sum_{i=1}^N \mathbb{I}\left( s^{(i)} \in C_k \right)$$
+
+3. **Semantic Entropy Definition:**
+   The semantic entropy $\text{SE}(x)$ evaluates the Shannon entropy over the discrete probability distribution of semantic clusters:
+   $$\text{SE}(x) = -\sum_{k=1}^K P(C_k \mid x) \ln P(C_k \mid x)$$
+
+### 48.4 Theoretical & Empirical Properties
+- **Invariance to Surface Paraphrasing:** If all $N$ completions convey the identical semantic proposition despite varying lexical tokens, $K = 1$, yielding $\text{SE}(x) = -1 \cdot \ln(1) = 0$.
+- **Confabulation Detection Superiority:** On high-stakes factual benchmarks (TriviaQA, CoQA, BioASQ), Semantic Entropy achieves AUROC scores of **$0.85\text{--}0.92$**, outperforming raw token entropy, length-normalized perplexity, and self-evaluation prompting ("Are you sure?") by **$10\text{--}20$ AUROC points**.
+- **Cross-Task Generalizability:** Operates without task-specific training data or fine-tuning, providing a reliable, mathematically rigorous epistemic guardrail for agentic and reasoning systems.
+
