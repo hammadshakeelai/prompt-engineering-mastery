@@ -35,6 +35,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/latent_mechanics_dossier.md]]
 - [[raw_research/llm_as_a_judge.md]]
 - [[raw_research/llm_judge_calibration_and_arena_benchmarks.md]]
+- [[raw_research/mechanistic_representation_engineering_and_activation_steering_monograph.md]]
 - [[raw_research/mixture_of_agents_layered_consensus.md]]
 - [[raw_research/multimodal_visual_grounding_and_cot.md]]
 - [[raw_research/multimodal_vlm_prompting.md]]
