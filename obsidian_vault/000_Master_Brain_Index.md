@@ -197,6 +197,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/g_eval_framework.md|G Eval Framework]]
 - [[raw_research/snippets/gated_linear_attention_transformers.md|Gated Linear Attention Transformers]]
 - [[raw_research/snippets/gated_sparse_autoencoders_shrinkage_elimination.md|Gated Sparse Autoencoders Shrinkage Elimination]]
+- [[raw_research/snippets/gemma_scope_jumprelu_sparse_autoencoders.md|Gemma Scope Jumprelu Sparse Autoencoders]]
 - [[raw_research/snippets/generated_knowledge.md|Generated Knowledge]]
 - [[raw_research/snippets/generative_agents_memory.md|Generative Agents Memory]]
 - [[raw_research/snippets/gist_tokens_prompt_compression.md|Gist Tokens Prompt Compression]]
