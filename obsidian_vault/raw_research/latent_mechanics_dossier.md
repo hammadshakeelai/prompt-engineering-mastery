@@ -12843,3 +12843,103 @@ flowchart TD
 - **Cross-Layer Feature Persistence:** High-level conceptual latents (e.g., biological taxonomy, python syntax trees, legal jurisprudence) persist across 4 to 8 consecutive layers, exhibiting smooth rotational alignment.
 - **Universal Latent Replicability:** Monosemantic features discovered in Gemma 2 align geometrically with features discovered in Claude 3 and Llama 3, supporting the **Platonic Representation Hypothesis**.
 - **Zero Shrinkage Distortion:** JumpReLU recovers over **$94\%$ of the base model's cross-entropy performance**, establishing it as the gold-standard SAE architecture for in-situ mechanistic interventions and safety steering.
+
+---
+
+## 324. KIVI: Tuning-Free Asymmetric 2-Bit Quantization for Key-Value Cache Compression (Liu et al., UC Berkeley, ICML 2024)
+
+### 324.1 The Sub-4-Bit Quantization Wall for KV Caches
+While parameter weights can be compressed to $4$-bit or $2$-bit representations via post-training quantization (AWQ, GPTQ, QuIP#), compressing dynamic Key-Value (KV) cache tensors below $4$ bits historically induced catastrophic perplexity explosions:
+
+1. **Dynamic Activation Outliers:**
+   Unlike static weight matrices, KV cache tensors are generated dynamically at runtime and vary drastically based on prompt contents.
+2. **The Failure of Symmetric Quantization:**
+   Standard quantization engines apply uniform per-tensor or per-token grouping across both Keys and Values. Under $2$-bit quantization ($4$ discrete representation levels), symmetric grouping collapses: small signal variations are obliterated by extreme numerical outliers, destroying positional encoding relationships and causing total attention entropy collapse.
+
+```mermaid
+flowchart TD
+    subgraph Outlier_Asymmetry["The Fundamental Outlier Asymmetry (Liu et al., 2024)"]
+        KeyTensor["Key Tensor K: Channel-Specific Outliers (Persistent across all tokens)"]
+        ValTensor["Value Tensor V: Token-Specific Outliers (Norm spikes on specific tokens)"]
+    end
+    subgraph Symmetric_Failure["Symmetric Quantization Collapse (Per-Token for Both)"]
+        KeyTensor --> PerToken_K["Quantizing Keys Per-Token: Small channels clipped by outlier channels -> Perplexity Explosion (>10^4)"]
+    end
+    subgraph KIVI_Asymmetric["KIVI Asymmetric Formulation (Zero Tuning)"]
+        KeyTensor --> PerChannel_K["Keys: Per-Channel Quantization along Sequence Dimension"]
+        ValTensor --> PerToken_V["Values: Per-Token Quantization along Channel Dimension"]
+        PerChannel_K & PerToken_V --> Int2Cache["2-Bit Quantized KV Cache: 7.8x Memory Reduction (<0.1 PPL Shift)"]
+    end
+```
+
+---
+
+### 324.2 The Core Discovery: Structural Asymmetry Between Keys and Values
+**KIVI** (Liu, Yuan, Che, et al., UC Berkeley, ICML 2024) uncovers a profound structural dichotomy in the geometry of attention tensors:
+
+1. **Keys ($K$) Exhibit Per-Channel Outliers:**
+   Across long sequences, specific feature dimensions (channels $c \in \{1, \dots, d_k\}$) consistently exhibit activation magnitudes up to $50\times$ larger than other channels. However, *along the sequence dimension within a single channel*, key values remain smoothly and normally distributed.
+2. **Values ($V$) Exhibit Per-Token Outliers:**
+   Values exhibit no channel-level bias; instead, specific tokens (such as sentence delimiters, punctuation, and initial attention sinks) exhibit enormous vector norms across *all feature channels simultaneously*.
+
+---
+
+### 324.3 Mathematical Formulation of KIVI Asymmetric 2-Bit Quantization
+
+#### A. Keys: Per-Channel Grouped Quantization
+For the Key tensor $K \in \mathbb{R}^{L \times d_k}$, quantization is performed **per-channel along the sequence dimension**. To support streaming generation without waiting for the full sequence, sequence positions are partitioned into contiguous blocks of size $G$ (typically $G \in [32, 64]$):
+
+$$\Delta_{c, g}^K = \frac{\max_{t \in \text{block}_g} K_{t, c} - \min_{t \in \text{block}_g} K_{t, c}}{2^b - 1}, \quad Z_{c, g}^K = \text{round}\left( -\frac{\min_{t \in \text{block}_g} K_{t, c}}{\Delta_{c, g}^K} \right)$$
+
+$$\hat{K}_{t, c} = \text{clamp}\left( \text{round}\left( \frac{K_{t, c}}{\Delta_{c, g}^K} \right) + Z_{c, g}^K, \; 0, \; 2^b - 1 \right)$$
+
+where $b = 2$ bits (values $\in \{0, 1, 2, 3\}$). Because each channel has its own dedicated scale factor $\Delta_{c, g}^K$ and zero-point $Z_{c, g}^K$, channel outliers never corrupt the dynamic range of neighboring channels!
+
+#### B. Values: Per-Token Quantization
+For the Value tensor $V \in \mathbb{R}^{L \times d_v}$, quantization is performed **per-token across the channel dimension**:
+
+$$\Delta_{t}^V = \frac{\max_{c} V_{t, c} - \min_{c} V_{t, c}}{2^b - 1}, \quad Z_{t}^V = \text{round}\left( -\frac{\min_{c} V_{t, c}}{\Delta_{t}^V} \right)$$
+
+$$\hat{V}_{t, c} = \text{clamp}\left( \text{round}\left( \frac{V_{t, c}}{\Delta_{t}^V} \right) + Z_{t}^V, \; 0, \; 2^b - 1 \right)$$
+
+Per-token quantization natively absorbs the full-token norm outliers into $\Delta_t^V$, completely insulating other tokens from cross-sequence distortion.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Model as LLM Layer Forward Pass
+    participant Ring as FP16 Streaming Buffer (L_win = 64)
+    participant KIVI as KIVI Asymmetric Quantizer
+    participant HBM as 2-Bit HBM Cache Storage
+
+    Model->>Ring: Emit New Token Key & Value Vectors (FP16)
+    Note over Ring: Recent 64 tokens kept unquantized for high-precision local attention
+    Ring->>KIVI: Oldest 32 Tokens Exit Streaming Window
+    KIVI->>KIVI: Quantize Keys Per-Channel along Sequence Blocks
+    KIVI->>KIVI: Quantize Values Per-Token across Channel Dimensions
+    KIVI->>HBM: Store 2-Bit Packed Integers (7.8x Memory Reduction)
+    HBM-->>Model: Fused Dequantize-Attention Kernel Executes at 2.6x Speed
+```
+
+---
+
+### 324.4 Streaming Residual Buffer & Systems Integration
+To preserve high-precision attention on immediate conversational context:
+1. **FP16 Ring Buffer:** The most recent $L_{\text{win}} = 64$ tokens remain in full-precision FP16 in GPU SRAM/HBM.
+2. **Asynchronous Block Packing:** Whenever $G = 32$ tokens exit the window, a CUDA kernel quantizes the block into 2-bit integers, packing four $2$-bit values into a single `uint8` byte.
+3. **Fused GEMV Kernel:** During decode, a custom Triton/CUDA kernel performs on-the-fly dequantization in GPU registers, saturating memory bandwidth and delivering **$2.6\times$ faster decode step latency**.
+
+---
+
+### 324.5 Quantitative Benchmarks Across LLM Architectures (Liu et al., 2024)
+
+| Model Architecture | KV Precision | Memory Footprint (128k Context) | LongBench Average Score | Llama-2-70B Perplexity Shift | Max Concurrent Batch Size |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Llama-2-70B (Baseline)** | FP16 (16-bit) | $160 \text{ GB}$ (2x A100 80GB) | $46.8$ | $3.12$ (Baseline) | $1$ Stream |
+| **Standard INT4 (Symmetric)** | INT4 (4-bit) | $44 \text{ GB}$ | $44.1$ ($-2.7$ Drop) | $3.58$ ($+0.46$ Shift) | $4$ Streams |
+| **Standard INT2 (Symmetric)** | INT2 (2-bit) | $24 \text{ GB}$ | $11.2$ (Catastrophic Collapse)| $>1000$ (Failed) | N/A |
+| **KIVI-4Bit (Asymmetric)** | **INT4 (4-bit)** | **$41 \text{ GB}$** | **$46.7$ ($99.8\%$ Retention)** | **$3.14$ ($+0.02$ Shift)** | **$4$ Streams** |
+| **KIVI-2Bit (Asymmetric)** | **INT2 (2-bit)** | **$21 \text{ GB}$ ($7.8\times$ Reduction)**| **$45.9$ ($98.1\%$ Retention)** | **$3.21$ ($+0.09$ Shift)** | **$8$ Streams ($8\times$ Scaling)** |
+
+**Theoretical Conclusion:**
+KIVI establishes that the sub-4-bit quantization barrier was not an inherent limitation of Transformer representations, but an artifact of imposing symmetric quantization grids on asymmetric key/value manifolds. Exploiting channel-invariance for Keys and token-invariance for Values unlocks near-lossless $2$-bit KV serving without requiring a single step of model retraining.
