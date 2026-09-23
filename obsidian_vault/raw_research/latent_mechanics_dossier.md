@@ -2153,3 +2153,245 @@ The SoM framework bridges vision and language by superimposing visual metadata d
 - **RefCOCOg & Visual Referring Comprehension:** On the challenging RefCOCOg benchmark, zero-shot GPT-4V equipped with Set-of-Mark prompting achieves **$84.2\%$ accuracy**, surpassing fully fine-tuned, task-specific segmentation models without updating a single weight parameter of the vision-language backbone.
 - **Elimination of Coordinate Quantization:** Converts a difficult spatial regression task (predicting continuous 2D coordinates via discrete tokens) into a categorical multi-choice selection problem over grounded visual tokens $[1]\dots[K]$.
 - **Visual Chain-of-Thought (Visual CoT):** Enables multi-step visual reasoning: the LMM sequentially references visual marks ($[1] \to [4] \to [7]$) to explain mechanistic relationships, spatial containment, and causal visual sequences.
+
+## 69. LongLLMLingua & Question-Aware Context Compression (Jiang et al., Microsoft / ACL 2024)
+
+### 69.1 Positional Decay & The Failure of Unconditioned Compression
+In long-context retrieval-augmented generation (RAG) and multi-document reasoning:
+1. **The "Lost in the Middle" Effect:** Modern LLMs exhibit U-shaped attention curves (Liu et al., 2023), recalling information from prompt boundaries with high fidelity while suffering catastrophic retrieval failure on factual details placed in the middle $60\%$ of the context.
+2. **Context Dilution:** Standard prompt compression algorithms (e.g., vanilla LLMLingua) compute perplexity based solely on input context $P(x_i \mid x_{<i})$, pruning tokens that are statistically predictable in isolation but vital for answering a specific downstream user question $q$.
+
+Huiqiang Jiang et al. (*LongLLMLingua: Accelerating and Enhancing LLMs in Long Context Scenarios via Prompt Compression*, Microsoft / ACL 2024 / arXiv:2310.06839) resolve these constraints via question-aware compression and boundary-prioritized document reordering.
+
+```mermaid
+flowchart TD
+    RetrievedDocs["Retrieved Documents D_1 .. D_K + Question q"] --> CondPPL["Compute Question-Conditioned Mutual Information I(x_i; q)"]
+    CondPPL --> DynamicBudget["Dynamic Token Budget Allocation across Documents"]
+    DynamicBudget --> CoarseFine["Coarse-to-Fine Compression: Document -> Chunk -> Token"]
+    CoarseFine --> BoundaryReorder["Boundary Reordering: Rank 1 -> End, Rank 2 -> Start, Rest -> Middle"]
+    BoundaryReorder --> CompressedPrompt["Optimized Dense Prompt (2x - 6x Compression)"]
+    CompressedPrompt --> FrontierLLM["Frontier LLM (GPT-4 / Claude / Gemini)"]
+    FrontierLLM --> Output["Accurate Answer (+21.4% on NaturalQuestions)"]
+```
+
+### 69.2 Mathematical Formulation of Question-Aware Compression
+LongLLMLingua computes the contrastive conditional perplexity of each token $x_i$ given question $q$:
+$$I(x_i; q) = \log \frac{P_{\mathcal{M}}\left(x_i \mid x_{<i}, q\right)}{P_{\mathcal{M}}\left(x_i \mid x_{<i}\right)}$$
+Tokens that experience a significant reduction in surprise when conditioned on $q$ receive elevated retention priorities:
+- **Dynamic Document Budgeting:** The token budget $\tau_k$ allocated to document $D_k$ is weighted by its aggregate mutual information with $q$:
+  $$\tau_k = T_{\text{target}} \cdot \frac{\sum_{x \in D_k} \max(0, I(x; q))}{\sum_{j} \sum_{x \in D_j} \max(0, I(x; q))}$$
+  irrelevant documents receive near-zero token budgets, effectively dropping distracting context.
+
+### 69.3 Boundary Reordering & Empirical Supremacy
+- **Anti-Lost-in-the-Middle Reordering:** Reorders compressed documents such that the top-ranked relevant passage is positioned at the prompt suffix (immediately adjacent to the query), the second-ranked passage is placed at the prefix start, and lower-ranked passages occupy the interior.
+- **Empirical Breakthroughs:**
+  - On the **NaturalQuestions** benchmark, LongLLMLingua boosts answer accuracy by **$+21.4\%$** while using **$4\times$ fewer tokens** with GPT-3.5-Turbo.
+  - On the **LooGLE** long-context benchmark, achieves up to **$94\%$ financial cost reduction** and accelerates end-to-end inference latency by **$1.4\times\text{--}2.6\times$**.
+
+---
+
+## 70. Dynamic Resolution Vision Transformers & Spatial Patch Tiling (LLaVA-NeXT AnyRes, Liu et al., 2024)
+
+### 70.1 The Fixed-Resolution Information Bottleneck
+Early multimodal models (e.g., LLaVA-1.5, CLIP ViT-L/14) resize all input images to a uniform square resolution (typically $336\times 336$ or $448\times 448$ pixels). For high-resolution visual inputs (e.g., $4\text{K}$ document scans, intricate electrical schematics, small-font infographics):
+$$\text{Spatial Nyquist Limit} \ll \text{Feature Detail Frequency}$$
+Resizing causes irreversible spatial blurring, rendering OCR and small-object detection impossible. However, feeding full-resolution $4\text{K}$ images directly into standard Vision Transformers causes a quadratic explosion in visual token sequence length ($N_{\text{patches}} \propto H \times W$), exhausting GPU memory.
+
+Haotian Liu et al. (*LLaVA-NeXT: Improved reasoning, OCR, and world knowledge*, 2024) introduce the **AnyRes (Any Resolution)** dynamic patch tiling framework.
+
+```mermaid
+flowchart TD
+    HighResImage["High-Resolution Image I (Arbitrary Aspect Ratio)"] --> GridSelect["Optimal Grid Selection: Choose N x M matching Aspect Ratio"]
+    GridSelect --> SlicePatches["Slice into N x M Patches (each 336x336)"]
+    HighResImage --> Downsample["Downsample to Global Overview Thumbnail (336x336)"]
+    
+    SlicePatches --> ViT_Local["ViT Local Forward Pass on Patches"]
+    Downsample --> ViT_Global["ViT Global Forward Pass on Thumbnail"]
+    
+    ViT_Local --> LinearProj["Multimodal Projection W_v"]
+    ViT_Global --> LinearProj
+    
+    LinearProj --> Interleave["Interleave: [Global Tokens] + newline + [Row 1 Patches] + newline + [Row 2 Patches]"]
+    Interleave --> LLM["Autoregressive LLM Residual Stream"]
+```
+
+### 70.2 The AnyRes Patch Tiling Formulation
+Given an image with dimensions $(W, H)$ and native encoder patch size $S = 336$:
+1. **Grid Selection:** The framework maintains a predefined candidate grid pool $\mathcal{G} = \{(1, 2), (2, 1), (2, 2), (1, 3), (3, 1), \dots\}$. It selects grid configuration $(m, n) \in \mathcal{G}$ that minimizes resolution distortion:
+   $$(m^*, n^*) = \operatorname{argmin}_{(m, n) \in \mathcal{G}} \left| \frac{W}{H} - \frac{m \cdot S}{n \cdot S} \right|$$
+2. **Patch Extraction & Global Overview:** The image is partitioned into $m^* \times n^*$ local sub-patches of dimension $S \times S$, along with a downsampled global overview image of size $S \times S$.
+3. **2D Topology Preservation via Newline Tokens:**
+   To inform the autoregressive language backbone of 2D spatial adjacency, visual feature rows are separated by a special learned `\n` delimiter token:
+   $$\mathbf{X}_{\text{visual}} = \left[ \mathbf{X}_{\text{global}} \;;\; \mathbf{X}_{1, 1}, \dots, \mathbf{X}_{1, m^*}, \mathbf{t}_{\text{newline}}, \mathbf{X}_{2, 1}, \dots, \mathbf{X}_{2, m^*}, \mathbf{t}_{\text{newline}}, \dots \right]$$
+
+- **Empirical Impact:** Delivers drastic improvements in document understanding (DocVQA $+12.4\%$), text recognition (TextVQA $+8.6\%$), and chart comprehension while preserving linear scalability in visual token counts.
+
+---
+
+## 71. Self-Rewarding & Meta-Rewarding Language Models (Yuan et al. / Wu et al., Meta / ICML 2024 / EMNLP 2024)
+
+### 71.1 The External Reward Model Bottleneck
+Post-training preference alignment (RLHF, DPO) traditionally relies on static reward models trained on human pairwise annotations. This creates two structural bottlenecks:
+1. **The Human Capability Ceiling:** Human annotators struggle to evaluate complex code, theorem proofs, and multi-step reasoning, capping alignment quality below superhuman levels.
+2. **Evaluation Saturation in Self-Rewarding:** In Self-Rewarding Language Models (Yuan et al., ICML 2024 / arXiv:2401.10020), where an LLM judges its own responses via prompt-based scoring and trains on its own preferences via iterative DPO, performance saturates rapidly across 2–3 rounds because the model's judgment capability fails to improve at the same pace as its generation capability.
+
+Tianhao Wu, Jason Weston et al. (*Meta-Rewarding Language Models: Self-Improving Alignment with LLM-as-a-Meta-Judge*, Meta / EMNLP 2024 / arXiv:2407.19594) solve this via **Meta-Rewarding**.
+
+```mermaid
+flowchart TD
+    subgraph MetaRewardRound["Meta-Rewarding Iteration k"]
+        Prompt["Prompt x"] --> GenCandidates["Policy pi_k generates candidates y_1, y_2"]
+        GenCandidates --> GenJudgments["Policy pi_k acts as Judge: produces J_1, J_2"]
+        GenJudgments --> MetaJudge["Policy pi_k acts as Meta-Judge: evaluates J_1 vs J_2"]
+        MetaJudge --> RefineJudge["Refine Judge Parameters via Meta-Preference DPO"]
+        RefineJudge --> CalibratedScores["Generate Calibrated Reward Scores on y_1, y_2"]
+        CalibratedScores --> LengthFilter["Quality Tier Length-Bias Filter (rho)"]
+        LengthFilter --> PolicyDPO["Update Policy pi_k+1 via Instruction DPO"]
+    end
+```
+
+### 71.2 The LLM-as-a-Meta-Judge Architecture
+Meta-Rewarding introduces an explicit second-order supervisory loop:
+1. **First-Order Evaluation (LLM-as-a-Judge):** Given prompt $x$ and candidate responses $y_1, y_2$, the model acting as Judge produces evaluations $J_1 = \operatorname{Judge}(y_1 \mid x)$ and $J_2 = \operatorname{Judge}(y_2 \mid x)$ with verbal rationales and numerical scores.
+2. **Second-Order Meta-Evaluation (LLM-as-a-Meta-Judge):** The model acting as Meta-Judge evaluates the quality of the judgments themselves:
+   $$M = \operatorname{Meta-Judge}\left( J_1, J_2 \;\middle|\; x, y_1, y_2 \right)$$
+   scoring the judgments based on factual consistency, critique precision, and absence of verbosity bias.
+3. **Dual Iterative DPO Updates:**
+   - *Judge Policy Update:* Fine-tunes the model's judgment generation on preferred meta-judgments.
+   - *Instruction Policy Update:* Fine-tunes the model's instruction following on response pairs vetted by the updated, calibrated judge.
+
+### 71.3 Length-Bias Calibration & Benchmark Results
+To eliminate the severe verbosity bias inherent to self-generated preferences, Meta-Rewarding incorporates quality-tier selection ($\rho$): a longer response is only preferred if its score advantage exceeds an explicit length penalty threshold.
+- **Empirical Results (Llama-3-8B-Instruct):**
+  - **AlpacaEval 2 Win Rate:** Surges from **$22.9\%$ to $39.4\%$** across 3 iterations without human supervision.
+  - **Arena-Hard Win Rate:** Increases from **$20.6\%$ to $29.1\%$**, establishing that iterative meta-judging unlocks continuous self-improvement beyond external reward model saturation.
+
+---
+
+## 72. Infini-Attention & Compressive Bounded Memory Transformers (Munkhdalai et al., Google 2024)
+
+### 72.1 The Quadratic KV Memory Barrier in Million-Token Streaming
+Standard scaled dot-product attention scales memory quadratically $\mathcal{O}(N^2)$ in context length $N$ and requires storing all past Key-Value states in GPU High-Bandwidth Memory (HBM). When sequence lengths scale to millions of tokens:
+- Storing full KV caches consumes hundreds of gigabytes of HBM per concurrent request.
+- Linear attention variants avoid quadratic complexity but sacrifice fine-grained masked local retrieval.
+
+Tsendsuren Munkhdalai, Manaal Faruqui, and Siddharth Gopal (*Leave No Context Behind: Efficient Infinite Context Large Language Models with Infini-attention*, Google, 2024 / arXiv:2404.07143) formulate **Infini-attention**, integrating compressive memory matrices directly into masked dot-product attention.
+
+```mermaid
+flowchart LR
+    InputSeg["Incoming Context Segment S_t"] --> LocalAttn["Masked Local Multi-Head Attention A_dot in R^(S x d_v)"]
+    InputSeg --> CompRetrieval["Compressive Memory Retrieval: A_mem = sigma(Q) M_(t-1) / (sigma(Q) z_(t-1))"]
+    
+    LocalAttn --> Gating["Learned Sigmoid Gating: A = beta * A_mem + (1 - beta) * A_dot"]
+    CompRetrieval --> Gating
+    
+    InputSeg --> CompUpdate["Compressive Memory Update: M_t = M_(t-1) + sigma(K)^T V"]
+    InputSeg --> NormUpdate["Normalizer Update: z_t = z_(t-1) + sum sigma(K_s)^T"]
+    
+    Gating --> Output["Infini-Attention Output (Bounded O(1) Memory)"]
+```
+
+### 72.2 Compressive Memory Formulation
+For each context segment of length $S$, Infini-attention processes tokens through standard linear projections $Q = X W_q, K = X W_k, V = X W_v$.
+
+1. **Local Context Attention:** Computes standard masked dot-product attention over the current segment:
+   $$A_{\text{dot}} = \operatorname{Softmax}\left( \frac{Q K^\top}{\sqrt{d_k}} \right) V$$
+2. **Compressive Long-Term Memory Retrieval:** Retrieves historical context from a fixed-size associative memory matrix $M_{t-1} \in \mathbb{R}^{d_k \times d_v}$ and normalization vector $z_{t-1} \in \mathbb{R}^{d_k}$:
+   $$A_{\text{mem}} = \frac{\sigma(Q) M_{t-1}}{\sigma(Q) z_{t-1} + \epsilon}$$
+   where $\sigma(x) = \operatorname{ELU}(x) + 1$ is a non-linear feature map ensuring positive attention weights.
+3. **Compressive Memory Update:** Updates historical memory incrementally:
+   $$M_t = M_{t-1} + \sigma(K)^\top V$$
+   $$z_t = z_{t-1} + \sum_{s=1}^S \sigma(K_s)^\top$$
+4. **Adaptive Gating Fusion:** Blends local and compressive attention through a learned per-head scalar parameter $\beta \in \mathbb{R}$:
+   $$A_{\text{total}} = \operatorname{sigmoid}(\beta) \odot A_{\text{mem}} + \left(1 - \operatorname{sigmoid}(\beta)\right) \odot A_{\text{dot}}$$
+
+- **Complexity Invariance:** Memory footprint remains strictly **bounded at $\mathcal{O}(1)$** regardless of sequence length. Successfully executes $100\%$ passkey retrieval on **1,000,000 token sequences** with **$114\times$ memory compression** over standard FlashAttention KV stores.
+
+---
+
+## 73. Hierarchical Speculative Decoding for 128k Contexts (TriForce, Sun et al., CMU / Meta / COLM 2024)
+
+### 73.1 The Memory Bandwidth Bottleneck in Long-Context Speculation
+Standard speculative decoding accelerates generation when inference is memory-bandwidth bound by verifying $K$ drafted tokens in a single parallel pass. However, in long-context models ($>32\text{k}\text{--}128\text{k}$ tokens):
+1. Serving an independent draft model with a 128k KV cache consumes excessive GPU memory.
+2. Even if a small draft model is used, loading its 128k KV cache on every token verification step saturates GPU memory buses, causing speculative acceleration to collapse to $<1.1\times$.
+
+Hanshi Sun, Zhuoming Chen, Xinyu Yang, Yuandong Tian, and Beidi Chen (*TriForce: Lossless Acceleration of Long Sequence Generation with Hierarchical Speculative Decoding*, CMU & Meta / COLM 2024 / arXiv:2404.11912) formulate a **three-tier hierarchical speculative pipeline** that decouples token drafting, sparse retrieval, and exact verification.
+
+```mermaid
+flowchart TD
+    subgraph Level1["Level 1: Streaming Draft Model"]
+        L1_In["Input Tokens"] --> L1_Draft["StreamingLLM Draft with Cache Eviction (O(1) KV Memory)"]
+        L1_Draft --> CandTokens["Generate Speculative Token Sequence"]
+    end
+
+    subgraph Level2["Level 2: Retrieval-Augmented Target Speculation"]
+        CandTokens --> L2_Select["Dynamic Key-Query Attention Gathering"]
+        L2_Select --> L2_SparseKV["Target Model with Sparse Dynamic KV Cache"]
+        L2_SparseKV --> L2_Accept["Filter & Re-Rank Draft Candidates"]
+    end
+
+    subgraph Level3["Level 3: Full Target Verification (Lossless)"]
+        L2_Accept --> L3_Verify["Exact Target Forward Pass with Full 128k KV Cache"]
+        L3_Verify --> L3_Emit["Lossless Token Emission (Leviathan Rejection Sampling)"]
+    end
+```
+
+### 73.2 The Three-Tier Speculative Hierarchy
+1. **Tier 1 (Streaming Draft Model with Cache Eviction):**
+   - The primary draft generator is a small base model (e.g., Llama-68M) running with StreamingLLM cache eviction, maintaining only initial attention sinks ($4$ tokens) and recent rolling tokens ($1024$ tokens).
+   - Generates speculative candidate tokens in $\mathcal{O}(1)$ time with negligible memory footprint.
+2. **Tier 2 (Target Model with Retrieval-Augmented Sparse KV):**
+   - Rather than loading the full 128k target KV cache, Tier 2 runs the target LLM with an aggressive top-$k$ dynamic Key-Query retrieval cache, verifying Tier 1 proposals and filtering out obvious errors before invoking full attention.
+3. **Tier 3 (Lossless Full KV Verification):**
+   - The full target model executes parallel speculative verification over the vetted tokens using standard speculative rejection sampling:
+     $$\alpha_i = \min\left(1, \frac{P_{\text{target}}(\tilde{x}_i \mid x_{<i})}{P_{\text{tier2}}(\tilde{x}_i \mid x_{<i})}\right)$$
+   - Mathematically guarantees exact output equivalence ($P_{\text{TriForce}} \equiv P_{\text{target}}$).
+
+- **Benchmark Performance:** Evaluated on Llama-2-7B-128K and Llama-3-8B across 128k context lengths on a single consumer RTX 4090 GPU:
+  - Achieves up to **$4.86\times$ wall-clock speedup** over autoregressive decoding.
+  - Slashes KV-cache memory traffic by **$>75\%$**, establishing the premier serving architecture for long-context speculative generation.
+
+---
+
+## 74. Lookahead Decoding & Fixed-Point Jacobi Parallel Iteration (Fu et al., UC Berkeley / ICML 2024)
+
+### 74.1 Eliminating the Draft Model in Parallel Decoding
+While speculative decoding reduces decoding latency, hosting and synchronizing a secondary draft model creates operational friction in enterprise deployment:
+1. Two separate model weights must be loaded into memory.
+2. Draft models frequently suffer from domain divergence on non-standard vocabulary distributions.
+
+Yichao Fu, Peter Bailis, Ion Stoica, and Hao Zhang (*Break the Sequential Dependency of LLM Inference Using Lookahead Decoding*, UC Berkeley / ICML 2024 / arXiv:2402.02057) formulate **Lookahead Decoding**, an exact parallel decoding algorithm that operates purely on the target LLM using non-linear **Jacobi fixed-point iteration**.
+
+```mermaid
+flowchart TD
+    subgraph LookaheadStep["Lookahead Decoding Forward Pass t"]
+        Prefix["Historical Context x_<t"] --> JacobiBranch["Lookahead Branch: Parallel Jacobi Fixed-Point Iteration"]
+        Prefix --> VerifyBranch["Verification Branch: Standard Autoregressive Evaluation"]
+        
+        JacobiBranch --> NGrams["Generate & Refine Multi-Token Candidates (n-grams)"]
+        VerifyBranch --> VerifyTokens["Compute Exact Logits for Previous Candidates"]
+        
+        NGrams --> MatchCheck{"Verification Match Check: Token Match?"}
+        VerifyTokens --> MatchCheck
+        
+        MatchCheck -- "Accept k Tokens" --> EmitK["Emit k Tokens in a Single Forward Pass"]
+        MatchCheck -- "Mismatch" --> Resample["Exact Target Correction"]
+    end
+```
+
+### 74.2 Jacobi Fixed-Point Formulation of Sequence Generation
+Autoregressive token generation can be formulated as solving a system of non-linear equations over future token states $x_1, \dots, x_N$:
+$$x_i = \operatorname{argmax}_{v \in \mathcal{V}} P(v \mid x_{<t}, x_1, \dots, x_{i-1}), \quad \forall i \in \{1, \dots, N\}$$
+Standard autoregressive generation solves this sequentially (Gauss-Seidel style) in $N$ steps.
+In contrast, the **Jacobi iteration** initializes an $N$-token trajectory guess $\mathbf{x}^{(0)}$ and updates all positions in parallel:
+$$x_i^{(k+1)} = \operatorname{argmax}_{v \in \mathcal{V}} P\left(v \mid x_{<t}, x_1^{(k)}, \dots, x_{i-1}^{(k)}\right), \quad \forall i \in \{1, \dots, N\}$$
+When consecutive iterations satisfy $\mathbf{x}^{(k+1)} = \mathbf{x}^{(k)}$, the trajectory has converged to the exact fixed point of the autoregressive distribution.
+
+### 74.3 Dual-Branch Execution Architecture
+Lookahead decoding divides each forward pass into two parallel branches executed in a single batched kernel:
+1. **The Lookahead Branch:** Computes parallel Jacobi updates to generate and refine $n$-gram candidates in high-confidence subspaces.
+2. **The Verification Branch:** Simultaneously verifies the $n$-gram candidates generated in previous steps against exact causal prefixes.
+
+- **Exactness Guarantee:** All accepted tokens strictly match the target model's causal greedy/sampled distribution.
+- **Empirical Speedup:** Delivers **$1.8\times\text{--}4.0\times$ wall-clock speedup** across MT-Bench, GSM8K, and HumanEval without requiring draft models, external data stores, or offline training.
