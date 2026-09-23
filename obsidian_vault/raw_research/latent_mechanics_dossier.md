@@ -10685,3 +10685,101 @@ flowchart LR
 - **Syntax Error Elimination:** Reduces syntax errors to **strictly $0.0\%$** across Python, Go, and SQL benchmarks.
 - **Execution Pass@1 Uplift:** Raising syntactic validity directly raises execution Pass@1 on HumanEval from **$68.2\%$ to $74.6\%$** on Llama-3-8B, because the model never squanders tokens on unparseable statements or missing closing brackets.
 - **Runtime Latency:** The offline DFA mask store delivers a **$<0.25\,\text{ms}$ latency overhead per token**, representing a **$40\times$ speedup** compared to dynamic runtime parser checkers.
+
+---
+
+## 302. Odds Ratio Preference Optimization (ORPO): Monolithic Single-Stage SFT and Alignment without Reference Models (Hong et al., KAIST, EMNLP 2024)
+
+### 302.1 The Two-Stage Alignment Dilemma (SFT Followed by RLHF/DPO)
+Standard post-training alignment pipelines enforce a rigid two-stage sequence:
+1. **Stage 1 (Supervised Fine-Tuning - SFT):** Train the base model on high-quality demonstration tokens via cross-entropy loss:
+   $$\mathcal{L}_{\text{SFT}}(\theta) = -\frac{1}{|y|} \sum_{t=1}^{|y|} \log \pi_\theta(y_t \mid x, y_{<t})$$
+2. **Stage 2 (Preference Alignment - DPO / PPO):** Fine-tune the SFT model using preference pairs $(y_w, y_l)$ while anchoring to a frozen reference copy $\pi_{\text{ref}} = \pi_{\text{SFT}}$.
+
+**The Structural Vulnerabilities of Two-Stage Pipelines:**
+- **Unintended Generation Degradation:** During Stage 1 SFT, cross-entropy training inherently increases the likelihood of tokens in the training distribution, including undesirable stylistic or borderline tokens that happen to appear in demonstration corpora.
+- **Reference Model VRAM Waste:** Stage 2 requires loading the frozen SFT model into memory, cutting batch size capacity in half.
+- **Distributional Drift & Catastrophic Forgetting:** If Stage 2 alignment updates the policy aggressively, it forgets nuanced stylistic, formatting, and domain knowledge acquired during SFT.
+
+```mermaid
+flowchart TD
+    subgraph TwoStagePipeline["Standard Two-Stage Alignment (SFT + DPO)"]
+        Base["Base Model"] --> SFT["Stage 1: Supervised Fine-Tuning (SFT)"]
+        SFT --> SaveRef["Save Frozen Reference Policy π_ref in VRAM"]
+        SFT --> DPO["Stage 2: DPO Optimization (Dual Forward Passes)"]
+        SaveRef --> DPO
+        DPO --> Drift["Catastrophic Drift & High Compute Cost"]
+    end
+    subgraph MonolithicORPO["ORPO: Monolithic Single-Stage Alignment (EMNLP 2024)"]
+        Base2["Base Model"] --> DirectORPO["Joint Loss: L_ORPO = L_SFT + λ L_OR"]
+        DirectORPO --> SinglePass["Single Policy in VRAM: Penalizes Dispreferred Odds Concurrently"]
+        SinglePass --> OptimalPolicy["Aligned Model: Eliminates Reference Models & Preserves SFT Adaptation"]
+    end
+```
+
+---
+
+### 302.2 The Mathematical Formulation of Odds Ratio Preference Optimization
+**ORPO** (Hong, Lee, & Thorne, KAIST, EMNLP 2024) combines instruction tuning and preference alignment into a single, unified objective without requiring a reference model.
+
+1. **Odds Formulation in Token Space:**
+   For input prompt $x$ and output completion $y$, the probability of generating $y$ is $\pi_\theta(y \mid x)$. The **odds** of generating sequence $y$ is defined as the ratio of its probability to the probability of generating any alternative sequence:
+   $$\text{odds}_\theta(y \mid x) \triangleq \frac{\pi_\theta(y \mid x)}{1 - \pi_\theta(y \mid x)}$$
+   Because $\pi_\theta(y \mid x) = \prod_{t=1}^{|y|} \pi_\theta(y_t \mid x, y_{<t})$ is typically small in open-ended text ($1 - \pi_\theta(y \mid x) \approx 1$), the log-odds satisfies:
+   $$\log \text{odds}_\theta(y \mid x) = \log \pi_\theta(y \mid x) - \log(1 - \pi_\theta(y \mid x))$$
+
+2. **The Odds Ratio Objective $\mathcal{L}_{\text{OR}}$:**
+   The odds ratio measures how much more likely the model is to generate the winning completion $y_w$ relative to the losing completion $y_l$:
+   $$\text{OR}_\theta(y_w, y_l \mid x) \triangleq \frac{\text{odds}_\theta(y_w \mid x)}{\text{odds}_\theta(y_l \mid x)}$$
+   The preference loss maximizes this ratio via the sigmoid function:
+   $$\mathcal{L}_{\text{OR}}(\theta) = -\mathbb{E}_{(x, y_w, y_l)} \left[ \log \sigma\left( \log \frac{\text{odds}_\theta(y_w \mid x)}{\text{odds}_\theta(y_l \mid x)} \right) \right]$$
+
+3. **The Complete Monolithic Objective:**
+   ORPO optimizes the SFT negative log-likelihood on winning completions $y_w$ concurrently with the odds ratio penalty:
+   $$\mathcal{L}_{\text{ORPO}}(\theta) = \mathbb{E}_{(x, y_w, y_l)} \left[ \mathcal{L}_{\text{SFT}}(x, y_w) + \lambda \, \mathcal{L}_{\text{OR}}(x, y_w, y_l) \right]$$
+   where $\lambda$ is a hyperparameter weighting preference penalty against token modeling (typically $\lambda \in [0.1, 0.5]$).
+
+---
+
+### 302.3 Gradient Dynamics & Reference-Free Self-Anchoring
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Input as Prompt x, Preferred y_w, Dispreferred y_l
+    participant Model as Unified Policy π_θ
+    participant SFT_Loss as SFT Cross-Entropy Engine
+    participant OR_Loss as Odds Ratio Engine
+    participant Backprop as Optimizer Update
+
+    Input->>Model: Forward Pass on y_w and y_l
+    Model->>SFT_Loss: Calculate Cross-Entropy: -log π_θ(y_w | x)
+    Model->>OR_Loss: Compute Log-Odds: log odds(y_w) - log odds(y_l)
+    SFT_Loss-->>Backprop: Pulls Model Toward Demonstration Tokens
+    OR_Loss-->>Backprop: Pushes Probability Mass Away from y_l Subspace
+    Backprop->>Model: Monolithic Gradient Step (Zero Reference Model Required)
+```
+
+The gradient of the odds ratio loss with respect to parameters $\theta$ demonstrates its self-regulating property:
+$$\nabla_\theta \mathcal{L}_{\text{OR}} = -\left[ 1 - \sigma\left( \log \frac{\text{odds}_\theta(y_w \mid x)}{\text{odds}_\theta(y_l \mid x)} \right) \right] \left[ \frac{\nabla_\theta \pi_\theta(y_w \mid x)}{\pi_\theta(y_w \mid x)(1 - \pi_\theta(y_w \mid x))} - \frac{\nabla_\theta \pi_\theta(y_l \mid x)}{\pi_\theta(y_l \mid x)(1 - \pi_\theta(y_l \mid x))} \right]$$
+
+- **Self-Anchoring via $\mathcal{L}_{\text{SFT}}$:** Because $\mathcal{L}_{\text{SFT}}$ continuously maximizes $\log \pi_\theta(y_w \mid x)$, the model cannot satisfy the objective by degrading the overall language modeling capacity. The winning completion is physically anchored to high probability mass.
+- **Dispreferred Mass Repulsion:** Meanwhile, $\mathcal{L}_{\text{OR}}$ directly penalizes the odds of $y_l$, driving its probability to zero without needing a reference model to prevent policy drift.
+
+---
+
+### 302.4 Empirical Benchmarks Across Model Scales
+
+```mermaid
+flowchart LR
+    subgraph AlignmentPerformance["AlpacaEval 2 Win Rate (Llama-3-8B Aligned)"]
+        SFT_Only["SFT Baseline: 18.2% Win Rate"]
+        SFT_DPO["SFT + DPO (Two-Stage): 26.4% (Requires 2x VRAM & 2x Training Time)"]
+        ORPO_Mono["ORPO (Single-Stage Monolithic): 32.8% (+6.4% over DPO, 50% Less Compute)"]
+    end
+```
+
+**Quantitative Results (AlpacaEval 2, MT-Bench, GSM8K):**
+- **Single-Stage Parity & Outperformance:** On Llama-3-8B and Mistral-7B, ORPO trained directly from the base model achieves a **$32.8\%$ win rate on AlpacaEval 2**, outperforming the standard two-stage SFT+DPO pipeline ($26.4\%$).
+- **Compute & Memory Efficiency:** By eliminating the reference model and collapsing two training stages into one, ORPO cuts total post-training GPU hours by **$\approx 50\%$**.
+- **Instruction Following Retention:** Retains superior multi-turn formatting and reasoning performance on MT-Bench ($8.12$ vs $7.85$ for DPO) because the policy is never decoupled from generative cross-entropy supervision.

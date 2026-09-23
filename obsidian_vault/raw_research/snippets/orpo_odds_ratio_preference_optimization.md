@@ -1,27 +1,20 @@
-# Odds Ratio Preference Optimization (ORPO)
+# ORPO: Odds Ratio Preference Optimization
 
-**Odds Ratio Preference Optimization (ORPO)** unifies supervised fine-tuning (SFT) and preference alignment into a single monolithic training phase, eliminating the frozen reference policy required by DPO.
+## 1. Monolithic Single-Stage SFT & Alignment
+Standard alignment pipelines require two separate phases: Supervised Fine-Tuning (SFT) followed by RLHF or DPO with a frozen reference model $\pi_{\text{ref}}$. **ORPO** (Hong et al., KAIST, EMNLP 2024) unifies instruction tuning and preference alignment into a **monolithic single-stage objective** without requiring any reference model.
 
 ```mermaid
 flowchart LR
-    X["Instruction x"] --> MODEL["Active Policy π_θ"]
-    MODEL --> CHOSEN["Chosen y_w → L_{SFT}"]
-    MODEL --> REJECTED["Rejected y_l"]
-    CHOSEN & REJECTED --> ODDS["Odds Ratio Penalty: -log σ(log(odds_w / odds_l))"]
-    ODDS & CHOSEN --> UNIFIED["L_{ORPO} = L_{SFT} + λ · L_{OR}"]
+    Base["Base Model"] --> ORPO["Joint Objective: L_ORPO = L_SFT + λ L_OR"]
+    ORPO --> SFT_Loss["SFT: Maximizes log π_θ(y_w | x)"]
+    ORPO --> OR_Loss["Odds Ratio: Penalizes odds_θ(y_l) / odds_θ(y_w)"]
+    ORPO --> Aligned["Aligned Policy: 50% Less GPU Compute, +6.4% on AlpacaEval 2"]
 ```
 
-## Mathematical Mechanics
-Given the token generative odds:
-$$\text{odds}_\theta(y \mid x) = \frac{P_\theta(y \mid x)}{1 - P_\theta(y \mid x)}$$
-ORPO defines the log-odds ratio alignment penalty:
-$$\mathcal{L}_{\text{OR}} = -\mathbb{E}_{(x, y_w, y_l)}\left[\log \sigma\left(\log \frac{\text{odds}_\theta(y_w \mid x)}{\text{odds}_\theta(y_l \mid x)}\right)\right]$$
-Combining with standard negative log-likelihood on chosen tokens:
-$$\mathcal{L}_{\text{ORPO}} = \mathcal{L}_{\text{SFT}}(y_w) + \lambda \mathcal{L}_{\text{OR}}$$
+## 2. Mathematical Formulation & Dynamics
+The odds of generating sequence $y$ is defined as $\text{odds}_\theta(y \mid x) = \frac{\pi_\theta(y \mid x)}{1 - \pi_\theta(y \mid x)}$. ORPO maximizes the odds ratio of preferred to dispreferred completions:
+$$\mathcal{L}_{\text{ORPO}}(\theta) = \mathbb{E}_{(x, y_w, y_l)} \left[ \mathcal{L}_{\text{SFT}}(x, y_w) - \lambda \log \sigma\left( \log \frac{\text{odds}_\theta(y_w \mid x)}{\text{odds}_\theta(y_l \mid x)} \right) \right]$$
 
-This reference-free formulation eliminates the memory overhead of maintaining reference model weights in GPU VRAM, achieving competitive win rates on AlpacaEval 2.0 and MT-Bench with half the training footprint.
-
-## Related Mechanics
-- [[direct_preference_optimization_dpo]]
-- [[simpo_reference_free_margin_alignment]]
-- [[reinforcement_learning_human_feedback]]
+- **Self-Anchored**: Cross-entropy $\mathcal{L}_{\text{SFT}}$ keeps the model anchored to high-quality generative distributions, preventing policy collapse.
+- **Reference-Free**: Eliminates the frozen reference model entirely, halving post-training VRAM and cutting training runtime by $\approx 50\%$.
+- **Performance**: Outperforms SFT+DPO by **$+6.4\%$** on AlpacaEval 2 while preserving instruction-following retention on MT-Bench.
