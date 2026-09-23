@@ -11700,3 +11700,98 @@ flowchart LR
 | **MEND (Mitchell et al.)**| Hypernetwork Meta-Learner | $81.4\%$ | $76.2\%$ | $82.4\%$ | $100\text{--}500$ facts |
 | **ROME (Meng et al. 2022)**| **Closed-Form Rank-One** | **$99.2\%$** | **$91.6\%$** | **$96.8\%$ (Pinpoint Locality)**| **Single Fact** |
 | **MEMIT (Meng et al. 2023)**| **Multi-Layer Residual Spread**| **$99.6\%$** | **$93.4\%$** | **$97.2\%$** | **$>10,000$ simultaneous facts** |
+
+---
+
+## 312. Sarathi-Serve: Chunked-Prefills, Piggybacking & Stall-Free Pipeline Scheduling (Agrawal et al., Microsoft & IIT Delhi, USENIX OSDI 2024)
+
+### 312.1 The Prefill-Decode Interference Dilemma
+High-performance LLM serving systems face an inherent conflict between two fundamentally incompatible execution phases:
+1. **The Prefill Phase (Compute-Bound):**
+   Processes the prompt tokens in parallel. Because it evaluates an $N \times N$ attention matrix and large GEMM operations, prefill exhibits high arithmetic intensity ($\gg 50\,\text{FLOP/byte}$) and saturates GPU Tensor Cores.
+2. **The Decode Phase (Memory-Bandwidth Bound):**
+   Generates tokens autoregressively one by one ($N = 1$). It requires streaming the entire multi-gigabyte Key-Value (KV) cache from HBM to SRAM for every generated token, resulting in low arithmetic intensity ($\ll 1\,\text{FLOP/byte}$) and leaving GPU Tensor Cores over $75\%$ idle.
+
+**The Tail-Latency Spike Pathology:**
+In conventional continuous batching (Orca, vLLM), when a long prompt ($4\text{k}\text{--}32\text{k}$ tokens) arrives, the engine schedules its prefill as a monolithic batch block. This **stalls all concurrently active decoding streams** for $300\text{--}1,500\,\text{ms}$, causing devastating spikes in **Time-Per-Output-Token (TPOT)** tail latency (P99 TPOT) and producing jarring, stuttering delays in user-facing streaming applications.
+
+```mermaid
+flowchart TD
+    subgraph MonolithicScheduling["Traditional Continuous Batching (vLLM / Orca)"]
+        PrefillReq["New 4k Prompt Arrives"] --> MonolithicPrefill["Monolithic Prefill Execution (800ms)"]
+        MonolithicPrefill --> StallDecodes["STALLS all 32 active streaming users for 800ms -> P99 TPOT Explodes!"]
+    end
+    subgraph SarathiScheduling["Sarathi-Serve Stall-Free Scheduling (OSDI 2024)"]
+        Prompt4k["New 4k Prompt Arrives"] --> Chunker["Chunk into 8 equal slices: C = 512 tokens"]
+        Chunker --> PiggybackBatch["Piggybacked Batch: 1 Prefill Chunk (512 tok) + 32 Decodes (32 tok)"]
+        PiggybackBatch --> ContinuousStream["Uniform Execution (35ms / step) -> Constant, Fluid User Streaming"]
+    end
+```
+
+---
+
+### 312.2 Chunked-Prefills & Piggybacked Batches
+**Sarathi-Serve** (Agrawal et al., USENIX OSDI 2024) resolves prefill-decode interference by introducing **Chunked-Prefills** coupled with **Decoded Piggybacking**:
+
+1. **Chunked Decomposition:**
+   A long prefill request of length $N$ is sliced into $\lceil N / C \rceil$ uniform chunks of size $C$ (typically $C = 512$ tokens). The KV cache of each chunk is populated incrementally across successive steps.
+2. **The Piggybacking Mechanism:**
+   Instead of running prefill and decode in separate, mutually exclusive steps, Sarathi-Serve constructs **hybrid batches** that combine a single prefill chunk with multiple ongoing decode requests:
+   $$\text{Batch}_{\text{step}} = \{\text{PrefillChunk}_C\} \cup \{d_1, d_2, \dots, d_B\}$$
+   $$\text{Total Tokens} = C + B \le T_{\text{budget}}$$
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Engine as Sarathi-Serve Scheduler
+    participant Cores as GPU Tensor Cores (Compute)
+    participant HBM as GPU High Bandwidth Memory
+    participant User as 32 Concurrent Streaming Users
+
+    Engine->>Engine: Form Hybrid Batch: 1 Chunk (512 tokens) + 32 Decodes (32 tokens)
+    Engine->>Cores: Launch Fused Prefill-Decode Kernel
+    Note over Cores: Prefill Chunk saturates Tensor Cores (Compute Bound)
+    HBM->>Cores: Stream KV Cache for 32 Decodes (Memory Bound)
+    Note over Cores: Decodes "PIGGYBACK" on Prefill GEMMs for ZERO extra wall-clock time!
+    Cores-->>User: Seamless Token Delivered (Constant 35ms TPOT)
+```
+
+**Why Piggybacking is Free:**
+- The prefill chunk provides sufficient computational intensity to fully saturate the GPU Tensor Cores.
+- The decode requests, which were previously idling the compute units while waiting on memory fetches, are absorbed into the background execution of the prefill matrix multiplications.
+- The resulting step latency is virtually identical to running the prefill chunk alone!
+
+---
+
+### 312.3 Stall-Free Pipeline-Parallel Scheduling
+In multi-GPU clusters serving massive models (e.g. Llama-3-70B or Falcon-180B) across pipeline-parallel (PP) stages, standard scheduling suffers from severe **pipeline bubbles** (idle stage time while waiting for activations to propagate).
+
+Sarathi-Serve synchronizes chunk sizes across pipeline stages:
+- Ensures every stage executes an equal computational volume ($\approx C + B$ tokens) per step.
+- Completely eliminates pipeline bubbles, enabling **100% steady-state GPU utilization** across all nodes in the pipeline chain.
+
+---
+
+### 312.4 Empirical Benchmarks & Systems Scaling
+
+```mermaid
+flowchart LR
+    subgraph TPOT_Tail_Latency["P99 Time-Per-Output-Token (Lower is Better)"]
+        vLLM_P99["vLLM Baseline: 1,420 ms P99 TPOT (Severe Jitter)"]
+        Sarathi_P99["Sarathi-Serve: 285 ms P99 TPOT (5.0x Reduction, Silky Smooth)"]
+    end
+```
+
+| Model Architecture | Hardware Setup | Serving System | Serving Capacity (Req/s) | P99 TPOT Tail Latency | Speedup / Capacity Uplift |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Mistral-7B** | $1 \times \text{A100 (80GB)}$ | vLLM (Continuous Batching) | $4.2\,\text{req/s}$ | $1,280\,\text{ms}$ | $1.00\times$ (Baseline) |
+| **Mistral-7B** | $1 \times \text{A100 (80GB)}$ | **Sarathi-Serve** | **$10.9\,\text{req/s}$** | **$260\,\text{ms}$** | **$2.60\times$ Capacity Uplift** |
+| **Yi-34B** | $2 \times \text{A100 (TP=2)}$ | vLLM | $2.1\,\text{req/s}$ | $1,850\,\text{ms}$ | $1.00\times$ |
+| **Yi-34B** | $2 \times \text{A100 (TP=2)}$ | **Sarathi-Serve** | **$7.8\,\text{req/s}$** | **$310\,\text{ms}$** | **$3.71\times$ Capacity Uplift** |
+| **Falcon-180B** | $8 \times \text{A100 (PP=8)}$ | vLLM + Orca | $0.8\,\text{req/s}$ | $3,400\,\text{ms}$ | $1.00\times$ |
+| **Falcon-180B** | $8 \times \text{A100 (PP=8)}$ | **Sarathi-Serve** | **$4.5\text{--}5.5\,\text{req/s}$** | **$480\,\text{ms}$** | **$5.60\times\text{--}6.90\times$ Uplift** |
+
+**Key Systems Takeaways:**
+- **Guaranteed P99 Latency SLA:** Eliminates conversational freezing by bounding the maximum execution time of any individual batch to $\le 40\,\text{ms}$.
+- **Massive Pipeline Scaling:** Yields up to **$6.9\times$ throughput expansion** on large multi-GPU pipeline configurations by transforming pipeline bubbles into useful decode computations.
+- **Production Standard:** Chunked-prefill principles have since been adopted as core primitives in vLLM (`--enable-chunked-prefill`) and TensorRT-LLM.
