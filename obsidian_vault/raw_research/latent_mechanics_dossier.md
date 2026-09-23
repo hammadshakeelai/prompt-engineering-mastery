@@ -7693,5 +7693,59 @@ flowchart TD
    - On the UltraFeedback benchmark, Iterative DPO raises AlpacaEval 2.0 win rates from $14.5\%$ (single-turn DPO) to **$28.2\%$** across 3 rounds on LLaMA-2-70B and Mistral-7B.
    - Completely closes the gap with online Actor-Critic PPO while using half the GPU memory and running with deterministic batch stability.
 
+---
+
+## 266. Causal Mediation Analysis & Path Patching: Tracing Functional Subcircuits in Transformers
+
+### 266.1 Clean, Corrupted, and Patched Forward Passes Topology
+```mermaid
+flowchart TD
+    subgraph Passes["Causal Intervention Framework (Wang et al. 2022; Goldowsky-Dill 2023)"]
+        CLEAN_IN["Clean Input x_clean ('Mary and John... John gave drink to [Mary]')"] --> CLEAN_RUN["Clean Forward Pass: Store All Activations {a_clean}"]
+        CORRUPT_IN["Corrupted Input x_corrupt ('Alice and Bob... Bob gave drink to [Alice]')"] --> CORRUPT_RUN["Corrupted Forward Pass: Baseline LogitDiff_corrupt"]
+        CLEAN_RUN & CORRUPT_RUN --> PATCH_NODE["Causal Patching: Replace Component C in Corrupt Pass with a_clean(C)"]
+        PATCH_NODE --> PATCH_RUN["Patched Forward Pass: Evaluate Recovery of Clean Logit Difference"]
+    end
+    subgraph Metrics["Causal Mediation Quantification"]
+        PATCH_RUN --> TIE["Total Indirect Effect (TIE) / Normalized Logit Difference"]
+        TIE --> CIRCUIT["Isolates Exact Circuit Components: Name Movers, S-Inhibition, Induction Heads"]
+    end
+```
+
+### 266.2 Mathematical Formalism of Activation Patching
+1. **The Limitations of Observational Attention Probing:** Simple attention map visualization or linear probing identifies statistical correlations, but fails to prove whether an attention head or MLP layer actively mediates the computation. Non-causal features frequently exhibit high attention weights without contributing to the unembedded logits.
+2. **Causal Mediation Analysis (CMA) Formulation:** Given a task with correct target token $y_{\text{clean}}$ and foil token $y_{\text{corrupt}}$, define the Logit Difference metric:
+   $$\text{LD}(h) \triangleq \text{logit}(y_{\text{clean}}) - \text{logit}(y_{\text{corrupt}})$$
+   Let $M$ denote a target component (an attention head $H_{l, h}$, an MLP block $\text{MLP}_l$, or residual stream slice $h_l$). The activation-patched forward pass evaluates:
+   $$h_{\text{patched}}(M) = \text{Forward}\left(x_{\text{corrupt}} \;\middle|\; \text{activation}(M) \leftarrow a_{\text{clean}}(M)\right)$$
+3. **Total Indirect Effect (TIE) / Normalized Logit Difference (NLD):**
+   The causal importance of component $M$ is quantified as the fraction of the clean logit difference recovered when patching $M$ into the corrupted run:
+   $$\text{TIE}(M) \triangleq \frac{\text{LD}\left(h_{\text{patched}}(M)\right) - \text{LD}\left(x_{\text{corrupt}}\right)}{\text{LD}\left(x_{\text{clean}}\right) - \text{LD}\left(x_{\text{corrupt}}\right)}$$
+   - $\text{TIE}(M) \approx 1.0$: Component $M$ is a primary causal mediator of the circuit.
+   - $\text{TIE}(M) \approx 0.0$: Component $M$ is non-causal despite high observational activation.
+   - $\text{TIE}(M) < 0.0$: Component $M$ acts as a backup or inhibitory mechanism.
+
+### 266.3 Path Patching: Isolating Directed Edges in the Computational DAG
+```mermaid
+flowchart LR
+    subgraph Nodes["Dissecting Directed Information Transmission"]
+        HEAD_A["Upstream Head A (e.g. Duplicate Token Head)"] --> |"Direct Edge A → B"| HEAD_B["Downstream Head B (e.g. S-Inhibition Head)"]
+        HEAD_A --> |"Indirect Paths"| OTHER["Other Circuit Components"]
+    end
+    subgraph PathPatch["Path Patching Operation"]
+        CLEAN_ACT["Clean Run"] --> SEND["Send Clean Output of Head A ONLY to Head B's Q/K/V Input"]
+        CORRUPT_ACT["Corrupt Run"] --> REMAINDER["All Other Paths Retain Corrupted Activations"]
+        SEND & REMAINDER --> MEASURE["Measures Direct Edge Causal Weight: TIE(A → B)"]
+    end
+```
+
+1. **Path-Specific Causal Mediation:** Activation patching over entire nodes overestimates circuit connectivity by capturing indirect feedback. **Path Patching** (Goldowsky-Dill et al., 2023) freezes all computational paths in the corrupt regime *except* the directed edge from component $u$ to component $v$:
+   $$h_{\text{patched}}(u \to v) = \text{Forward}\left(x_{\text{corrupt}} \;\middle|\; \text{Input}(v) \leftarrow \text{CleanEdge}(u \to v)\right)$$
+2. **Circuit Discovery Guarantees:**
+   Applying path patching systematically across GPT-2 Small, Pythia, and LLaMA revealed:
+   - **The Indirect Object Identification (IOI) Circuit**: 26 specific heads organized into Duplicate Token Heads $\to$ S-Inhibition Heads $\to$ Name Mover Heads, explaining $>85\%$ of task logit difference.
+   - **The Greater-Than Circuit**: A dedicated middle-layer subspace converting numeric token embeddings into monotonic orderings feeding directly into late unembedding projectors.
+3. **Mechanistic Auditing & Targeted Editing:** Path patching transforms black-box transformers into verifiable directed acyclic graphs (DAGs), enabling surgical ablation, debiasing, and concept steering at the resolution of individual attention matrix connections.
+
 
 
