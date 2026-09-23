@@ -1,28 +1,16 @@
-# Multi-Head Latent Attention (MLA): DeepSeek KV Compression
+# Multi-Head Latent Attention (MLA) & Decoupled RoPE
 
-**Multi-Head Latent Attention (MLA)** (DeepSeek-AI, 2024; DeepSeek-V2/V3/R1) compresses key and value representations into a single shared low-rank latent vector $c_t^{KV} \in \mathbb{R}^{d_c}$ and a decoupled positional vector $k_t^R$, reducing autoregressive KV-cache memory consumption by **$93.3\%$** compared to standard Multi-Head Attention (MHA) while maintaining full MHA representational expressiveness.
+## 1. The Core Innovation of MLA (DeepSeek-V2/V3/R1)
+In large-scale autoregressive serving, Multi-Head Attention (MHA) consumes prohibitive amounts of KV cache memory ($2 \times n_h \times d_h = 32,768$ values per token per layer), while Grouped-Query Attention (GQA) degrades expressive retrieval capacity. **Multi-Head Latent Attention (MLA)** compresses the Key-Value cache into a shared **low-rank latent vector** $\mathbf{c}_t^{KV} \in \mathbb{R}^{d_c}$ ($d_c = 512$), achieving a **$56.8\times$ reduction vs MHA** and **$3.56\times$ reduction vs GQA-8** while exceeding MHA expressive accuracy.
 
 ```mermaid
-flowchart TD
-    H["Hidden State h_t"] --> COMP["Down-Projection: c_t^{KV} = W_DKV · h_t ∈ R^{d_c}"]
-    H --> ROPE["Decoupled RoPE Key: k_t^R = RoPE(W_KR h_t) ∈ R^{d_R}"]
-    COMP & ROPE --> CACHE["Cached in VRAM: [c_t^{KV}; k_t^R] (576 Floats vs 32,768 in MHA)"]
-    COMP --> ASSOC["Inference Associativity: W_UK Absorbed into Query Vector q̃ = W_UK^T q (0 Key Decompression)"]
+flowchart LR
+    Input["Input h_t"] --> DownKV["W^DKV: Low-Rank Latent c_t^KV (d_c=512)"]
+    Input --> DecoupledRoPE["W^KR: Decoupled RoPE Key k_t^R (d_R=64)"]
+    DownKV & DecoupledRoPE --> Cache["Cached KV: [c_t^KV, k_t^R] (576 elements = 1.15 KB/tok)"]
+    Cache --> KernelAbsorption["Inference: Absorb W^UK into Query & W^UV into W_O (Zero Decompression)"]
 ```
 
-## Mathematical Mechanics
-1. **Low-Rank Joint KV Compression:**
-   $$c_t^{KV} = W_{DKV} h_t \in \mathbb{R}^{d_c}, \quad \text{where } d_c \ll n_h \cdot d_h$$
-2. **Decoupled RoPE Key:**
-   Because positional rotation matrices do not commute with low-rank unprojection $W_{UK}$, a decoupled vector $k_t^R \in \mathbb{R}^{d_R}$ carries rotational coordinates:
-   $$\text{Cache}_t = \left[c_t^{KV} \; ; \; k_t^R\right] \in \mathbb{R}^{d_c + d_R}$$
-3. **Inference Matrix Associativity:**
-   Bypasses runtime key decompression by absorbing $W_{UK}$ directly into the query head projection:
-   $$\left(q_i^C\right)^\top \left(W_{UK} c_j^{KV}\right) = \left(W_{UK}^\top q_i^C\right)^\top c_j^{KV} = \left(\tilde{q}_i^C\right)^\top c_j^{KV}$$
-   delivering full multi-head expressive capacity at a fraction of GQA's memory footprint.
-
-## Related Mechanics
-- [[grouped_query_attention_gqa]]
-- [[cross_layer_attention_kv_sharing]]
-- [[paged_attention_vllm]]
-- [[deepseek_v3_mla_auxiliary_loss_free_moe]]
+## 2. Decoupled RoPE & Inference Weight Absorption
+- **Decoupled RoPE**: Because Rotary Position Embeddings are non-commutative with low-rank projection matrices, RoPE cannot be directly absorbed if applied to compressed latents. MLA cleanly decouples positional keys ($\mathbf{k}_t^R \in \mathbb{R}^{64}$) from content latents ($\mathbf{c}_t^{KV} \in \mathbb{R}^{512}$), storing only $512 + 64 = 576$ scalars per token.
+- **Inference Kernel Absorption**: During decoding, the up-projection matrices $W_i^{UK}$ and $W_i^{UV}$ are mathematically absorbed into the query vector $(\tilde{\mathbf{q}}_i = (W_i^{UK})^T \mathbf{q}_i)$ and output projection matrix $W_O$, eliminating the need to decompress multi-head keys and values in GPU memory.
