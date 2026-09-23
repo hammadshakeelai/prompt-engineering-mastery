@@ -26,6 +26,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/agentic_memory.md]]
 - [[raw_research/agent_orchestration_frameworks.md]]
 - [[raw_research/agent_swarm_actor_orchestration.md]]
+- [[raw_research/compiler_in_the_loop_lean4_proof_search.md]]
 - [[raw_research/icl_theory.md]]
 - [[raw_research/latent_mechanics_dossier.md]]
 - [[raw_research/llm_as_a_judge.md]]
@@ -55,6 +56,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[research_engine/research_pivot_05.md]]
 - [[research_engine/research_pivot_06.md]]
 - [[research_engine/research_pivot_07.md]]
+- [[research_engine/research_pivot_08.md]]
 
 ## 🧩 5. Atomic Concept Snippets Knowledge Graph
 - [[raw_research/snippets/activation_steering_vectors.md|Activation Steering Vectors]]
@@ -106,6 +108,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/cutting_edge_2025.md|Cutting Edge 2025]]
 - [[raw_research/snippets/decomposed_prompting.md|Decomposed Prompting]]
 - [[raw_research/snippets/deepseek_mla.md|Deepseek Mla]]
+- [[raw_research/snippets/deepseek_prover_rmax_ts.md|Deepseek Prover Rmax Ts]]
 - [[raw_research/snippets/deepseek_r1_prompting.md|Deepseek R1 Prompting]]
 - [[raw_research/snippets/diffusion_trajectory_search_mctd.md|Diffusion Trajectory Search Mctd]]
 - [[raw_research/snippets/directional_stimulus_prompting.md|Directional Stimulus Prompting]]
@@ -210,6 +213,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/rectified_flow_conditioning.md|Rectified Flow Conditioning]]
 - [[raw_research/snippets/red_teaming.md|Red Teaming]]
 - [[raw_research/snippets/reflexion_patterns.md|Reflexion Patterns]]
+- [[raw_research/snippets/refusal_direction_geometry.md|Refusal Direction Geometry]]
 - [[raw_research/snippets/repocoder_and_aider_repo_map.md|Repocoder And Aider Repo Map]]
 - [[raw_research/snippets/representation_engineering_repe.md|Representation Engineering Repe]]
 - [[raw_research/snippets/reward_model_design.md|Reward Model Design]]
