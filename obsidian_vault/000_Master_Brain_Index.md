@@ -159,6 +159,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/flashattention3_hopper_asynchrony.md|Flashattention3 Hopper Asynchrony]]
 - [[raw_research/snippets/flashattention_2_vs_3.md|Flashattention 2 Vs 3]]
 - [[raw_research/snippets/formal_theorem_proving_alphaproof_lean.md|Formal Theorem Proving Alphaproof Lean]]
+- [[raw_research/snippets/frontier_research_pivot_2026_09_23.md|Frontier Research Pivot 2026 09 23]]
 - [[raw_research/snippets/function_vectors_task_geometry.md|Function Vectors Task Geometry]]
 - [[raw_research/snippets/g_eval_framework.md|G Eval Framework]]
 - [[raw_research/snippets/gated_linear_attention_transformers.md|Gated Linear Attention Transformers]]
