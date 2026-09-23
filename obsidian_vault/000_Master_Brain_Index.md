@@ -203,6 +203,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/grammar_aligned_decoding.md|Grammar Aligned Decoding]]
 - [[raw_research/snippets/grammar_constrained_speculative_decoding.md|Grammar Constrained Speculative Decoding]]
 - [[raw_research/snippets/grammar_guided_speculative_decoding.md|Grammar Guided Speculative Decoding]]
+- [[raw_research/snippets/grammar_synchronized_speculative_decoding.md|Grammar Synchronized Speculative Decoding]]
 - [[raw_research/snippets/graph_of_thoughts.md|Graph Of Thoughts]]
 - [[raw_research/snippets/graphrag_hierarchical_community_summarization.md|Graphrag Hierarchical Community Summarization]]
 - [[raw_research/snippets/grok_system_prompt_steering.md|Grok System Prompt Steering]]

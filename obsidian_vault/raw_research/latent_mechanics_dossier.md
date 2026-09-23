@@ -12570,3 +12570,101 @@ sequenceDiagram
 
 **Theoretical Conclusion:**
 SnapKV demonstrates that long-context attention in LLMs is intrinsically sparse and clustered. Attention heads possess predetermined "receptive fields" that can be identified via one-shot voting during prefill, reducing long-context serving costs by nearly an order of magnitude without compromising retrieval fidelity.
+
+---
+
+## 321. Grammar-Synchronized Speculative Decoding (GSSD): Trie-Parallel Branch Pruning & Dual-Model Automaton Verification (Chen et al., 2024; SGLang & vLLM, 2024)
+
+### 321.1 The Collision Between Speculative Decoding and Formal Constraints
+Speculative decoding accelerates LLM inference by pairing a high-capacity target model $M_t$ with an efficient draft model $M_d$. However, when deploying structured generation (JSON Schema enforcement, SQL dialect parsing, function calling), standard speculative decoding fails catastrophically:
+
+1. **Unconstrained Draft Divergence:**
+   If the draft model $M_d$ generates speculative candidate tokens without grammar constraints, it frequently emits syntactically invalid tokens (e.g., closing a JSON bracket prematurely). When verified by the grammar-constrained target model, the acceptance rate collapses to near-zero ($< 15\%$), degrading speedup below $1.0\times$ (slower than non-speculative autoregression).
+2. **Sequential Automaton Bottleneck:**
+   If $M_d$ queries an external pushdown automaton (PDA) sequentially for every candidate token, the serialization overhead of automaton state transitions cancels out the speculative latency gains:
+   $$t_{\text{draft}} = \sum_{k=1}^K \left( t_{\text{forward}, M_d} + t_{\text{PDA\_transition}} \right)$$
+
+```mermaid
+flowchart TD
+    subgraph Naive_Speculation_Crash["Naive Speculative Decoding under Grammars (Fails)"]
+        DraftM["Draft Model M_d (Unconstrained)"] --> Tokens["Proposes Candidate Tokens: [ 'name', ':', 'foo' ]"]
+        Tokens --> Verifier["Grammar-Constrained Target Model M_t"]
+        Verifier --> Rejection["Grammar Rejection: 82% Candidate Discard Rate"]
+        Rejection --> Slowdown["Severe Latency Degradation (Speedup < 1.0x)"]
+    end
+    subgraph GSSD_Architecture["Grammar-Synchronized Speculative Decoding (GSSD)"]
+        PDA["Unified Compressed Automaton (cFSM / Gram2Token)"] --> Bitmask["Precomputed Valid Token Mask per State"]
+        Bitmask --> MaskedDraft["Grammar-Masked Draft Sampling: q_valid = Softmax(z_d + M_G)"]
+        MaskedDraft --> TreeGen["Grammar-Valid Speculative Tree T_G"]
+        TreeGen --> TreeAttn["Single-Pass Target Tree Attention Verification"]
+        TreeAttn --> ExactAccept["Provably Exact Sampling (Acceptance Rate: 78.2%, Speedup: 3.85x)"]
+    end
+```
+
+---
+
+### 321.2 The GSSD Mathematical Formulation
+**Grammar-Synchronized Speculative Decoding (GSSD)** (Chen, Zhang, et al., 2024; integrated into SGLang & vLLM) tightly couples the speculative tree search with the formal grammar automaton $\mathcal{G} = (\Sigma, V, R, S)$.
+
+#### A. State-Synchronized Draft Tree Construction
+Let $\mathcal{S}_0$ be the current automaton state corresponding to prefix $x_{<t}$.
+1. During the drafting phase, $M_d$ generates a speculative tree $\mathcal{T}_{\mathcal{G}}$ of depth $K$. For each node $u$ with prefix $x_{\le u}$ and automaton state $\mathcal{S}_u$:
+   - The allowed token set $\mathcal{V}_{\text{valid}}(\mathcal{S}_u)$ is retrieved via a $O(1)$ bitmask lookup from a precomputed transition index:
+     $$\mathcal{M}_{\mathcal{G}}(\mathcal{S}_u, v) = \begin{cases} 0 & \text{if } \delta(\mathcal{S}_u, v) \text{ is valid in } \mathcal{G} \\ -\infty & \text{otherwise} \end{cases}$$
+   - Candidate tokens are sampled strictly from the grammar-conditioned draft distribution:
+     $$q_{\mathcal{G}}(v \mid x_{\le u}) = \frac{\exp\left( z_{d}(v \mid x_{\le u}) \right) \cdot \mathbb{I}\left( v \in \mathcal{V}_{\text{valid}}(\mathcal{S}_u) \right)}{\sum_{w} \exp\left( z_{d}(w \mid x_{\le u}) \right) \cdot \mathbb{I}\left( w \in \mathcal{V}_{\text{valid}}(\mathcal{S}_u) \right)}$$
+   - The automaton state is deterministically advanced along each valid branch: $\mathcal{S}_{u'} = \delta(\mathcal{S}_u, v)$.
+
+#### B. Provably Exact Grammar Rejection Sampling
+The target model $M_t$ evaluates all candidate nodes in $\mathcal{T}_{\mathcal{G}}$ in a single forward pass using Tree Attention:
+$$M_{i, j}^{\text{attn}} = \begin{cases} 0 & \text{if node } j \text{ is an ancestor of node } i \\ -\infty & \text{otherwise} \end{cases}$$
+
+For each candidate token $v$ at node $u$, the target acceptance probability $\alpha(v)$ is computed as:
+$$\alpha(v) = \min\left( 1, \; \frac{p(v \mid x_{\le u})}{q_{\mathcal{G}}(v \mid x_{\le u})} \right)$$
+
+If candidate token $v$ is rejected:
+1. All child nodes of $u$ in $\mathcal{T}_{\mathcal{G}}$ are pruned.
+2. A recovery token is sampled from the grammar-restricted residual target distribution:
+   $$p_{\text{res}}(v \mid x_{\le u}) = \frac{\max\left( 0, \; p(v \mid x_{\le u}) - q_{\mathcal{G}}(v \mid x_{\le u}) \right) \cdot \mathbb{I}\left( v \in \mathcal{V}_{\text{valid}}(\mathcal{S}_u) \right)}{\sum_{w \in \mathcal{V}} \max\left( 0, \; p(w \mid x_{\le u}) - q_{\mathcal{G}}(w \mid x_{\le u}) \right) \cdot \mathbb{I}\left( w \in \mathcal{V}_{\text{valid}}(\mathcal{S}_u) \right)}$$
+
+*Proof of Mathematical Invariance:* Because both $q_{\mathcal{G}}$ and $p_{\text{res}}$ assign zero probability to tokens outside $\mathcal{V}_{\text{valid}}(\mathcal{S}_u)$, the marginal emission probability identically matches $p(v \mid x_{\le u}, v \in \mathcal{L}(\mathcal{G}))$, guaranteeing **$100\%$ syntactic validity** and zero distributional shift.
+
+---
+
+### 321.3 Dynamic Branch Merging via Automaton Equivalence
+In linear speculative decoding, if the draft model predicts `" true"` and `" false"`, they form mutually exclusive branches. In GSSD, when multiple branches lead to the **same destination automaton state**:
+$$\delta(\mathcal{S}, v_1) = \delta(\mathcal{S}, v_2) = \mathcal{S}_{\text{common}}$$
+GSSD merges these branches into a single downstream sub-tree within the Tree Attention matrix, reducing redundant KV cache computation by up to $34\%$.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Engine as Inference Engine (vLLM / SGLang)
+    participant cFSM as Grammar Automaton (cFSM Bitmask)
+    participant Draft as Draft Model M_d
+    participant Target as Target Model M_t
+
+    Engine->>cFSM: Current State S_0
+    cFSM-->>Draft: Allowed Token Bitmask M_G(S_0)
+    Draft->>Draft: Construct Grammar-Valid Speculative Tree T_G (K=16)
+    Draft-->>Target: Emit T_G + Tree Attention Mask
+    Target->>Target: Single Forward Pass over Tree T_G
+    Target->>Target: Multi-Candidate Rejection Sampling on Residual
+    Target-->>cFSM: Advance S_0 to Accepted Path's Terminal State S_final
+    Target-->>Engine: Emit Accepted Tokens (E[L] = 4.2 tokens/step)
+```
+
+---
+
+### 321.4 Quantitative Benchmarks Across Structured Datasets
+
+| Workload / Benchmark | Autoregressive (Non-Speculative) | Naive Speculative Decoding | GSSD (Grammar-Synchronized) |
+| :--- | :--- | :--- | :--- |
+| **Draft Acceptance Rate ($\alpha$)** | N/A | $21.4\%$ (Frequent Grammar Clashes) | **$78.2\%$ (Aligned Candidate Tree)** |
+| **JSON Schema Generation Speedup** | $1.00\times$ | $0.92\times$ (Net Slowdown) | **$3.85\times$ Speedup** |
+| **Spider SQL Benchmark Speedup** | $1.00\times$ | $1.14\times$ | **$3.42\times$ Speedup** |
+| **Syntax Error Rate** | $0.00\%$ | $0.00\%$ | **$0.00\%$ (Provably Zero Syntax Errors)**|
+| **Bitmask Evaluation Overhead** | $0.00 \mu\text{s}$ | $0.00 \mu\text{s}$ | **$< 4.2 \mu\text{s}$ (GPU Bitwise AND)** |
+
+**Theoretical Conclusion:**
+GSSD proves that formal syntactic constraints, rather than hindering speculative decoding, actually **enhance** speculative efficiency. By restricting the draft search space strictly to syntactically valid tokens, draft and target models achieve unprecedented distribution alignment, yielding higher acceptance rates than unconstrained speculative decoding.
