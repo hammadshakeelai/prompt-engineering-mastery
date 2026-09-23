@@ -10952,3 +10952,113 @@ sequenceDiagram
 - **Perplexity Parity:** On Wikitext-103 and C4, 2-to-1 CLA ($R=2$) models exhibit identical validation loss ($\Delta \text{PPL} \le +0.08$) compared to dense GQA baselines trained with identical FLOP budgets.
 - **SRAM Reuse & Bandwidth Elimination:** In fused kernel execution, because Layer 2 reuses the Key/Value cache of Layer 1, the tensors $\mathbf{K}_1, \mathbf{V}_1$ remain resident in fast on-chip SRAM, eliminating a second multi-gigabyte HBM memory fetch and boosting decoding speed by **$1.52\times\text{--}1.94\times$**.
 - **Context Length Scaling:** Allows single-node 8xH100 clusters to serve **$2.1\times$ larger concurrent batch sizes** at $64\text{k}\text{--}128\text{k}$ sequence horizons with zero loss in associative recall.
+
+---
+
+## 305. LLGuidance: High-Throughput Grammar-Constrained Decoding via Prefix Trie Automata & 50μs Bitmasking (Microsoft, 2024)
+
+### 305.1 The Microsecond Bottleneck in High-Concurrency Serving
+In production inference engines (vLLM, SGLang, TensorRT-LLM), each autoregressive decoding step on NVIDIA H100 GPUs takes approximately $5\text{--}15\,\text{ms}$ per batch. If a grammar-constrained decoding engine spends $5\text{--}25\,\text{ms}$ per step on CPU computing token masks via dynamic regular expression parsing, it **doubles serving latency** and reduces GPU utilization by over $50\%$.
+
+To achieve zero-overhead structured generation, the masking engine must satisfy the **Microsecond Constraint**:
+$$\tau_{\text{mask}} \le 100\,\mu\text{s} \quad (\le 0.1\,\text{ms})$$
+allowing vocabulary mask computation to overlap completely with GPU kernel launches and asynchronous communication.
+
+**LLGuidance** (Low-Level Guidance; Microsoft, 2024), implemented in Rust and powering Microsoft Guidance, achieves an unprecedented **$\approx 30\text{--}50\,\mu\text{s}$ per token masking latency** while natively supporting JSON Schemas, Context-Free Grammars (EBNF/Lark), and regular expressions.
+
+```mermaid
+flowchart TD
+    subgraph LegacyParser["Legacy Runtime Grammar Parsers (Outlines / Python)"]
+        Grammar1["JSON Schema / Regex"] --> PyRegex["Per-Step Dynamic Regex Traversal"]
+        PyRegex --> VocabIter["Iterate over 128k Vocabulary Strings"]
+        VocabIter --> SlowMask["Latency: 5,000 - 25,000 μs / token -> Stalls GPU Tensor Cores"]
+    end
+    subgraph LLGuidanceEngine["Microsoft LLGuidance Architecture (Rust, 2024)"]
+        Grammar2["JSON Schema / Lark CFG / Regex"] --> EarleyFSM["Compiled Earley Parser + Byte-Level Trie Automaton"]
+        EarleyFSM --> TrieLookup["Single-Pass Vocabulary Trie Masking"]
+        TrieLookup --> FastForward["Deterministic Jump-Ahead (Bypasses LLM Forward Pass)"]
+        FastForward --> UltraFast["Latency: 30 - 50 μs / token -> 0% GPU Stall"]
+    end
+```
+
+---
+
+### 305.2 Architectural Mechanics: Prefix Trie Automata & Earley Lexing
+LLGuidance compiles heterogeneous structural specifications into a unified, byte-level execution engine:
+
+1. **The Vocabulary Prefix Trie:**
+   The entire model vocabulary $\mathcal{V}$ ($|\mathcal{V}| \approx 128\text{k}\text{--}256\text{k}$) is structured as a compact byte-level Prefix Trie $\mathcal{T}_{\text{vocab}}$. Each node in $\mathcal{T}_{\text{vocab}}$ corresponds to a byte prefix, and leaf/internal nodes store token IDs.
+2. **Synchronized State Machine Traversal:**
+   Rather than testing each token string independently, LLGuidance traverses the grammar state machine and the vocabulary Trie simultaneously:
+   - Starting from the current grammar parser state $S_t$, it performs a Depth-First Search (DFS) over $\mathcal{T}_{\text{vocab}}$.
+   - If a byte transition is illegal under the grammar, the entire subtree of tokens rooted at that Trie node is **pruned in a single step**, eliminating tens of thousands of tokens without inspecting them individually.
+3. **Earley Parser for Ambiguous Context-Free Grammars:**
+   For arbitrary Context-Free Grammars (e.g. nested arithmetic, programming syntax), LLGuidance integrates an incremental Earley parser with byte-level lookahead, correctly handling left-recursion, nullable non-terminals, and ambiguous syntactic paths.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant LLM as LLM Serving Engine (vLLM / SGLang)
+    participant Engine as LLGuidance Rust Core
+    participant Trie as Vocabulary Byte Trie
+    participant GPU as GPU Memory (Logits)
+
+    LLM->>Engine: Current Parser State S_t
+    Engine->>Trie: Traverse Trie from Root with State S_t
+    Trie->>Trie: Subtree Pruning: Invalidate Disallowed Byte Branches
+    Trie-->>Engine: Emits Vectorized Bitset (1 = Valid, 0 = Masked)
+    Engine-->>GPU: Scatter -inf to Disallowed Logits (Takes ~40 μs)
+    GPU->>LLM: Sample Next Token v_t
+    LLM->>Engine: Advance State with Token v_t
+```
+
+---
+
+### 305.3 Deterministic Jump-Ahead (Fast-Forwarding)
+In structured formats like JSON, large spans of text are **syntactically deterministic**:
+```json
+{
+  "user_id": 10492,
+  "status": "active"
+}
+```
+In the snippet above, the structural syntax `{"user_id": `, `, "status": "`, and `"}` are 100% determined by the schema; there are zero valid alternative tokens at those steps.
+
+1. **Zero-Compute Forwarding:**
+   When LLGuidance detects that the grammar permits only a single unique byte sequence of length $L > 1$, it **fast-forwards** the generation by automatically appending the deterministic tokens directly into the KV cache and conversation context:
+   $$\text{Generated Token Sequence} \leftarrow \text{LLM Output} \circ \text{Deterministic Literal}$$
+2. **Latency Elimination:**
+   For a typical JSON payload where $35\text{--}50\%$ of tokens are fixed syntax keys and delimiters, fast-forwarding **cuts the required number of GPU forward passes by up to $40\%$**, doubling serving throughput.
+
+---
+
+### 305.4 Integration with Token Healing
+When prompts end with partial tokens or ambiguous punctuation (e.g. `{"id": ` without the trailing quote), naive grammar decoders force the model to pick from full tokens that begin with `"`, often splitting subwords sub-optimally.
+LLGuidance natively integrates **Token Healing**:
+- Detects whether the trailing byte sequence matches the suffix of a broader multi-character token.
+- Rolls back the final prompt token to its root prefix, masks the vocabulary Trie according to the grammar continuation, and allows the model to cleanly complete the subword boundary.
+
+---
+
+### 305.5 Quantitative Benchmarks: Masking Latency & Throughput
+
+```mermaid
+flowchart LR
+    subgraph LatencyBenchmark["Masking Overhead per Token (Lower is Better)"]
+        OutlinesPy["Outlines (Python Regex): 3,800 μs"]
+        XGrammarCpp["XGrammar (C++ Partitioning): 180 μs"]
+        LLGuidanceRust["LLGuidance (Rust Trie Pruning): 42 μs (90x Faster than Python)"]
+    end
+```
+
+| Engine | Primary Language | Grammars Supported | Masking Latency / Token | Fast-Forwarding Support | Token Healing Native |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Outlines** | Python / Rust | Regex, JSON Schema | $1,200\text{--}4,500\,\mu\text{s}$ | Partial | No |
+| **Guidance (Legacy)** | Python / C++ | Regex, CFG | $800\text{--}2,200\,\mu\text{s}$ | Yes | Yes |
+| **XGrammar** | C++ / CUDA | Context-Free Grammars | $120\text{--}250\,\mu\text{s}$ | Yes | No |
+| **LLGuidance (Microsoft 2024)**| **Rust Core** | **JSON, Lark CFG, Regex** | **$30\text{--}50\,\mu\text{s}$** | **Yes (Full AST)** | **Yes (Native)** |
+
+**Key Serving Results:**
+- **Zero Serving Stall:** Operates at **$<50\,\mu\text{s}$ per token**, remaining completely invisible beneath the $10\,\text{ms}$ GPU forward execution budget.
+- **Throughput Scaling:** Fast-forwarding accelerates JSON generation throughput by **$1.4\times\text{--}1.8\times$** on vLLM and SGLang workloads.
+- **Syntax Reliability:** Maintains **$100.0\%$ JSON Schema and Lark grammar compliance** across over 100,000 synthetic test benchmarks.
