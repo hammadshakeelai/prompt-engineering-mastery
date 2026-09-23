@@ -5315,6 +5315,31 @@ flowchart TD
 - **Offline Granularity Alignment:** Maps subword tokens against character-level DFA states ahead of time.
 - **$\mathcal{O}(1)$ State Lookups:** During inference, identifying valid next-token continuations reduces to an instantaneous array lookup, eliminating regular expression parsing overhead and guaranteeing valid JSON/regex emissions.
 
+---
+
+## 185. Mechanistic Failure Modes: Glitch Tokens & Unembedded Latent Anomalies (Rumbelow & Watkins, 2023)
+
+### 185.1 The Geometry of Untrained Vocabulary Clusters
+Autoregressive tokenizers (BPE, SentencePiece) construct static token vocabularies from raw corpus statistics prior to model pre-training. Joe Rumbelow and Jessica Watkins (*SolidGoldMagikarp and Glitch Tokens in LLMs*, 2023) mechanistically discover that certain token IDs produce anomalous, catastrophic generation failures across foundation models:
+
+```mermaid
+flowchart TD
+    Tokenizer["Tokenizer Corpus (Reddit, E-commerce, Gaming Scrapes)"] --> Anomaly["Tokens like 'SolidGoldMagikarp', 'RandomRedditor' Inserted into Vocab"]
+    Anomaly --> Pretrain["Pre-training Data Filtering: Web Scrape Artifacts Scrubbed"]
+    Pretrain --> ZeroUpdate["Token Embeddings Receive Near-Zero Gradient Updates during Pretraining"]
+    ZeroUpdate --> Origin["Embeddings Stranded Near Coordinate Center / Vector Nullspaces"]
+    Origin --> K_Means["High K-Means Distance from Natural Token Manifold"]
+    K_Means --> Inference["Inference-Time Prompt Injection: Model Emits Erratic Glitches, Insults, Hallucinations"]
+```
+
+### 185.2 Mathematical Mechanics of Embedding Degeneracy
+1. **Gradient Under-Allocation:** When a token $t_{\text{glitch}}$ is present in the vocabulary $\mathcal{V}$ but heavily filtered or absent in pre-training data, its input embedding vector $E(t_{\text{glitch}}) \in \mathbb{R}^d$ and output unembedding vector $U(t_{\text{glitch}}) \in \mathbb{R}^d$ experience minimal gradient steps:
+   $$\sum_{\tau=1}^T \|\nabla_{E(t_{\text{glitch}})} \mathcal{L}_\tau\| \approx 0$$
+2. **Centroid Proximity:** These vectors remain stranded near their initialization centroid, forming distinct geometric outlier clusters far from the manifold of semantic tokens:
+   $$\|E(t_{\text{glitch}}) - \mu_{\mathcal{V}}\|_2 \ll \mathbb{E}_{t \sim \mathcal{V}}[\|E(t) - \mu_{\mathcal{V}}\|_2]$$
+3. **Softmax Instability:** Conditioning an attention head on an un-updated token collapses dot-product variance ($Q K^T$), forcing the softmax normalizer to allocate erratic probability distributions, triggering bizarre confabulations, deterministic looping, or refusal bypasses.
+
+
 
 
 
