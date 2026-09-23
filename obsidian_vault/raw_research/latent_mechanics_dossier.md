@@ -5339,6 +5339,30 @@ flowchart TD
    $$\|E(t_{\text{glitch}}) - \mu_{\mathcal{V}}\|_2 \ll \mathbb{E}_{t \sim \mathcal{V}}[\|E(t) - \mu_{\mathcal{V}}\|_2]$$
 3. **Softmax Instability:** Conditioning an attention head on an un-updated token collapses dot-product variance ($Q K^T$), forcing the softmax normalizer to allocate erratic probability distributions, triggering bizarre confabulations, deterministic looping, or refusal bypasses.
 
+---
+
+## 186. Portable Grammar-Constrained Decoding: XGrammar (Zhao et al., MLC / OctoAI 2024)
+
+### 186.1 Overcoming CPU Mask-Compilation Latency in Serving Engines
+Grammar-guided structured generation (enforcing strict JSON, EBNF, or Pydantic schemas) traditionally creates catastrophic inference bottlenecks: CPU-based regex/parser execution introduces $10\text{--}100\text{ms}$ latency overhead per token, degrading GPU throughput. Yilong Zhao et al. (*XGrammar: Flexible and Efficient Structured Generation to Power LLM Serving*, MLC.ai / CMU 2024 / arXiv:2411.15100) introduce **XGrammar**, establishing portable, hardware-accelerated token-level grammar execution:
+
+```mermaid
+flowchart TD
+    Grammar["Context-Free Grammar (JSON / EBNF)"] --> Pushdown["Pushdown Automaton (PDA) Parser"]
+    Pushdown --> Precompute["Token-Level Bitmask Precomputation & Offline Trie Alignment"]
+    Precompute --> Compact["Compressed Finite State Machine (cFSM) Memory Representation"]
+    Compact --> Engine["In-Engine Execution (vLLM, SGLang, MLC-LLM)"]
+    Engine --> GPU_Kernel["Parallel GPU Bitmask Kernel (O(1) Token Logit Masking)"]
+    GPU_Kernel --> Generation["Zero Latency Penalty Structured Output (Up to 10x Serving Acceleration)"]
+```
+
+### 186.2 Compressed Finite State Machine (cFSM) & Parallel Bitmask Kernels
+1. **Compressed Automata Representation (cFSM):** Compiles arbitrary context-free grammars and JSON schemas into compressed state transition matrices, pruning redundant intermediate parsing states while synchronizing subword token boundaries.
+2. **Parallel GPU Bitmask Vectorization:** Replaces sequential CPU parsing loops with parallel bitmask kernels running directly in GPU global/shared memory. The bitmask specifies valid vocabulary continuations as packed 32-bit/64-bit integer bitsets, applying logit masks via parallel vectorized bitwise operations:
+   $$M_{\text{vocab}} = \text{BitwiseAnd}\left(\text{PrecomputedStateMask}(s), \text{VocabularyIndex}\right)$$
+3. **Cross-Engine Portability:** Operates natively with zero copy across vLLM, SGLang, TensorRT-LLM, and MLC-LLM, achieving up to **$10\times$ higher token serving throughput** and reducing per-token grammar overhead from milliseconds to microseconds.
+
+
 
 
 

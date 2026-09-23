@@ -350,6 +350,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/universal_self_consistency.md|Universal Self Consistency]]
 - [[raw_research/snippets/visual_cot_and_spatial_prompting.md|Visual Cot And Spatial Prompting]]
 - [[raw_research/snippets/xgrammar_constrained_decoding.md|Xgrammar Constrained Decoding]]
+- [[raw_research/snippets/xgrammar_hardware_accelerated_decoding.md|Xgrammar Hardware Accelerated Decoding]]
 - [[raw_research/snippets/xgrammar_zero_overhead_constrained_decoding.md|Xgrammar Zero Overhead Constrained Decoding]]
 - [[raw_research/snippets/yarn_rope_frequency_scaling.md|Yarn Rope Frequency Scaling]]
 - [[raw_research/snippets/yoco_you_only_cache_once.md|Yoco You Only Cache Once]]
