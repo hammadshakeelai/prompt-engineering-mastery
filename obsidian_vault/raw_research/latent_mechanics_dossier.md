@@ -9396,3 +9396,102 @@ flowchart LR
 - **Memory Footprint:** Reduces active KV cache memory from $16.0\,\text{bits/token}$ down to an effective **$2.6\,\text{bits/token}$** (including scales, zero-points, and the FP16 residual buffer)—a **$4.1\times$ reduction** over FP16 and **$2.0\times$ reduction** over standard INT4.
 - **Serving Concurrency & Throughput:** Enables an instantaneous **$4\times$ increase in maximum batch size** on an 80GB A100/H100, translating to a **$2.35\times\text{--}3.47\times$ end-to-end decoding throughput speedup**.
 - **Accuracy Parity:** Across LongBench tasks (NarrativeQA, Qasper, MultiFieldQA, Passkey retrieval), KIVI 2-bit achieves **$99.2\%$ of full FP16 performance**, completely outperforming uniform 2-bit baselines which degrade by $>40\%$.
+
+---
+
+## 289. Compressed Finite State Machines (cFSM) & Dynamic Token Jump-Forwarding: Eliminating Autoregressive Overhead on Deterministic Grammar Arcs (SGLang / ICML 2024)
+
+### 289.1 The Latency Waste of Deterministic Structural Boilerplate
+In enterprise agent and structured generation workloads (JSON Schema enforcement, function calling, SQL query synthesis, and typed YAML), output tokens are divided into two distinct functional categories:
+1. **Dynamic Generative Tokens (Semantic Content):** Tokens representing unpredictable model reasoning, field values, natural language explanations, or variable names (e.g. `"John Doe"`, `42`, `"SELECT customer_id FROM orders"`). These require the full generative power and attention computation of the LLM.
+2. **Deterministic Structural Tokens (Boilerplate Syntax):** Tokens representing static schema delimiters, key names, type separators, and syntax punctuation (e.g., `{\n  "status": "`, `",\n  "timestamp": "`, `",\n  "error_code": `).
+
+**The Autoregressive Memory-Bandwidth Penalty:**
+In conventional constrained decoding engines (e.g., standard Outlines or naive Guidance), both dynamic and deterministic tokens are generated autoregressively one by one:
+- To generate a 12-token static boilerplate prefix `{"transaction_id": "`, the engine executes $12$ sequential single-token decoding steps.
+- Each decoding step re-reads the entire 70B parameter weights ($140\,\text{GB}$) and historical KV cache from HBM for a single vector-matrix multiplication ($O(1)$ arithmetic intensity).
+- Because the formal grammar permits only a single valid token at these steps ($|\mathcal{V}_{\text{valid}}(s)| = 1$), running the LLM forward pass is completely redundant: the output is predetermined by the grammar.
+- In standard JSON schemas, deterministic tokens account for **$40\text{--}65\%$ of the total sequence length**, burning massive GPU memory bandwidth on predetermined characters.
+
+```mermaid
+flowchart TD
+    subgraph NaiveAutoregressive["Naive Autoregressive Generation (12 Decoding Passes)"]
+        D1["Step 1: '{' (Load 140GB Weights)"] --> D2["Step 2: '\"' (Load 140GB Weights)"]
+        D2 --> D3["Step 3: 'status' (Load 140GB Weights)"]
+        D3 --> D4["... 9 More Steps (Massive HBM Memory Bandwidth Wasted)"]
+    end
+    subgraph JumpForward_cFSM["cFSM Jump-Forward Execution (SGLang / ICML 2024)"]
+        State["State s_0 (Path Out-Degree = 1)"] --> Compress["Path Compression: Collapse 12 Tokens into Macro-Edge w_jump"]
+        Compress --> Instant["Directly Append 12 Tokens to Output (Skip 12 Model Passes)"]
+        Instant --> Chunked["1 Batched Chunked-Prefill Step to Update KV Cache (High Compute Saturation)"]
+    end
+```
+
+---
+
+### 289.2 Mathematical Formulation of Compressed FSMs (cFSM)
+The **Compressed Finite State Machine (cFSM)** framework (Zheng et al., SGLang, ICML 2024) solves this by identifying and collapsing linear deterministic paths in the grammar automaton prior to execution:
+
+1. **Deterministic Linear Path Identification:**
+   Let $\mathcal{M} = (S, \Sigma, \delta, s_0, F)$ be a deterministic finite automaton over tokenizer vocabulary $\Sigma$. A state $s \in S$ is defined as **Deterministic** if its out-degree is strictly one:
+   $$\text{deg}_{\text{out}}(s) = \left| \{ w \in \Sigma \mid \delta(s, w) \neq \emptyset \} \right| = 1$$
+   A directed path of states $\mathcal{P} = (s_0, s_1, \dots, s_k)$ is a **Maximal Deterministic Path** if:
+   $$\text{deg}_{\text{out}}(s_i) = 1 \quad \forall i \in \{0, \dots, k-1\} \quad \text{and} \quad \text{deg}_{\text{out}}(s_k) > 1$$
+2. **Path Compression Operator:**
+   The cFSM algorithm collapses each maximal deterministic path into a single composite macro-transition:
+   $$\delta_{\text{cFSM}}(s_0, \mathbf{w}_{\text{macro}}) = s_k \quad \text{where } \mathbf{w}_{\text{macro}} = (w_1, w_2, \dots, w_k) \in \Sigma^k$$
+   where $\delta(s_{i-1}, w_i) = s_i$ for all $1 \le i \le k$.
+3. **State Classification in cFSM:**
+   The cFSM state space is partitioned into:
+   - **Branching States ($S_{\text{branch}}$):** $\text{deg}_{\text{out}}(s) > 1$. The engine samples next-token logits from the LLM, masked by the valid token bitset.
+   - **Jump-Forward States ($S_{\text{jump}}$):** $\text{deg}_{\text{out}}(s) = 1$. The engine skips sampling entirely, jumps forward by emitting $\mathbf{w}_{\text{macro}}$, and transitions immediately to $s_k$.
+
+---
+
+### 289.3 Hardware Co-Design: Jump-Forward Execution & Chunked Prefill
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Engine as SGLang Execution Engine
+    participant cFSM as Compressed FSM
+    participant KV as PagedAttention KV Cache
+    participant Model as GPU Forward Kernel
+
+    Engine->>cFSM: Check Active State s_t
+    alt State is Branching (deg_out > 1)
+        cFSM-->>Engine: Return Mask M(s_t)
+        Engine->>Model: Run 1-Token Decode Forward Pass
+        Model-->>Engine: Emit Token x_t
+        Engine->>KV: Append Token x_t to KV Cache
+    else State is Jump-Forward (deg_out == 1)
+        cFSM-->>Engine: Emit Macro-Sequence w_macro = (t_1, ..., t_k)
+        Engine->>Engine: Append w_macro to Output Buffer (Zero Decode Latency)
+        Engine->>Model: Execute 1 Batched Chunked-Prefill for k Tokens
+        Model->>KV: Insert k Key-Value Tensors Concurrently in SRAM
+        Engine->>cFSM: Advance State directly to s_k
+    end
+```
+
+**Algorithmic Advantages of Chunked-Prefill Integration:**
+1. **Converting Memory-Bound Decode to Compute-Bound Prefill:**
+   Instead of loading weights $k$ times to generate $k$ deterministic tokens individually (bandwidth-bound at $O(1)$ arithmetic intensity), the engine processes all $k$ tokens in a single **Chunked Prefill Forward Pass**. The weights are loaded once, and all $k$ tokens are processed in parallel via matrix-matrix GEMM, achieving high Tensor Core utilization.
+2. **RadixAttention Cache Splicing:**
+   Because deterministic structural segments (e.g. JSON schema keys) are identical across all requests conforming to the same schema, their Key-Value activations are stored permanently in the global Radix tree cache. When jump-forwarding occurs, KV tensors are spliced via pointer reassignment, reducing chunked prefill overhead to **$0\,\text{ms}$**.
+
+---
+
+### 289.4 Empirical Benchmarks & Acceleration
+```mermaid
+flowchart LR
+    subgraph Acceleration["End-to-End Latency Comparison on JSON Schema Workloads"]
+        StandardDecode["Uncompressed Autoregressive Decoding: 100% Latency Baseline"]
+        OutlinesConstrained["Standard Masked Decoding (Outlines/Guidance): 135% Latency (CPU Overhead)"]
+        SGLang_cFSM["SGLang cFSM Jump-Forwarding: 28% Latency (3.57x Speedup)"]
+    end
+```
+
+**Quantitative Results (Zheng et al., ICML 2024 / LLaMA-3 70B & Mistral 7B):**
+- **Token Acceleration:** Skips between **$38\%$ and $62\%$ of all autoregressive decoding steps** across standard benchmark JSON schemas.
+- **Decoding Throughput:** Delivers **$2.2\times\text{--}4.8\times$ end-to-end wall-clock speedup** compared to standard autoregressive constrained decoding.
+- **Memory Bandwidth Reduction:** Reduces total HBM memory reads by **$45.8\%$**, freeing memory channels and enabling higher concurrent batch sizes on identical GPU infrastructure.
+- **Guaranteed Zero-Error Syntax:** 100% mathematical guarantee of schema compliance, as deterministic tokens are emitted directly from the validated grammar transition table.
