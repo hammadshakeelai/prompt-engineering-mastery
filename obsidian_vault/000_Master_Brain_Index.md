@@ -28,6 +28,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/agent_orchestration_magentic_one_and_state_machines.md]]
 - [[raw_research/agent_swarm_actor_orchestration.md]]
 - [[raw_research/automated_process_supervision_prm_scaling.md]]
+- [[raw_research/automated_prompt_optimization_and_programmatic_compilers_monograph.md]]
 - [[raw_research/compiler_in_the_loop_lean4_proof_search.md]]
 - [[raw_research/discrete_diffusion_and_non_autoregressive_language_models_monograph.md]]
 - [[raw_research/formal_neurosymbolic_verification_and_autoformalization_monograph.md]]
