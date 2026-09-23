@@ -7375,5 +7375,51 @@ flowchart TD
    - **WARM Impact:** Improves reward generalization on Anthropic-HH and increases downstream RLHF policy win rate by up to $15\%$ compared to single reward models.
    - **WARP Impact:** Pushes policies past the classical RLHF Pareto frontier on AlpacaEval 2.0, achieving state-of-the-art win rates without degrading validation perplexity or incurring catastrophic KL divergence collapse.
 
+---
+
+## 258. Gated Sparse Autoencoders: Decoupling Feature Detection from Magnitude to Eliminate Shrinkage
+
+### 258.1 The L1 Shrinkage Pathology vs. Gated Decoupling Topology
+```mermaid
+flowchart TD
+    subgraph StandardSAE["Standard L1 Sparse Autoencoder (The Shrinkage Defect)"]
+        X_IN["Activation Vector x ∈ R^d"] --> ENC_STD["Encoder: f(x) = ReLU(W_enc x + b_enc)"]
+        ENC_STD --> L1_PEN["L1 Penalty: λ · ||f(x)||_1"]
+        L1_PEN --> SHRINK["Shrinkage Pathology: L1 Gradient Constant (-λ) Depresses Feature Magnitudes Below True Activation Values"]
+        SHRINK --> TRADEOFF["Unfavorable L0 Sparsity vs. Reconstruction MSE Pareto Frontier"]
+    end
+    subgraph GatedSAE["Gated Sparse Autoencoder (Rajamanoharan et al., Google DeepMind 2024)"]
+        X_G["Activation Vector x ∈ R^d"] --> GATE_BRANCH["1. Gating Branch (Detection): π(x) = Heaviside(W_gate x + b_gate)"]
+        X_G --> MAG_BRANCH["2. Magnitude Branch (Unshrunk Value): m(x) = ReLU(W_mag x + b_mag)"]
+        GATE_BRANCH & MAG_BRANCH --> GATED_FEAT["Decoupled Feature: f_gated(x) = π(x) ⊙ m(x)"]
+        GATED_FEAT --> DEC["Decoder: \hat{x} = W_dec f_gated(x) + b_dec"]
+        GATE_BRANCH --> SPARSE_LOSS["Sparsity Loss Evaluated ONLY on Gating Branch (Zero Shrinkage on m(x))"]
+    end
+```
+
+### 258.2 Mathematical Formulation of Gated Sparse Autoencoders
+1. **The L1 Shrinkage Mechanism:** In conventional SAE architectures, feature activations $f(x) = \text{ReLU}(W_{\text{enc}} x + b_{\text{enc}})$ are penalized by an $L_1$ sparsity loss $\lambda \|f(x)\|_1$. The gradient with respect to an active feature coordinate $f_i > 0$ is:
+   $$\frac{\partial \mathcal{L}_{\text{sparsity}}}{\partial f_i} = \lambda > 0$$
+   This continuous downward gradient acts as an artificial friction term, systematically depressing ("shrinking") reconstructed feature activations below their true physical values. To counteract this shrinkage, models are forced to inflate decoder norms or accept higher reconstruction Mean Squared Error (MSE).
+2. **Dual-Branch Gated Architecture:** Rajamanoharan et al. (Google DeepMind, 2024) eliminate shrinkage by decoupling the binary decision of *whether* a feature is active from the continuous estimation of *how active* it is:
+   - **Gating Path (Feature Presence):**
+     $$\tilde{\pi}(x) = W_{\text{gate}} x + b_{\text{gate}} \in \mathbb{R}^M$$
+     $$\pi(x) = \mathbb{I}\left(\tilde{\pi}(x) > 0\right) = \text{Heaviside}\left(\tilde{\pi}(x)\right)$$
+   - **Magnitude Path (Feature Intensity):**
+     $$\tilde{m}(x) = W_{\text{mag}} x + b_{\text{mag}} \in \mathbb{R}^M$$
+     $$m(x) = \text{ReLU}\left(\tilde{m}(x)\right)$$
+   - **Gated Feature Combination:**
+     $$f_{\text{gated}}(x) = \pi(x) \odot m(x)$$
+   - **Reconstruction:**
+     $$\hat{x} = W_{\text{dec}} f_{\text{gated}}(x) + b_{\text{dec}}$$
+3. **Decoupled Training Objective with Auxiliary Gating Loss:**
+   To train the non-differentiable step function $\pi(x)$, the $L_1$ penalty is applied to the pre-activation gating logits using a jump-penalty or standard surrogate loss, alongside an auxiliary reconstruction loss ensuring the gating path aligns with the target:
+   $$\mathcal{L}_{\text{gated}} = \|x - \hat{x}\|_2^2 + \lambda \sum_{i=1}^M \text{ReLU}\left(\tilde{\pi}_i(x)\right) + \mathcal{L}_{\text{aux}}\left(\tilde{\pi}(x), x\right)$$
+   Because the magnitude weights $W_{\text{mag}}, b_{\text{mag}}$ do not receive gradients from the sparsity penalty, **feature shrinkage is mathematically eliminated**:
+   $$\frac{\partial \mathcal{L}_{\text{sparsity}}}{\partial m_i(x)} \equiv 0$$
+4. **Empirical Pareto Frontier Dominance:**
+   - Across Gemma-2B, LLaMA-3-8B, and Pythia residual streams, Gated SAEs achieve a strictly superior Pareto frontier: at identical $L_0$ sparsity ($k \approx 30\text{--}60$ active features per token), Gated SAEs achieve **$20\%\text{--}40\%$ lower reconstruction MSE** than standard $L_1$ SAEs.
+   - Eliminates feature splitting artifacts and dead latents, recovering cleaner, highly monosemantic circuits for downstream mechanistic steering and model auditing.
+
 
 
