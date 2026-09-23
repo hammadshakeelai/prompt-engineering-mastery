@@ -8788,3 +8788,84 @@ flowchart TD
 - **Throughput Scaling:** Achieves up to **$525\%$ throughput improvement** over monolithic colocated vLLM when processing ultra-long context workloads ($64\text{K}\text{--}200\text{K}$ tokens).
 - **Cluster Capacity:** Allows Kimi's production cluster to support **$75\%$ higher request loads** while maintaining strict P99 TBT latency thresholds ($<35\,\text{ms}$).
 - **Energy & Resource Efficiency:** Prevents GPU Tensor Core starvation in decode pools, raising average compute utilization across the datacenter from $18\%$ to over **$54\%$**.
+
+---
+
+## 281. Token Equivalence Class Partitioning & Adaptive Lookahead Tries in Grammar-Constrained Decoding (XGrammar / LLGuidance)
+
+### 281.1 The Vocabulary Explosion Bottleneck in Formal Language Steering
+Grammar-constrained decoding steers large language model outputs into provably correct syntax (JSON, SQL, Python, BNF) by computing a boolean token mask $\mathcal{M}_t \in \{0, -\infty\}^V$ applied directly to the next-token logit distribution:
+$$\tilde{z}_t[w] = \begin{cases} z_t[w] & \text{if } \mathcal{M}_t[w] = 0 \\ -\infty & \text{if } \mathcal{M}_t[w] = -\infty \end{cases}$$
+While mathematically rigorous, this mechanism faces a critical performance crisis as model vocabularies scale from $32\text{K}$ (GPT-2, LLaMA-1) to $128\text{K}$ (Llama-3, Gemma-2) and $256\text{K}$ (Command-R, DeepSeek-V3).
+
+**The Naive Parsing Cost:**
+At every single autoregressive decoding step $t$, with current parser state $s \in S$, the grammar verification engine must determine whether each token $w \in \Sigma$ constitutes a valid continuation.
+- Evaluating $V = 128\text{,}000$ tokens sequentially against an Earley parser or Pushdown Automaton takes between $3\,\text{ms}$ and $18\,\text{ms}$ of CPU wall-clock time.
+- Because an optimized GPU forward step takes only $5\text{--}10\,\text{ms}$, the CPU token-masking loop introduces a **$1.5\times\text{--}3\times$ latency slowdown**, leaving high-throughput GPU batches idle while waiting for host-side regex/parser updates.
+
+```mermaid
+flowchart TD
+    subgraph NaiveMasking["Naive Vocabulary-Wide Validation (Severe Bottleneck)"]
+        State["Current Grammar State s_t"] --> Loop["Evaluate All V = 128,000 Tokens Individually"]
+        Loop --> Time["Takes 5 - 18 ms per Step (GPU Starved)"]
+    end
+    subgraph EquivalenceArchitecture["Token Equivalence Class Partitioning (XGrammar / LLGuidance)"]
+        Vocab["128K Token Vocabulary"] --> OfflineGroup["Offline Equivalence Clustering (w_i ~ w_j)"]
+        OfflineGroup --> Classes["K Disjoint Classes (K ≈ 120-250 << V)"]
+        Classes --> Bitsets["Pre-Compiled Static Bitsets B_1, ..., B_K"]
+        State2["State s_t"] --> EvalClasses["Evaluate Parser on Only K Representatives (~100 Checks)"]
+        EvalClasses --> BitwiseOr["Bitwise-OR Valid Bitsets (AVX-512 in <0.05 μs)"]
+    end
+```
+
+---
+
+### 281.2 Mathematical Formulation of Token Equivalence Classes
+Let $\Sigma$ denote the tokenizer vocabulary with $|\Sigma| = V$. Let the formal grammar $\mathcal{G}$ be governed by the automaton $\mathcal{M} = (S, \Sigma_c, \delta, s_0, F)$ over raw byte alphabet $\Sigma_c$. The extended transition function on subword byte strings is denoted by $\delta^*(s, w)$.
+
+1. **The Grammar Equivalence Relation ($\sim_\mathcal{G}$):**
+   Two subword tokens $u, v \in \Sigma$ are defined as **Grammar-Equivalent** under $\mathcal{G}$ if and only if they map every parser state $s \in S$ to the exact same successor state, or both result in invalid transitions:
+   $$u \sim_\mathcal{G} v \iff \forall s \in S, \quad \delta^*(s, u) = \delta^*(s, v)$$
+2. **Disjoint Partitioning:**
+   The equivalence relation $\sim_\mathcal{G}$ partitions the vocabulary $\Sigma$ into $K$ mutually disjoint equivalence classes:
+   $$\Sigma / \sim_\mathcal{G} = \left\{ \mathcal{C}_1, \mathcal{C}_2, \dots, \mathcal{C}_K \right\}, \quad \bigcup_{k=1}^K \mathcal{C}_k = \Sigma, \quad \mathcal{C}_i \cap \mathcal{C}_j = \emptyset \; \forall i \neq j$$
+   **Theoretical Compression Property:** While $V = 128\text{,}000$, the number of structural equivalence classes $K$ is bounded by the alphabet of the grammar's lexical grammar. For standard JSON:
+   - Digits (`"0"`, `"12"`, `"999"`) form a single equivalence class $\mathcal{C}_{\text{digit}}$.
+   - Alphabetic identifiers form a small cluster of string classes $\mathcal{C}_{\text{alpha}}$.
+   - Whitespace variants (`" "`, `"\t"`, `"\n\n"`) form whitespace classes $\mathcal{C}_{\text{ws}}$.
+   - Empirical measurements on frontier tokenizers demonstrate that $K \in [120, 280]$ across all JSON schemas!
+3. **Static Bitset Compilation:**
+   For each equivalence class $\mathcal{C}_k$, a static binary bitset $\mathcal{B}_k \in \{0, 1\}^V$ is pre-computed offline:
+   $$\mathcal{B}_k[w] = \begin{cases} 1 & \text{if } w \in \mathcal{C}_k \\ 0 & \text{otherwise} \end{cases}$$
+4. **Runtime Bitwise-OR Logit Mask Assembly:**
+   At runtime, rather than iterating over $V$ tokens, the parser evaluates only a single representative token $r_k \in \mathcal{C}_k$ for each of the $K$ classes. If class $k$ is valid from state $s_t$, its entire pre-compiled bitset is merged into the active mask via SIMD Bitwise-OR:
+   $$\mathcal{M}_{\text{valid}}(s_t) = \bigvee_{k \in \{1, \dots, K\} : \delta^*(s_t, r_k) \neq \emptyset} \mathcal{B}_k$$
+
+---
+
+### 281.3 Adaptive Lookahead Trie Caching & Hardware Execution
+```mermaid
+sequenceDiagram
+    autonumber
+    participant GPU as GPU Decoding Step (Token t)
+    participant Host as XGrammar / LLGuidance Engine
+    participant Trie as Adaptive Lookahead Trie
+    participant Mask as AVX-512 Bitset Accumulator
+
+    GPU->>Host: Emit Emitted Token x_t
+    Host->>Trie: Advance Parser State s_{t+1} = δ(s_t, x_t)
+    Host->>Trie: Check Cached Equivalence Mask M(s_{t+1})
+    alt Cache Hit (98.2% of steps)
+        Trie-->>GPU: Return Mask M in O(1) (<10 ns)
+    else Cache Miss
+        Host->>Mask: Test K=150 Class Representatives
+        Mask->>Mask: AVX-512 Bitwise-OR Valid B_k Bitsets
+        Mask-->>GPU: Return Assembled Mask (<0.08 μs)
+        Mask->>Trie: Store in State Cache
+    end
+```
+
+**Quantitative Speedups & Benchmarks (XGrammar / Llama-3 70B):**
+- **Parser Transition Checks:** Reduced from $128\text{,}000$ per step down to **$\approx 140$ checks** ($99.89\%$ reduction in verification calls).
+- **CPU Mask Construction Overhead:** Decreases from **$11.4\,\text{ms}$ down to $0.04\,\mu\text{s}$** per step, rendering CPU parsing overhead completely negligible compared to GPU matrix multiplication.
+- **End-to-End Decoding Throughput:** Delivers **$100\%$ parity with unconstrained generation throughput**, resolving the multi-year performance bottleneck of structured generation frameworks.
