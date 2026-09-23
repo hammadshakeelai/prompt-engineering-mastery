@@ -11261,3 +11261,106 @@ $$F(\mathcal{H}) \triangleq \frac{\mathbb{E}_{x, x'} [\mathcal{L}_{\text{scrub}}
 - **Indirect Object Identification (IOI in GPT-2 Small):** Evaluating the 26-head IOI circuit (Wang et al., 2023) under Causal Scrubbing preserves **$94.8\%$ of the logit difference** ($3.34$ vs $3.52$), rigorously proving that the 26 heads are mathematically sufficient to explain the behavior.
 - **Parentheses Syntax Checker:** Evaluated on synthetic Dyck-$(k)$ grammars, treeified resample ablation proved that small transformers track nesting depth via an exact balance-counting scalar induction circuit, achieving **$98.2\%$ faithfulness**.
 - **Elimination of Spurious Features:** When applied to flawed hypotheses, Causal Scrubbing instantly drives faithfulness to $<10\%$, providing an automated firewall against plausible-sounding interpretability confabulations.
+
+---
+
+## 308. CacheBlend: Non-Prefix KV Cache Blending & Selective Cross-Attention Recomputation for RAG Serving (Yao et al., EuroSys 2025 Best Paper Award)
+
+### 308.1 The Prefix Caching Barrier in Retrieval-Augmented Generation (RAG)
+Modern high-throughput LLM serving engines (vLLM, SGLang) leverage **Prefix Caching** (e.g. RadixAttention) to store and reuse precomputed Key-Value (KV) cache tensors across requests. However, prefix caching enforces a strict constraint:
+$$\text{Reuse Condition: Tokens must match an exact prefix starting from index } t = 0$$
+
+In Retrieval-Augmented Generation (RAG), few-shot in-context learning, and agentic memory retrieval, this assumption fails catastrophically:
+1. **Dynamic Document Permutation:** A user prompt dynamically concatenates retrieved knowledge passages $\mathcal{D}_1, \mathcal{D}_2, \dots, \mathcal{D}_k$ in arbitrary order depending on retrieval ranking.
+2. **Causal Attention Invalidation:** In autoregressive transformers, any document $\mathcal{D}_j$ placed after $\mathcal{D}_i$ ($j > i$) causally attends to all tokens in $\mathcal{D}_i$. As a result, the hidden representations of $\mathcal{D}_j$ depend on $\mathcal{D}_i$.
+3. **The Prefill Bottleneck:** Because $\mathcal{D}_j$ is not at the prefix position, existing serving systems **discard the entire precomputed KV cache of $\mathcal{D}_j$**, forcing the GPU to recompute full quadratic prefill attention over tens of thousands of tokens, causing Time-To-First-Token (TTFT) to spike from milliseconds to multiple seconds.
+
+```mermaid
+flowchart TD
+    subgraph RadixFailure["Traditional Prefix Caching (RadixAttention Failure in RAG)"]
+        Query["Query retrieves Docs [D_3, D_1, D_7]"] --> CheckCache["Check Radix Prefix Tree"]
+        CheckCache --> MatchPrefix["D_3 matches Prefix -> Reuses KV Cache"]
+        CheckCache --> RejectOthers["D_1 & D_7 occur at non-prefix positions -> Cache Miss!"]
+        RejectOthers --> FullPrefill["Full Quadratic Prefill Recomputation -> TTFT Spikes by 300%"]
+    end
+    subgraph CacheBlendPipeline["CacheBlend: Non-Prefix Blending (EuroSys 2025 Best Paper)"]
+        Precached["Precomputed KV Caches for all Docs in Storage"] --> Blend["CacheBlend Engine"]
+        Blend --> RoPE_Shift["1. RoPE Translation: Rotate Positional Keys via SO(2) Matrix Shift"]
+        Blend --> SelectiveRecompute["2. Selective Recomputation: Recompute only 10-15% Critical Hub Tokens"]
+        SelectiveRecompute --> FullHit["100% KV Cache Hit Rate -> 2.2x - 3.3x TTFT Reduction"]
+    end
+```
+
+---
+
+### 308.2 The Cross-Attention Invalidation Dilemma & RoPE Shifts
+Reusing an independently precomputed KV cache from document $\mathcal{D}_j$ at an offset position $t_{\text{offset}}$ introduces two fundamental mathematical challenges:
+
+#### A. Rotary Position Embedding (RoPE) Displacement
+In standard prefill, document $\mathcal{D}_j$ was cached starting at token index $0$. When placed at offset $t_{\text{offset}}$:
+$$\mathbf{K}_{t}^{\text{new}} = R_{\Theta, t + t_{\text{offset}}} \mathbf{K}_t^{\text{raw}}$$
+Because the 2D block-diagonal rotation matrix satisfies $R_{\Theta, t_1 + t_2} = R_{\Theta, t_1} R_{\Theta, t_2}$, CacheBlend updates positional encodings **without re-running transformer layers**:
+$$\mathbf{K}_{t + t_{\text{offset}}} = R_{\Theta, t_{\text{offset}}} \, \mathbf{K}_t^{\text{cached}}$$
+applying an in-place $O(1)$ rotary phase shift across the cached key tensors in GPU SRAM.
+
+#### B. Inter-Document Attention Drift
+While RoPE shift corrects positional coordinates, the intermediate hidden activations $\boldsymbol{x}_{l, t}$ in layer $l$ of $\mathcal{D}_j$ did not attend to the preceding document $\mathcal{D}_i$ during isolated offline pre-caching. 
+Naively concatenating cached tensors produces **activation drift**:
+$$\Delta \boldsymbol{x}_l = \sum_{s \in \mathcal{D}_i} A_{t, s} \mathbf{V}_s$$
+which compounds across 32–80 layers, degrading answer accuracy.
+
+---
+
+### 308.3 CacheBlend Mechanics: Selective Recomputation of Hub Tokens
+**CacheBlend** (Yao et al., ACM EuroSys 2025 Best Paper Award) proves that cross-document attention changes are **extremely sparse**: over $85\%$ of tokens in $\mathcal{D}_j$ maintain near-identical internal representations regardless of which document precedes them.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as RAG Query Request ([D_1, D_2, D_3])
+    participant Engine as CacheBlend Runtime
+    participant HBM as GPU KV Cache Buffer
+    participant TensorCores as GPU Tensor Cores
+
+    App->>Engine: Submit Permuted Document Combination
+    Engine->>HBM: Load Precomputed KV Caches for D_1, D_2, D_3
+    Engine->>HBM: In-Place Phase Shift: Multiply Keys by R_(Θ, offset)
+    Engine->>TensorCores: Identify Cross-Document Attention Hub Tokens (Top 12%)
+    TensorCores->>TensorCores: Recompute ONLY Hub Tokens across Layers (Selective Prefill)
+    TensorCores->>HBM: Update Hub KV Cache Entries in Place
+    TensorCores-->>App: Emit First Generation Token (TTFT reduced by 3.3x)
+```
+
+1. **Hub Token Identification:**
+   CacheBlend tracks "attention sinks" and high-entropy connective tokens (punctuation, pronouns, conjunctions, syntactic delimiters) that mediate inter-document semantic relations.
+2. **Selective Forward Pass:**
+   Instead of executing prefill over all $N$ tokens of the prompt:
+   - Tokens identified as stable intra-document features ($85\text{--}90\%$) reuse their pre-cached KV representations with zero forward computation.
+   - Only the selective hub tokens ($10\text{--}15\%$) undergo cross-attention recomputation.
+3. **Layer-Wise KV Blending:**
+   At each transformer layer $l$, the recomputed hub activations update the cached KV values in place, completely eliminating error accumulation through the deep network.
+
+---
+
+### 308.4 Quantitative Benchmarks Across RAG & Multi-Doc Workloads
+
+```mermaid
+flowchart LR
+    subgraph TTFT_Comparison["Time-To-First-Token on 32k RAG Context (Llama-3-70B)"]
+        NoCache["Full Prefill (No Cache): 3,840 ms TTFT"]
+        PrefixOnly["Radix Prefix Caching: 2,910 ms (Fails on Document Reordering)"]
+        CacheBlend_Bench["CacheBlend: 1,180 ms TTFT (3.25x Speedup, Exact Accuracy)"]
+    end
+```
+
+| Serving Configuration | Effective KV Cache Hit Rate in RAG | TTFT Speedup ($\uparrow$) | Serving Throughput ($\uparrow$) | Output Quality Retention |
+| :--- | :--- | :--- | :--- | :--- |
+| **No Cache (Standard vLLM)** | $0.0\%$ (Full Prefill) | $1.00\times$ (Baseline) | $1.00\times$ (Baseline) | $100.0\%$ |
+| **Prefix Caching (Radix / SGLang)** | $22.4\%$ (Only 1st Doc Hits) | $1.28\times$ | $1.35\times$ | $100.0\%$ |
+| **Naive KV Concatenation** | $100.0\%$ (Zero Recompute) | $4.10\times$ | $5.80\times$ | **$41.2\%$ (Severe Collapse)** |
+| **CacheBlend (EuroSys 2025)** | **$100.0\%$ (Selective Blend)** | **$2.20\times\text{--}3.30\times$** | **$2.80\times\text{--}5.00\times$** | **$99.6\%$ (Matches Dense Model)** |
+
+**Key Systems Takeaways:**
+- **True 100% KV Hit Rate:** Transforms RAG serving from memory-bound prefill stalls into near-instantaneous decoding by decoupling KV caching from prefix order.
+- **Latency & Throughput Gains:** Reduces TTFT by up to **$3.3\times$** and multiplies server throughput by up to **$5.0\times$** on multi-document reasoning tasks (HotpotQA, MultiHop, Needle-in-a-Haystack).
+- **Quality Parity:** Retains **$>99.5\%$ of dense prefill accuracy**, resolving the semantic degradation that doomed naive cache concatenation.
