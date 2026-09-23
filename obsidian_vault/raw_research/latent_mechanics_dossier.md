@@ -7076,5 +7076,43 @@ flowchart TD
    Debate terminates when $\text{Agreement}(t) \ge \tau_{\text{consensus}}$ or when maximum rounds $T_{\max}$ is reached.
 3. **Confabulation Breakdown:** Empirically eliminates single-model sycophancy and hallucinations, driving a 4–8% accuracy improvement on GSM8K and MATH by forcing competitive justification and cross-agent error detection.
 
+---
+
+## 250. LLMLingua-2: Task-Agnostic Prompt Compression via Bidirectional Token Classification
+
+### 250.1 Causal Perplexity vs. Bidirectional Classification Topology
+```mermaid
+flowchart TD
+    subgraph CausalFail["LLMLingua-1 / Selective Context (Causal LM Bottleneck)"]
+        PROMPT_C["Prompt x = [x_1, ..., x_n]"] --> CAUSAL_LM["Autoregressive LM (GPT-2 / LLaMA)"]
+        CAUSAL_LM --> PPL["Perplexity Calculation: P(x_i | x_{<i})"]
+        PPL --> UNI["Unidirectional: Measures Predictability from Past, NOT Semantic Utility for Future"]
+        UNI --> SLOW["Slow Sequential KV Generation (High Latency)"]
+    end
+    subgraph LLMLingua2["LLMLingua-2 (Pan et al., Microsoft / ACL 2024 Findings)"]
+        PROMPT_B["Prompt x = [x_1, ..., x_n]"] --> BIDI_ENC["Bidirectional Encoder (XLM-RoBERTa / mDeBERTa)"]
+        BIDI_ENC --> TOKEN_CLS["Per-Token Binary Classification: P(y_i = 1 | x_{1:n})"]
+        TOKEN_CLS --> FULL_CTX["Considers Both Past and Future Context Simultaneously"]
+        FULL_CTX --> TOPK_SELECT["Top-K or Threshold Dynamic Retention (3x-6x Faster)"]
+    end
+```
+
+### 250.2 Mathematical Formulation of LLMLingua-2
+1. **Reformulation as Token Classification:** Rather than using causal next-token perplexity as an imperfect proxy for information density, Pan et al. (2024) formulate prompt compression as a sequence labeling task over binary retention labels $y_i \in \{0, 1\}$:
+   $$h_1, \dots, h_n = \text{Encoder}_{\text{bidi}}(x_1, \dots, x_n)$$
+   $$P(y_i = 1 \mid x) = \sigma\left(W_{\text{cls}} h_i + b_{\text{cls}}\right)$$
+2. **Data Distillation from Frontier Models:** Training labels are synthesized via an extractive distillation pipeline:
+   - Frontier models (GPT-4) compress texts under semantic preservation prompts.
+   - An exact chunk-level alignment algorithm maps compressed text back onto original source tokens to assign binary ground-truth labels $y_i^* \in \{0, 1\}$.
+   - The encoder is trained with weighted binary cross-entropy to handle label imbalance:
+     $$\mathcal{L}_{\text{compress}} = -\sum_{i=1}^n \left[\alpha y_i^* \log P(y_i = 1 \mid x) + (1 - \alpha)(1 - y_i^*) \log P(y_i = 0 \mid x)\right]$$
+3. **Budget-Constrained Dynamic Pruning:** Given a target compression ratio $\tau \in (0, 1)$ or token budget $K = \lfloor \tau \cdot n \rfloor$:
+   $$\mathcal{S}_{\text{retained}} = \text{Top-K}\left(\{P(y_i = 1 \mid x)\}_{i=1}^n, K\right)$$
+   Tokens with the highest retention probabilities are preserved in their original sequence order:
+   $$x_{\text{compressed}} = [x_j]_{j \in \mathcal{S}_{\text{retained}}}$$
+4. **Latency & Retention Gains:**
+   - **Inference Speed:** 3× to 6× faster execution than LLMLingua-1 and 1.6× to 2.9× faster than Selective Context, reducing compression latency to negligible milliseconds.
+   - **Generalization:** Generalizes out-of-domain across diverse downstream tasks (MeetingBank, LongBench, GSM8K, BBH) without task-specific fine-tuning, preserving up to 98% reasoning performance at 2×–5× compression ratios.
+
 
 

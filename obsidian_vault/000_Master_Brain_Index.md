@@ -203,6 +203,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/llm_calibration.md|Llm Calibration]]
 - [[raw_research/snippets/llm_watermarking.md|Llm Watermarking]]
 - [[raw_research/snippets/llmlingua2_bidirectional_compression.md|Llmlingua2 Bidirectional Compression]]
+- [[raw_research/snippets/llmlingua2_bidirectional_token_classification.md|Llmlingua2 Bidirectional Token Classification]]
 - [[raw_research/snippets/logit_bias.md|Logit Bias]]
 - [[raw_research/snippets/long_context_prompting.md|Long Context Prompting]]
 - [[raw_research/snippets/longllmlingua_question_compression.md|Longllmlingua Question Compression]]
