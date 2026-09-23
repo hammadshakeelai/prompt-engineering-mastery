@@ -2896,4 +2896,137 @@ where $\tau > 0$ is the regularization hyperparameter controlling the strength o
 2. **Robustness to Preference Label Noise:** When a dataset contains contradictory preference labels $(y_1 \succ y_2)$ and $(y_2 \succ y_1)$, DPO diverges trying to satisfy both. IPO naturally averages conflicting gradients in $L_2$ space, settling at the mean target probability.
 3. **KL Divergence Guarantees:** IPO mathematically guarantees that the policy cannot drift unboundedly from $\pi_{\text{ref}}$, preserving base model conversational fluencies, code syntax generation, and multi-step reasoning capabilities.
 
+---
+
+## 85. Nash Learning from Human Feedback (NLHF) & Nash Mirror Descent (Munos et al., Google DeepMind 2024)
+
+### 85.1 The Limits of Scalar Reward Maximization & Preference Cycles
+Traditional Reinforcement Learning from Human Feedback (RLHF) and direct alignment algorithms (DPO, IPO) operate under the fundamental assumption of a latent scalar reward function $r(x, y)$ governing pairwise preferences via the Bradley-Terry model:
+$$P(y_1 \succ y_2 \mid x) = \sigma(r(x, y_1) - r(x, y_2))$$
+
+This assumption fails in real-world human evaluation due to **non-transitivity and preference cycles** (Condorcet's paradox, rock-paper-scissors preferences across multi-attribute outputs such as conciseness, technical depth, and tone). For any scalar reward model, cyclic preferences are mathematically unrepresentable, causing RLHF policies to oscillate or overfit to spurious features.
+
+Rémi Munos, Michal Valko, Daniele Calandriello, Mohammad Gheshlaghi Azar, et al. (*Nash Learning from Human Feedback*, Google DeepMind / ICML 2024 / arXiv:2312.00886) reformulate post-training alignment as a symmetric two-player zero-sum game directly over pairwise preference probabilities.
+
+```mermaid
+flowchart TD
+    PairwiseData["Preference Data (x, y, y')"] --> PrefModel["Learn Direct Pairwise Preference Model P(y > y' | x)"]
+    
+    subgraph ZeroSumGame["Two-Player Zero-Sum Game: Policy pi vs Challenger mu"]
+        PrefModel --> Payoff["Payoff Kernel: M(y, y') = P(y > y' | x) - 1/2"]
+        Payoff --> RegGame["Regularized Game: max_pi min_mu E[M(y, y')] - tau*KL(pi || pi_ref) + tau*KL(mu || pi_ref)"]
+    end
+    
+    RegGame --> NashMD["Nash Mirror Descent: Iterative Dual Policy Updates"]
+    NashMD --> NashEquilibrium["Nash Equilibrium Policy pi*: Immune to Exploitation by Any Challenger"]
+```
+
+### 85.2 Game-Theoretic Formulation & The Regularized Nash Equilibrium
+Let $\mathcal{P}(y \succ y' \mid x) \in [0, 1]$ be a learned pairwise preference model where $P(y \succ y' \mid x) + P(y' \succ y \mid x) = 1$. The payoff kernel for policy $\pi$ against an adversary policy $\mu$ is:
+$$M(\pi, \mu \mid x) = \mathbb{E}_{y \sim \pi(\cdot \mid x), y' \sim \mu(\cdot \mid x)} \left[ P(y \succ y' \mid x) - \frac{1}{2} \right]$$
+The objective is to find a policy $\pi^*$ that cannot be beaten by any adversary $\mu$, achieving a **Nash equilibrium**:
+$$M(\pi^*, \mu \mid x) \ge 0, \quad \forall \mu$$
+
+With relative entropy regularization anchoring policies to a reference policy $\pi_{\text{ref}}$, the Regularized Nash Equilibrium solves:
+$$\max_{\pi} \min_{\mu} \mathbb{E}_{x \sim \mathcal{D}} \left[ M(\pi, \mu \mid x) - \tau D_{\text{KL}}(\pi(\cdot \mid x) \parallel \pi_{\text{ref}}(\cdot \mid x)) + \tau D_{\text{KL}}(\mu(\cdot \mid x) \parallel \pi_{\text{ref}}(\cdot \mid x)) \right]$$
+By von Neumann's Minimax Theorem, the game admits a unique symmetric Nash equilibrium where $\pi^* = \mu^*$.
+
+### 85.3 Nash Mirror Descent (Nash-MD) Algorithm
+In tabular policy spaces or deep neural policy parameterizations, Nash-MD computes policy iterates using mirror descent on the advantage function:
+1. At iteration $t$, sample generations from the current mixture policy $\pi_t$.
+2. Compute preference gradient against peer samples:
+   $$\hat{Q}_t(x, y) = \mathbb{E}_{y' \sim \pi_t(\cdot \mid x)} \left[ P(y \succ y' \mid x) \right]$$
+3. Update policy via KL mirror projection:
+   $$\pi_{t+1}(y \mid x) \propto \pi_t(y \mid x)^{1 - \eta \tau} \pi_{\text{ref}}(y \mid x)^{\eta \tau} \exp\left( \frac{\eta}{\tau} \hat{Q}_t(x, y) \right)$$
+- **Theoretical Guarantee:** Nash-MD guarantees $\mathcal{O}(1/\sqrt{T})$ convergence to the un-exploitable Nash policy even under cyclical, intransitive preference distributions.
+
+---
+
+## 86. XGrammar: Context-Independent Grammar Masking & Stack Persistence for Zero-Overhead Constrained Decoding (Dong et al., MLSys 2025)
+
+### 86.1 The Grammar-Constrained Decoding Latency Tax
+Deploying LLMs for structured generation (JSON schemas, SQL, Pydantic function calls) traditionally introduces severe latency overhead:
+- **Trie & DFA Traversals (Outlines, Guidance):** In standard regex or CFG parsing, evaluating valid continuation tokens for a vocabulary of size $|\mathcal{V}| \ge 128{,}000$ takes $5\text{--}50\text{ ms}$ per step on CPU, eclipsing the $15\text{ ms}$ GPU forward pass time and degrading throughput by $3\times\text{--}10\times$.
+- **Token Fragmentation:** Tokenizers slice syntax characters arbitrarily (e.g., `{"name":` can be tokenized as 1, 2, or 3 tokens depending on context), forcing parsers to maintain heavy character-level backtracking state machines.
+
+Yixin Dong, Charlie F. Ruan, Yaxing Cai, Ruihang Lai, Ziyi Xu, Yilong Zhao, and Tianqi Chen (*XGrammar: Flexible and Efficient Structured Generation Engine for Large Language Models*, MLSys 2025 / arXiv:2411.15100) introduce an engine that eliminates the constrained decoding latency tax, delivering up to **$100\times$ speedups** with sub-microsecond masking overhead.
+
+```mermaid
+flowchart TD
+    Grammar["Grammar Definition (JSON Schema / EBNF)"] --> Partition["Vocabulary Partitioning"]
+    
+    subgraph Offline["Offline Compilation & Token Mask Cache"]
+        Partition --> Indep["Context-Independent Tokens: Fixed Syntactic Roles (e.g. keywords, operators)"]
+        Indep --> PrecomputeBitmasks["Precompute Adaptive Token Mask Bitsets: M_rule in {0, 1}^|V|"]
+    end
+    
+    subgraph Online["Runtime Stack Execution (<10 microseconds)"]
+        Partition --> Dep["Context-Dependent Tokens: String literals, regex identifiers"]
+        GPU["GPU Emits Logits"] --> Parser["Persistent Execution Stack: O(1) Push/Pop"]
+        Parser --> QuickLookup["Cache Hit: Bitwise AND with Precomputed Mask"]
+        QuickLookup --> MaskedLogits["Masked Logits -> Zero GPU Bubble"]
+    end
+```
+
+### 86.2 Vocabulary Partitioning & The Token Mask Cache
+XGrammar classifies vocabulary $\mathcal{V}$ into two orthogonal categories with respect to Context-Free Grammar $\mathcal{G} = \langle \mathcal{N}, \Sigma, \mathcal{P}, S \rangle$:
+1. **Context-Independent Tokens ($\mathcal{V}_{\text{indep}}$):**
+   Tokens whose syntactic validity depends exclusively on the top-level non-terminal rule, regardless of preceding context (e.g., JSON structural syntax `true`, `false`, `null`, delimiters `,`, `{`, `}`, `:`).
+   - *Optimization:* Precompute bitmask arrays $\mathbf{B}_R \in \{0, 1\}^{|\mathcal{V}|}$ stored in compact 32-bit integer bitsets. At runtime, evaluating validity for rule $R$ requires a single $\mathcal{O}(1)$ pointer dereference.
+2. **Context-Dependent Tokens ($\mathcal{V}_{\text{dep}}$):**
+   Tokens whose validity varies dynamically (e.g., arbitrary string literals inside quotes, numbers adhering to regex limits).
+   - *Optimization:* XGrammar models these transitions using an efficient pushdown automaton with a **Persistent Execution Stack**. Instead of re-parsing character strings on each token, stack operations push and pop only the delta grammar states.
+
+### 86.3 GPU-CPU Kernel Co-Design & Performance
+- **Pipelined Asynchrony:** XGrammar overlaps the next-token grammar mask synthesis on CPU/co-processor with the current token's GPU forward pass (FlashAttention/GEMM). By the time GPU logits are materialized in VRAM, the bitmask is already populated, eliminating kernel stalls.
+- **Serving Benchmarks:** Integrated into SGLang and vLLM, XGrammar slashes per-token masking latency from **$32.4\text{ ms} \to 0.18\text{ ms}$** on complex JSON schemas, achieving up to **$100\times$ faster structured inference** with zero throughput degradation compared to unconstrained decoding.
+
+---
+
+## 87. Gated Linear Attention (GLA) & Hardware-Efficient Chunked Recurrence (Yang et al., ICML 2024)
+
+### 87.1 The Expressive Deficit of Linear Attention
+Standard Softmax Attention scales quadratically $\mathcal{O}(N^2)$ in sequence length $N$. Linear Attention replaces the softmax kernel with feature maps $\phi(Q)\phi(K)^\top V$, enabling linear-time training $\mathcal{O}(N)$ and constant-time $\mathcal{O}(1)$ autoregressive generation via recurrent state $S_t = S_{t-1} + k_t^\top v_t$.
+
+However, conventional linear attention suffers from catastrophic forgetting and severe benchmark degradation compared to full Transformers. Because update step $S_t = S_{t-1} + k_t^\top v_t$ treats all historical information with uniform persistence, the bounded recurrent state becomes saturated with noisy past tokens.
+
+Songlin Yang, Bailin Wang, Yikang Shen, Rameswar Panda, and Yoon Kim (*Gated Linear Attention Transformers with Hardware-Efficient Training*, ICML 2024 / arXiv:2312.06635) bridge the expressive gap by introducing **data-dependent gating** into linear recurrent states while preserving hardware-efficient parallel training.
+
+```mermaid
+flowchart LR
+    Token["Input Token x_t"] --> Projections["Compute q_t, k_t, v_t & Data-Dependent Gate alpha_t"]
+    
+    subgraph RecurrentCell["Gated Linear Attention (GLA)"]
+        PastState["Prior Memory State S_(t-1)"] --> GateMult["Forget Gating: diag(alpha_t) * S_(t-1)"]
+        OuterProd["New Associative Update: k_t^T * v_t"] --> AddState["State Update: S_t = diag(alpha_t)*S_(t-1) + k_t^T*v_t"]
+        GateMult --> AddState
+        AddState --> Readout["Associative Readout: o_t = q_t * S_t"]
+    end
+    
+    Readout --> OutputToken["Output Token Representation o_t"]
+```
+
+### 87.2 Mathematical Formulation of GLA
+For Query $q_t \in \mathbb{R}^{d_k}$, Key $k_t \in \mathbb{R}^{d_k}$, and Value $v_t \in \mathbb{R}^{d_v}$, GLA computes a data-dependent decay gate vector $\alpha_t \in (0, 1)^{d_k}$:
+$$\alpha_t = \sigma\left( W_\alpha x_t + b_\alpha \right)$$
+The recurrent state matrix $S_t \in \mathbb{R}^{d_k \times d_v}$ updates via element-wise diagonal decay:
+$$S_t = \operatorname{diag}(\alpha_t) S_{t-1} + k_t^\top v_t$$
+The output attention vector is retrieved via associative readout:
+$$o_t = q_t S_t \in \mathbb{R}^{d_v}$$
+
+By varying $\alpha_t$ dynamically based on input content $x_t$, the model can either:
+- **Retain Memory ($\alpha_{t, i} \approx 1$):** Carry critical entity information indefinitely across millions of tokens.
+- **Flush Memory ($\alpha_{t, i} \approx 0$):** Instantly erase transient syntax delimiters, preventing state saturation.
+
+### 87.3 Hardware-Efficient Two-Level Chunked Parallel Training
+Computing element-wise gated recurrence naively in PyTorch is memory-bandwidth bound. Yang et al. design a two-level chunked kernel executed in SRAM on NVIDIA Tensor Cores:
+1. The sequence of length $N$ is partitioned into non-overlapping chunks of size $C$ (e.g., $C=64$ tokens).
+2. **Intra-Chunk Computation (Tensor Core GEMMs):** Within each chunk, interactions between $Q, K, V$ are computed in parallel via matrix multiplications weighted by intra-chunk cumulative decay masks:
+   $$A_{i, j} = (q_i k_j^\top) \odot \prod_{m=j+1}^i \alpha_m, \quad \forall 1 \le j \le i \le C$$
+3. **Inter-Chunk Recurrence (SRAM State Passing):** The inter-chunk boundary state updates sequentially across chunks via fast SRAM registers:
+   $$S_{[c]} = \operatorname{diag}\left( \prod_{t \in c} \alpha_t \right) S_{[c-1]} + \sum_{t \in c} \left( \prod_{m=t+1}^C \alpha_m \right) k_t^\top v_t$$
+
+- **Empirical Results:** GLA matches or exceeds LLaMA-style Softmax Transformers and Mamba on language modeling perplexity across 1.3B and 7B scales, while delivering **constant $\mathcal{O}(1)$ memory decoding** and **$4.2\times$ faster training throughput** on long sequences.
+
+
 
