@@ -200,6 +200,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/lk_losses_speculative_acceptance.md|Lk Losses Speculative Acceptance]]
 - [[raw_research/snippets/llguidance_cfg_earley_trie.md|Llguidance Cfg Earley Trie]]
 - [[raw_research/snippets/llguidance_grammar_engine_structured_outputs.md|Llguidance Grammar Engine Structured Outputs]]
+- [[raw_research/snippets/llguidance_pushdown_constrained_decoding.md|Llguidance Pushdown Constrained Decoding]]
 - [[raw_research/snippets/llm_calibration.md|Llm Calibration]]
 - [[raw_research/snippets/llm_watermarking.md|Llm Watermarking]]
 - [[raw_research/snippets/llmlingua2_bidirectional_compression.md|Llmlingua2 Bidirectional Compression]]

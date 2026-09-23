@@ -7114,5 +7114,39 @@ flowchart TD
    - **Inference Speed:** 3× to 6× faster execution than LLMLingua-1 and 1.6× to 2.9× faster than Selective Context, reducing compression latency to negligible milliseconds.
    - **Generalization:** Generalizes out-of-domain across diverse downstream tasks (MeetingBank, LongBench, GSM8K, BBH) without task-specific fine-tuning, preserving up to 98% reasoning performance at 2×–5× compression ratios.
 
+---
+
+## 251. LLGuidance: Fast Context-Free Grammar Constrained Decoding with Pushdown Automata
+
+### 251.1 Pushdown Automata vs. Finite State Machines Topology
+```mermaid
+flowchart TD
+    subgraph RegularLimit["DFA / FSM Limit (Outlines / Regex Index)"]
+        REG["Regular Expressions: Finite Memory (States)"] --> CANT["Cannot Parse Nested/Recursive Grammars (a^n b^n, Arbitrary JSON Nesting)"]
+        STATE_EXP["Combinatorial State Explosion on Complex Schemas"]
+    end
+    subgraph LLGuidance_PDA["LLGuidance Engine (Microsoft / Guidance AI, 2024)"]
+        EBNF["Grammar: EBNF / Context-Free Grammar (CFG) / JSON Schema"] --> PARSER["Incremental LR/Earley Parser with Explicit Stack S"]
+        PARSER --> LEXER["Byte-Level Lexer with Multi-Byte UTF-8 Tracking"]
+        LEXER --> SIMD["SIMD Bit-Parallel Token Mask Pre-computation"]
+        SIMD --> BITMASK["Bitmask M ∈ {0, 1}^{|V|} Generated in <10µs on CPU"]
+    end
+```
+
+### 251.2 Mathematical Mechanics of Pushdown Constrained Decoding
+1. **Context-Free Grammar Representation:** A formal grammar is defined by 4-tuple $G = (V_N, V_T, P, S)$, where $V_N$ are non-terminals, $V_T$ are terminals (characters/bytes), $P$ are production rules $A \to \alpha$ ($\alpha \in (V_N \cup V_T)^*$), and $S$ is the start symbol. LLGuidance maintains an instantaneous parser configuration:
+   $$C_t = \left(q_t, \gamma_t\right) \in Q \times \Gamma^*$$
+   where $q_t$ represents the automaton state and $\gamma_t$ is the dynamic pushdown stack storing ancestor grammar frames to support arbitrarily nested syntax (e.g., recursive JSON objects and arrays).
+2. **Byte-Level Tokenizer Projection:** Language model tokens $t \in \mathcal{V}$ are strings of raw bytes $b_1 b_2 \dots b_m$. LLGuidance executes token prefix checks against the grammar:
+   $$\text{Valid}(t \mid C_t) \iff \exists C' \text{ such that } C_t \xrightarrow{b_1 \dots b_m} C'$$
+3. **Multi-Byte UTF-8 Boundary Tracking:** Because BPE/WordPiece tokenizers frequently fragment single Unicode code points across multiple consecutive tokens (e.g., a 4-byte emoji or multi-byte CJK character split into two 2-byte tokens), LLGuidance tracks fractional byte sequences across token boundaries:
+   $$\text{State}_{\text{UTF-8}}(C_{t+1}) = \text{ValidateUTF8}\left(\text{PartialBytes}(C_t) \circ \text{Bytes}(t)\right)$$
+   Tokens that leave incomplete UTF-8 fragments are accepted *only if* the grammar permits subsequent bytes completing valid Unicode codepoints.
+4. **SIMD-Accelerated Bitmask Generation & Softmax Invariance:**
+   At each decoding step, LLGuidance computes a boolean validity mask $M \in \{0, 1\}^{|\mathcal{V}|}$ over the entire vocabulary (up to 128k–256k tokens) in parallel on the host CPU using AVX-512 / ARM Neon bitwise instructions:
+   $$z'_i = \begin{cases} z_i & \text{if } M_i = 1 \\ -\infty & \text{if } M_i = 0 \end{cases}$$
+   $$P\left(y_t = i \mid y_{<t}, G\right) = \frac{\exp(z_i) \cdot M_i}{\sum_{j=1}^{|\mathcal{V}|} \exp(z_j) \cdot M_j}$$
+   Because mask computation completes in $<10\,\mu\text{s}$ on CPU concurrently with GPU KV-cache operations, constrained decoding executes with **zero wall-clock latency penalty**.
+
 
 
