@@ -7226,5 +7226,41 @@ flowchart TD
    - **Linear Separability of Safety:** Refusal is an additive linear feature rather than an inextricably entangled cognitive capacity.
    - **Capability Preservation:** Projecting away $\hat{r}$ reduces refusal rates on safety benchmarks (AdvGLUE, HarmBench, JailbreakBench) from $>95\%$ to $0\%$, while standard capability metrics (MMLU, GSM8K, HumanEval) remain statistically identical ($\Delta < 0.3\%$).
 
+---
+
+## 254. Quest: Query-Aware KV Cache Sparsity via Dynamic Logit Bounding
+
+### 254.1 Static Eviction vs. Query-Aware Page Retrieval Topology
+```mermaid
+flowchart TD
+    subgraph StaticFail["Static KV Eviction (StreamingLLM, H2O, SnapKV)"]
+        CTX["Long-Context Sequence (32k-128k Tokens)"] --> EVICT["Permanent Eviction: Drop Low-Score Tokens"]
+        EVICT --> LOST["Needle in a Haystack Failure: Dropped Tokens Cannot Be Recovered When Downstream Query Needs Them"]
+    end
+    subgraph Quest["Quest Dynamic Bounding (Tang et al., ICML 2024)"]
+        PAGES["All KV Tokens Preserved in Paged Memory (Page Size P = 16)"] --> BOUNDS["Precomputed Min/Max Key Bounds per Page: K_min^(p), K_max^(p)"]
+        QUERY["Decoding Query Token q_t"] --> LOGIT_BOUND["Calculate Exact Upper Bound: S_max^(p)(q_t) in O(d) per Page"]
+        LOGIT_BOUND --> TOPK["Top-K Page Selection: Load Only Critical ~15% of KV Pages"]
+        TOPK --> EXACT_ATTN["Compute Exact Attention on Top-K Pages (Zero Accuracy Drop)"]
+    end
+```
+
+### 254.2 Mathematical Derivation of Quest Logit Bounds
+1. **The Inadequacy of Query-Agnostic Eviction:** Existing static KV cache compression algorithms (H2O, SnapKV) permanently discard key-value states during prefill or earlier decoding. Because user queries vary dynamically across multi-turn sessions, irrevocably discarded tokens induce catastrophic accuracy collapse on needle retrieval and multi-document reasoning tasks.
+2. **Key-Dimension Min/Max Page Bounding:** Quest partitions the KV cache into fixed pages $\mathcal{P} = \{p_1, \dots, p_M\}$ of size $P$ (e.g., $P = 16$). For each page $p$, coordinate-wise minimum and maximum key vectors are computed during write time:
+   $$K_{\min, i}^{(p)} = \min_{j \in p} K_{j, i}, \quad K_{\max, i}^{(p)} = \max_{j \in p} K_{j, i}, \quad \forall i \in \{1, \dots, d_k\}$$
+3. **Exact Logit Upper Bound Derivation:**
+   For any incoming query vector $q_t \in \mathbb{R}^{d_k}$, the maximum unnormalized attention score across all keys in page $p$ is strictly upper-bounded by:
+   $$S_{\max}^{(p)}(q_t) \triangleq \max_{j \in p} \frac{q_t^\top K_j}{\sqrt{d_k}} \le \frac{1}{\sqrt{d_k}} \sum_{i=1}^{d_k} \max\left(q_{t, i} K_{\min, i}^{(p)}, \; q_{t, i} K_{\max, i}^{(p)}\right)$$
+   This upper bound is evaluated in $O(d_k)$ time per page—independent of the page size $P$—without fetching individual key or value vectors from high-bandwidth GPU memory (HBM).
+4. **Dynamic Top-K Page Retrieval & Exact Attention:**
+   At each decoding step, Quest sorts pages by $S_{\max}^{(p)}$ and selects the top $K$ pages ($\sim 10\%\text{--}20\%$ of total context):
+   $$\mathcal{P}_{\text{active}} = \text{Top-K}\left(\{S_{\max}^{(p)}(q_t)\}_{p=1}^M, K\right)$$
+   $$\text{Attn}(q_t, K, V) \approx \text{Softmax}\left(\frac{q_t K_{\mathcal{P}_{\text{active}}}^\top}{\sqrt{d_k}}\right) V_{\mathcal{P}_{\text{active}}}$$
+5. **Empirical Throughput & Memory Bandwidth Acceleration:**
+   - **Bandwidth Reduction:** Slashes KV cache memory bandwidth traffic by up to $85\%$ during the decoding phase.
+   - **Latency Speedup:** Delivers $2.23\times$ wall-clock decoding speedup on 64k-token sequences across LLaMA-2-7B, Mistral-7B, and Yi-34B.
+   - **Zero Needle Degradation:** Achieves $100\%$ accuracy on passkey retrieval benchmarks and matches dense baseline perplexity on LongBench and PG-19, completely avoiding the destructive error propagation of static eviction.
+
 
 
