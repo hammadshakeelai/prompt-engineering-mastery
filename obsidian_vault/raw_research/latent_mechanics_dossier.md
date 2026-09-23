@@ -11589,3 +11589,114 @@ flowchart LR
 - **Elimination of Distribution Shift:** By generating pairs on-policy, DNO and Online DPO explore the active failure modes of the current model checkpoint, boosting win rates by **$+11.4\%$ over standard offline DPO**.
 - **Resistance to Intransitive Gaming:** Unlike Bradley-Terry reward models which can be hacked via cyclic loops, the Nash equilibrium policy cannot be exploited by any adversary strategy.
 - **Superior Reasoning Parity:** On complex mathematical proofs (GSM8K/MATH), on-policy iterative alignment raises pass@1 by $+7.2\%$ compared to offline alignment.
+
+---
+
+## 311. Causal Tracing, Key-Value Associative Memories & Rank-One Model Editing (ROME / MEMIT; Meng et al., MIT, NeurIPS 2022 / ICLR 2023)
+
+### 311.1 The Mechanistic Localization of Factual Knowledge
+A fundamental question in neural network interpretability is **where and how factual associations are stored** inside autoregressive transformer weights. For a factual query like:
+$$\text{"The Eiffel Tower is located in the city of [Paris]"}$$
+does the model compute the answer via diffuse, non-local representations spread across billions of parameters, or does it retrieve the association from a localized computational module?
+
+In **"Locating and Editing Factual Associations in GPT"** (Meng, Bau, Andonian, & Belinkov, MIT CSAIL, NeurIPS 2022), the authors introduced **Causal Tracing**, mathematically proving that factual knowledge is stored in localized **linear associative Key-Value memories** inside intermediate Multi-Layer Perceptron (MLP) blocks at the final token of the subject entity.
+
+```mermaid
+flowchart TD
+    subgraph CausalTracingPipeline["Causal Tracing Protocol (Meng et al., NeurIPS 2022)"]
+        CleanRun["1. Clean Run: 'The Eiffel Tower is in...' -> Emits 'Paris' (Logit = +8.4)"]
+        CorruptRun["2. Corrupted Run: Add Gaussian Noise to Subject 'Eiffel Tower' Embeddings -> 'Paris' drops to -1.2"]
+        PatchRun["3. Restored Run: Patch Internal Activation at Layer l, Token t from Clean Run"]
+        CleanRun & CorruptRun & PatchRun --> AIE_Map["Compute Average Indirect Effect (AIE): Isolates Mid-Layer MLPs at Last Subject Token"]
+    end
+```
+
+---
+
+### 311.2 The Causal Tracing Mathematical Formulation
+To quantify the causal mediation of an individual layer $l$ and token position $t$:
+1. **Clean Execution:** Let $x$ be the factual prompt with subject $s$ and object $o$. The clean model produces hidden activation $h_i^{(l)}$ and object probability $\mathbb{P}[o]$.
+2. **Corrupted Execution:** Gaussian noise $\epsilon \sim \mathcal{N}(0, \sigma^2 I)$ is added to the word embeddings of the subject tokens $s$, corrupting activations to $h_i^{*(l)}$ and degrading the target probability to $\mathbb{P}^*[o] \approx 0$.
+3. **Activation Restoration (Patching):** The internal state at layer $l$ and token $t$ is forcibly overwritten with its uncorrupted value:
+   $$h_t^{*(l)} \leftarrow h_t^{(l)}$$
+4. **Total Indirect Effect (TIE) & Average Indirect Effect (AIE):**
+   $$\text{AIE}(l, t) \triangleq \mathbb{E}_{x \sim \mathcal{D}} \left[ \mathbb{P}\left[ o \mid \text{do}\left(h_t^{*(l)} = h_t^{(l)}\right) \right] - \mathbb{P}^*[o] \right]$$
+
+**The Causal Tracing Discovery:**
+Across GPT-2, GPT-J, and Llama, plotting $\text{AIE}(l, t)$ reveals a sharp, concentrated spike in the **early-to-mid MLP layers (layers $4\text{--}14$) strictly at the last token of the subject entity** (`"Tower"`). Later attention layers merely route this retrieved entity representation to the final prediction position.
+
+---
+
+### 311.3 Multi-Layer Perceptrons as Linear Associative Key-Value Memories
+Geva et al. (2021) and Meng et al. (2022) demonstrated that two-layer MLP blocks operate as **associative Key-Value dictionaries**:
+$$f_{\text{mlp}}(\boldsymbol{x}) = W_{\text{out}} \, \sigma(W_{\text{in}} \boldsymbol{x} + \boldsymbol{b}_{\text{in}})$$
+where $W_{\text{in}} \in \mathbb{R}^{d_m \times d}$ acts as an array of key vectors, $\sigma$ is an activation gate, and $W_{\text{out}} \in \mathbb{R}^{d \times d_m}$ acts as an array of value vectors.
+
+When the input matches key $\boldsymbol{k}_* = \sigma(W_{\text{in}} \boldsymbol{x}_*)$, the block injects the associated value vector:
+$$\boldsymbol{v}_* = W_{\text{out}} \boldsymbol{k}_*$$
+directly into the residual stream.
+
+---
+
+### 311.4 Rank-One Model Editing (ROME)
+To surgically update or correct a factual association (e.g. changing *"The Eiffel Tower is in Paris"* to *"The Eiffel Tower is in Rome"*) without retraining the model or inducing catastrophic forgetting, **ROME** computes a closed-form rank-one update to the down-projection matrix $W = W_{\text{out}}$:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Prompt as New Fact: (Subject s, Target o*)
+    participant KeyFinder as Key Optimization Engine
+    participant TargetFinder as Target Value Optimizer
+    participant Covariance as Uncorrupted Covariance Matrix C
+    participant Weights as MLP Weight Matrix W_out
+
+    Prompt->>KeyFinder: Ingest Subject s ('The Eiffel Tower')
+    KeyFinder->>KeyFinder: Compute Subject Key: k* = σ(W_in x)
+    Prompt->>TargetFinder: Solve for Target Vector v*: argmin L(v; o*='Rome')
+    Covariance->>Weights: Ingest Precomputed Key Covariance C = E[k k^T]
+    Weights->>Weights: Rank-One Update: W_new = W_0 + (v* - W_0 k*) (C^-1 k*)^T / (k*^T C^-1 k*)
+    Note over Weights: Surgically Stores New Fact while Preserving 99.8% of Prior Knowledge!
+```
+
+1. **Identifying the Key $\boldsymbol{k}_*$:**
+   The key vector $\boldsymbol{k}_* \in \mathbb{R}^{d_m}$ is computed by averaging the MLP hidden representations over variable sentence prefixes containing the subject $s$.
+2. **Optimizing the Target Value $\boldsymbol{v}_*$:**
+   The target value $\boldsymbol{v}_* \in \mathbb{R}^d$ is optimized via gradient descent to maximize the probability of the new target word $o^*$ while preserving benign representations:
+   $$\boldsymbol{v}_* = \arg\min_{\boldsymbol{v}} \left[ -\log \mathbb{P}_{W(v)}\left[ o^* \mid x \right] + \lambda \|\boldsymbol{v} - W_0 \boldsymbol{k}_*\|_2^2 \right]$$
+3. **Constrained Least-Squares Weight Update:**
+   To store the new association $\boldsymbol{v}_* = W_{\text{new}} \boldsymbol{k}_*$ while minimizing distortion on all existing factual memories $(k_i, v_i)$, ROME solves:
+   $$\min_{W} \|W - W_0\|_F^2 \quad \text{subject to } W \boldsymbol{k}_* = \boldsymbol{v}_* \text{ and } W C \approx W_0 C$$
+   where $C = \mathbb{E}_{k \sim \mathcal{D}_{\text{corpus}}} [k k^T]$ is the precomputed second-moment covariance matrix of keys across Wikipedia.
+4. **The Exact Analytical Closed-Form Solution:**
+   $$W_{\text{new}} = W_0 + \frac{(\boldsymbol{v}_* - W_0 \boldsymbol{k}_*) \, (C^{-1} \boldsymbol{k}_*)^T}{\boldsymbol{k}_*^T C^{-1} \boldsymbol{k}_*}$$
+
+---
+
+### 311.5 Scaling to Massive Memory Editing (MEMIT)
+While ROME performs rank-one surgery for a single fact, sequential ROME updates degrade the covariance matrix $C$ over hundreds of edits. **MEMIT** (Mass-Editing Memory in a Transformer; Meng et al., ICLR 2023) scales model editing to **$>10,000$ simultaneous facts**:
+- **Residual Distribution Across Layers:** Rather than forcing a single layer to absorb the entire association shift, MEMIT decomposes the error $\boldsymbol{v}_* - W_0 \boldsymbol{k}_*$ and spreads residual updates across a range of consecutive mid-MLP layers ($l \in [4, 8]$).
+- **Batch Covariance Factorization:** Solves a multi-key linear system:
+  $$\Delta W = (V_* - W_0 K_*) (C + K_* K_*^T)^{-1} K_*^T$$
+  enabling bulk updates of 10,000 facts in $<30$ minutes on a single GPU with **$>99\%$ efficacy and near-zero collateral degradation**.
+
+---
+
+### 311.6 Empirical Benchmarks Across Model Editing Paradigms
+
+```mermaid
+flowchart LR
+    subgraph EditingEfficacy["Factual Editing Metrics on CounterFact (1,000 Edits)"]
+        FT_Base["Fine-Tuning (Adam): 42.1% Efficacy (Catastrophic Forgetting)"]
+        MEND_Bench["MEND (Hypernetworks): 81.4% Efficacy"]
+        ROME_Bench["ROME (Rank-One): 99.2% Efficacy (High Specificity)"]
+        MEMIT_Bench["MEMIT (Mass-Editing): 99.6% Efficacy (Scales to 10,000+ Facts)"]
+    end
+```
+
+| Editing Paradigm | Method Type | Edit Efficacy ($\uparrow$) | Generalization ($\uparrow$) | Specificity / Locality ($\uparrow$) | Scalability (Number of Edits) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Standard Fine-Tuning** | Parameter Update | $42.1\%$ | $38.4\%$ | $24.8\%$ (Severe collateral damage)| $1\text{--}5$ facts |
+| **LoRA Fine-Tuning** | Parameter-Efficient | $68.4\%$ | $62.1\%$ | $51.2\%$ | $10\text{--}50$ facts |
+| **MEND (Mitchell et al.)**| Hypernetwork Meta-Learner | $81.4\%$ | $76.2\%$ | $82.4\%$ | $100\text{--}500$ facts |
+| **ROME (Meng et al. 2022)**| **Closed-Form Rank-One** | **$99.2\%$** | **$91.6\%$** | **$96.8\%$ (Pinpoint Locality)**| **Single Fact** |
+| **MEMIT (Meng et al. 2023)**| **Multi-Layer Residual Spread**| **$99.6\%$** | **$93.4\%$** | **$97.2\%$** | **$>10,000$ simultaneous facts** |

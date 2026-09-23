@@ -114,6 +114,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/causal_mediation_analysis_path_patching.md|Causal Mediation Analysis Path Patching]]
 - [[raw_research/snippets/causal_scrubbing_circuit_hypothesis_testing.md|Causal Scrubbing Circuit Hypothesis Testing]]
 - [[raw_research/snippets/causal_tracing_and_alphaedit.md|Causal Tracing And Alphaedit]]
+- [[raw_research/snippets/causal_tracing_and_model_editing_rome_memit.md|Causal Tracing And Model Editing Rome Memit]]
 - [[raw_research/snippets/cfsm_compressed_finite_state_machines.md|Cfsm Compressed Finite State Machines]]
 - [[raw_research/snippets/cfsm_jump_forward_decoding.md|Cfsm Jump Forward Decoding]]
 - [[raw_research/snippets/chain_of_symbol.md|Chain Of Symbol]]
