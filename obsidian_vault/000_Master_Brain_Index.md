@@ -264,6 +264,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/multi_agent_debate.md|Multi Agent Debate]]
 - [[raw_research/snippets/multi_agent_debate_consensus_convergence.md|Multi Agent Debate Consensus Convergence]]
 - [[raw_research/snippets/multi_agent_debate_consensus_elo.md|Multi Agent Debate Consensus Elo]]
+- [[raw_research/snippets/multi_fsm_product_automata_decoding.md|Multi Fsm Product Automata Decoding]]
 - [[raw_research/snippets/multi_head_latent_attention_mla.md|Multi Head Latent Attention Mla]]
 - [[raw_research/snippets/multi_query_retriever.md|Multi Query Retriever]]
 - [[raw_research/snippets/multi_token_prediction_mtp.md|Multi Token Prediction Mtp]]
