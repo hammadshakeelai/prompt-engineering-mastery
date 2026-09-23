@@ -9643,3 +9643,84 @@ flowchart LR
    - GSM8K: $77.8\% \to 77.5\%$ ($-0.3\%$ delta).
    - HumanEval: $62.2\% \to 62.0\%$ ($-0.2\%$ delta).
    Proving that dangerous generative capabilities can be surgically neutralized at the representation layer without degrading the model's core intelligence.
+
+---
+
+## 292. SnapKV & PyramidKV: Observation-Window Clustering & Hierarchical Attention Funneling for Lossless KV Eviction (Zhang et al. / Li et al., 2024)
+
+### 292.1 The Fallacy of Layer-Uniform KV Cache Allocation
+In long-context LLM serving ($32\text{K}\text{--}128\text{K}$ tokens), the Key-Value (KV) cache memory dominates GPU high-bandwidth memory (HBM). Existing token eviction algorithms (such as H2O or Scissorhands) apply a **homogeneous, layer-uniform budget**: every single layer $l \in \{1, \dots, L\}$ is assigned an identical capacity budget $C_l = C_{\text{uniform}}$ (e.g. retaining $2048$ tokens per layer).
+
+However, exhaustive empirical analysis of self-attention across transformer depths reveals that **uniform allocation is fundamentally suboptimal**:
+1. **The Pyramidal Attention Funnel:** Deep transformers exhibit an emergent hierarchical funnel:
+   - **Early Layers ($l \in [1, 0.25 L]$):** Exhibit broad, diffuse, and global attention patterns. Attention mass is dispersed across almost all historical tokens to synthesize general syntax, context, and semantic co-references.
+   - **Middle Layers ($l \in [0.25 L, 0.75 L]$):** Transition into structured semantic extraction, aggregating information into domain concepts.
+   - **Deep Layers ($l \in [0.75 L, L]$):** Become hyper-sparse and highly specialized. Attention mass concentrates almost entirely on the initial attention sinks and a tiny handful ($<5\%$) of critical task-relevant tokens.
+2. **The Resulting Pathology:** Uniform eviction catastrophically starves early layers of necessary contextual history (inducing reasoning breakdown) while wastefully allocating thousands of unused KV slots to deep layers that only attend to a few sink tokens.
+
+```mermaid
+flowchart TD
+    subgraph UniformFailure["Uniform Eviction (H2O / Static Pruning)"]
+        L_early["Early Layers: Constrained to 2048 Tokens -> Contextual Starvation & Quality Collapse"]
+        L_deep["Deep Layers: Allocated 2048 Tokens -> 90% Slots Idle / Wasted Memory"]
+    end
+    subgraph PyramidalSuccess["PyramidKV & SnapKV Hierarchical Allocation"]
+        P_early["Early Layers: 80% - 100% Cache Retained (Preserves Global Synthesis)"]
+        P_mid["Middle Layers: 40% - 60% Cache Retained (Preserves Concept Aggregation)"]
+        P_deep["Deep Layers: 10% - 20% Cache Retained (Sinks + Hyper-Focused Heads)"]
+        P_early --> P_mid --> P_deep
+        P_deep --> Outcome["85% - 88% Total VRAM Reduction with 100% Needle Retrieval Parity"]
+    end
+```
+
+---
+
+### 292.2 SnapKV: Observation-Window Attention Clustering
+**SnapKV** (Li et al., 2024) discovers that the generation of the final prompt tokens during the prefill phase contains a complete predictive signature of which historical tokens will be needed during subsequent autoregressive generation:
+
+1. **The Observation Window:**
+   Let $T$ denote the total prompt length. SnapKV establishes an observation window $\mathcal{W}_{\text{obs}}$ comprising the final $L_{\text{obs}}$ tokens of the prompt (typically $L_{\text{obs}} = 32\text{--}64$ tokens):
+   $$\mathcal{W}_{\text{obs}} = \{ T - L_{\text{obs}} + 1, \; \dots, \; T \}$$
+2. **Aggregated Feature Importance Voting:**
+   For attention head $h$ in layer $l$, the cumulative attention score assigned by the observation window to historical token $j \in \{1, \dots, T - L_{\text{obs}}\}$ is evaluated:
+   $$S_{h, j} = \sum_{t \in \mathcal{W}_{\text{obs}}} A_{h, t, j} = \sum_{t \in \mathcal{W}_{\text{obs}}} \text{Softmax}\left( \frac{q_{h, t} K_{h, :}^\top}{\sqrt{d}} \right)_j$$
+3. **Clustered Feature Selection:**
+   Tokens with consistently high $S_{h, j}$ across observation queries represent persistent conceptual anchors. Rather than selecting individual disconnected tokens (which breaks local syntactic n-grams), SnapKV performs 1D pooling / clustering:
+   $$\bar{S}_{h, j} = \frac{1}{2k + 1} \sum_{m = -k}^k S_{h, j + m}$$
+   The top-$C_l$ cluster centroids are selected and compressed into the persistent cache $\mathcal{K}_{\text{retain}}$, while all non-selected tokens are permanently evicted at the end of the prefill pass.
+
+---
+
+### 292.3 PyramidKV: Dynamic Layer-Wise Quota Allocation
+**PyramidKV** (Zhang et al., 2024) formalizes the mathematical distribution of the total memory budget $C_{\text{total}}$ across all $L$ layers:
+
+1. **Pyramidal Quota Formulation:**
+   Let the total KV cache capacity across the model be $C_{\text{total}} = L \cdot C_{\text{target}}$. The capacity allocated to layer $l \in \{1, \dots, L\}$ is parameterized via a decaying polynomial power-law:
+   $$C_l = C_{\text{total}} \cdot \frac{(L - l + 1)^\gamma}{\sum_{k=1}^L (L - k + 1)^\gamma}$$
+   where $\gamma \ge 1$ controls the sharpness of the pyramidal gradient:
+   - When $\gamma = 0$: Reverts to standard uniform allocation ($C_l = C_{\text{target}}$).
+   - When $\gamma = 1$: Linear pyramidal funnel ($C_1 \gg C_L$).
+   - When $\gamma = 2$: Quadratic decay, concentrating over $60\%$ of total cache memory in the lowest quarter of transformer layers.
+2. **Composite Attention Preservation:**
+   Every layer retains the initial attention sinks $\mathcal{S}$ ($4$ tokens), its layer-specific SnapKV clustered quota $C_l$, and the sliding window of recent generation tokens $\mathcal{W}_{\text{recent}}$:
+   $$\text{Active Tokens}_l = \mathcal{S} \cup \text{TopK}\left( \bar{S}_{l, :}, \; C_l \right) \cup \mathcal{W}_{\text{recent}}$$
+
+---
+
+### 292.4 Empirical Benchmarks & Hardware Efficiency
+```mermaid
+flowchart LR
+    subgraph MemorySavings["KV Cache Footprint at 128K Context (FP16)"]
+        Dense["Dense FP16 Cache: 52.4 GB per User Stream"]
+        H2O_Bench["H2O (2048 Uniform): 12.8 GB (64.2% Needle Retrieval Accuracy)"]
+        Pyramid_Bench["PyramidKV (85% Pruned): 6.8 GB (99.8% Needle Retrieval Accuracy)"]
+    end
+```
+
+**Quantitative Results (Zhang et al., 2024 / LLaMA-3 8B & LLaMA-2 70B across LongBench & Needle-In-A-Haystack):**
+- **Memory Compression:** Reduces active KV cache VRAM consumption by **$85\text{--}88\%$**, dropping memory usage from $52.4\,\text{GB}$ down to **$6.8\,\text{GB}$** per $128\text{K}$ stream.
+- **Needle-In-A-Haystack Retrieval Fidelity:**
+  - Full Cache Baseline: $100.0\%$ retrieval accuracy across $128\text{K}$ context.
+  - Standard Uniform Eviction (H2O): Drops to $64.2\%$ due to early layer starvation.
+  - **PyramidKV + SnapKV:** Maintains **$99.8\%$ retrieval accuracy**, demonstrating full empirical equivalence with uncompressed attention.
+- **Decoding Concurrency:** Frees up to $45\,\text{GB}$ of HBM per instance, allowing an immediate **$4.5\times\text{--}5.2\times$ increase in maximum concurrent batch size** and boosting cluster serving throughput by up to **$3.8\times$**.
