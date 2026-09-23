@@ -325,6 +325,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/reward_model_design.md|Reward Model Design]]
 - [[raw_research/snippets/ring_attention.md|Ring Attention]]
 - [[raw_research/snippets/ring_attention_blockwise_transformers.md|Ring Attention Blockwise Transformers]]
+- [[raw_research/snippets/rloo_reinforce_leave_one_out.md|Rloo Reinforce Leave One Out]]
 - [[raw_research/snippets/rlvr_verifiable_rewards.md|Rlvr Verifiable Rewards]]
 - [[raw_research/snippets/rlvr_verifiable_rewards_grpo.md|Rlvr Verifiable Rewards Grpo]]
 - [[raw_research/snippets/role_prompting.md|Role Prompting]]

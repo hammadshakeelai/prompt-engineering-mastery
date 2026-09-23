@@ -8539,3 +8539,88 @@ flowchart LR
 - **Masking Latency:** For a $128\text{K}$-token vocabulary ($16\text{ KB}$ bitset), bitwise intersection of 3 concurrent automata requires only **$256$ AVX-512 vector instructions**, executing in **$0.11\text{--}0.14 \, \mu\text{s}$** per token on modern x86/ARM server CPUs.
 - **Zero Backtracking:** Eliminates $100\%$ of post-hoc regex format regenerations, saving an average of **$4.2$ round-trip seconds** per structured agent invocation.
 - **State Space Pruning:** By lazily constructing product states on-the-fly and caching visited tuple pairs $(s_1, s_2)$, memory footprint is constrained to $<12\text{ MB}$, completely avoiding the exponential state explosion of naive static product automata.
+
+---
+
+## 278. REINFORCE Leave-One-Out (RLOO): Eliminating Critic Networks via Unbiased Multi-Sample Baselines
+
+### 278.1 The Value Function Tax in Post-Training Alignment
+Reinforcement Learning from Human Feedback (RLHF) via Proximal Policy Optimization (PPO) maximizes expected reward while penalizing divergence from a reference policy:
+$$\max_\theta \mathbb{E}_{x \sim \mathcal{D}, y \sim \pi_\theta} \left[ R(x, y) - \beta \, \mathbb{D}_{\text{KL}}\left(\pi_\theta(y \mid x) \parallel \pi_{\text{ref}}(y \mid x)\right) \right]$$
+To evaluate the Generalized Advantage Estimator (GAE):
+$$\hat{A}_t = \sum_{l=0}^\infty (\gamma \lambda)^l \delta_{t+l}^V, \quad \delta_t^V = r_t + \gamma V_\phi(s_{t+1}) - V_\phi(s_t)$$
+PPO requires a parametric value network (critic) $V_\phi: \mathcal{S} \to \mathbb{R}$.
+
+**The Systemic Failures of Value Functions in LLMs:**
+1. **VRAM Footprint & Hardware Overhead:** A critic matching the scale of the policy ($70\text{B}$ parameters) requires equal memory for weights, activations, and AdamW optimizer moments ($\approx 16 \times 70 \times 10^9 \text{ bytes} \approx 1.12\text{ TB}$). In multi-GPU clusters, the critic consumes half of all available HBM.
+2. **Value Drift & Off-Target Drift:** Predicting token-level expected future rewards for autoregressive sequences is fundamentally ill-conditioned because rewards are only emitted at the sequence termination token $T$. Intermediate value targets $V_\phi(s_t)$ suffer from catastrophic variance and overfitting.
+3. **Hyperparameter Fragility:** Tuning GAE parameters $(\gamma, \lambda)$, value clipping thresholds $\epsilon_v$, and critic learning rates $\alpha_{\text{critic}}$ introduces extensive training instability.
+
+```mermaid
+flowchart TD
+    subgraph PPOArchitecture["PPO 4-Model System (Heavy Hardware Tax)"]
+        Actor["Actor Model π_θ"]
+        CriticNet["Value Critic V_φ (Consumes 50% Memory)"]
+        Ref["Reference Model π_ref"]
+        RewardNet["Reward Model R_ψ"]
+        CriticNet --> GAE_Calc["GAE Advantage Calculation"]
+        Actor & GAE_Calc --> Backprop["Backprop to Actor & Critic"]
+    end
+    subgraph RLOOArchitecture["RLOO Critic-Free System (Cohere / NeurIPS 2024)"]
+        Actor2["Actor Model π_θ"] --> SampleK["Sample k Completions: {y_1, ..., y_k} ~ π_θ(·|x)"]
+        SampleK --> Reward2["Reward Scoring: R_i = R(x, y_i) - β KL_i"]
+        Reward2 --> LOO_Base["Leave-One-Out Baseline: b_i = 1/(k-1) ∑_{j ≠ i} R_j"]
+        LOO_Base --> AdvEstimator["Advantage: Â_i = R_i - b_i"]
+        AdvEstimator --> UpdateActor["Direct REINFORCE Update: ∇_θ J(θ) (Zero Critic VRAM)"]
+    end
+```
+
+---
+
+### 278.2 Mathematical Formulation of RLOO
+**REINFORCE Leave-One-Out (RLOO)** (Ahmadian et al., NeurIPS 2024) completely removes the critic network $V_\phi$ by exploiting independent multi-sample generation to construct an unbiased, zero-parameter baseline:
+
+1. **Independent Batch Sampling:**
+   For a given input prompt $x \sim \mathcal{D}$, the current policy $\pi_\theta$ generates $k \ge 2$ independent response trajectories:
+   $$y_1, y_2, \dots, y_k \sim \pi_\theta(\cdot \mid x)$$
+2. **KL-Regularized Trajectory Reward:**
+   Each trajectory $y_i = (w_{i, 1}, \dots, w_{i, |y_i|})$ is scored by the scalar reward model $R(x, y_i)$ penalized by sequence-level KL divergence:
+   $$\tilde{R}_i = R(x, y_i) - \frac{\beta}{|y_i|} \sum_{t=1}^{|y_i|} \log \frac{\pi_\theta(w_{i, t} \mid x, w_{i, <t})}{\pi_{\text{ref}}(w_{i, t} \mid x, w_{i, <t})}$$
+3. **Leave-One-Out Baseline & Advantage:**
+   For completion $i$, the baseline $b(y_i)$ is defined as the arithmetic mean of all other $k - 1$ samples in the group:
+   $$b(y_i) \triangleq \frac{1}{k - 1} \sum_{j \neq i} \tilde{R}_j$$
+   The resulting advantage estimator is:
+   $$\hat{A}_i = \tilde{R}_i - b(y_i) = \tilde{R}_i - \frac{1}{k - 1} \sum_{j \neq i} \tilde{R}_j$$
+4. **Policy Gradient Step:**
+   The surrogate gradient objective is formulated as:
+   $$\nabla_\theta \mathcal{J}_{\text{RLOO}}(\theta) = \frac{1}{k} \sum_{i=1}^k \sum_{t=1}^{|y_i|} \nabla_\theta \log \pi_\theta(w_{i, t} \mid x, w_{i, <t}) \cdot \hat{A}_i$$
+
+---
+
+### 278.3 Proof of Unbiasedness and Group Variance Reduction
+```mermaid
+flowchart LR
+    subgraph Properties["RLOO Theoretical Properties"]
+        Unbiased["Unbiased Baseline: E_{y_i}[∇ log π · b(y_i)] = 0"]
+        Decoupled["Statistically Independent of Sample i"]
+        VarReduction["Variance Reduced by Factor of (k-1)/k"]
+        Precursor["Direct Precursor to DeepSeek GRPO"]
+    end
+```
+
+#### Analytical Proof of Zero Gradient Bias
+Because candidate responses $y_1, \dots, y_k$ are independent and identically distributed draws from $\pi_\theta(\cdot \mid x)$:
+$$\mathbb{E}_{\{y_j\}_{j=1}^k}\left[ \nabla_\theta \log \pi_\theta(y_i \mid x) \cdot b(y_i) \right] = \mathbb{E}_{\{y_j\}_{j \neq i}}\left[ b(y_i) \cdot \mathbb{E}_{y_i}\left[ \nabla_\theta \log \pi_\theta(y_i \mid x) \right] \right]$$
+Using the standard score function property $\mathbb{E}_{y_i \sim \pi_\theta}\left[ \nabla_\theta \log \pi_\theta(y_i \mid x) \right] = \int \nabla_\theta \pi_\theta(y_i \mid x) dy_i = \nabla_\theta 1 = 0$:
+$$\mathbb{E}_{\{y_j\}_{j=1}^k}\left[ \nabla_\theta \log \pi_\theta(y_i \mid x) \cdot b(y_i) \right] = 0$$
+Hence, subtracting the leave-one-out baseline introduces **zero bias** into the gradient expectation.
+
+#### Connection to DeepSeek GRPO
+DeepSeek's **Group Relative Policy Optimization (GRPO)** generalizes RLOO by normalizing the group advantages by the standard deviation of rewards across the $k$ samples:
+$$\hat{A}_i^{\text{GRPO}} = \frac{R_i - \text{mean}(\{R_j\}_{j=1}^k)}{\text{std}(\{R_j\}_{j=1}^k)}$$
+While GRPO introduces slight statistical coupling via the standard deviation denominator, both RLOO and GRPO share the exact core mathematical paradigm: **eliminating critic neural networks via group-based self-baselining**.
+
+**Empirical Performance Across Benchmarks:**
+- **Training Throughput:** Yields **$1.85\times\text{--}2.2\times$ faster training steps** than PPO at identical batch sizes.
+- **Memory Consumption:** Cuts peak training VRAM by **$42\%$**, allowing on-policy RLHF of 70B models on 4xH100 nodes rather than requiring 8xH100 nodes.
+- **AlpacaEval 2.0 Win Rate:** Outperforms PPO by $+3.4\%$ and matches Online DPO while maintaining strict on-policy exploration.
