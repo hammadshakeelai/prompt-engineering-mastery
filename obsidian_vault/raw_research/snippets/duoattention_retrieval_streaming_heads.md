@@ -1,22 +1,18 @@
-# DuoAttention: Retrieval vs. Streaming Heads & Dual KV Caching (Xiao et al., MIT / ICLR 2025)
+# DuoAttention: Retrieval and Streaming Heads
 
-## 1. Functional Specialization in Long-Context Heads
-Conventional inference frameworks allocate full Key-Value memory buffers across all $H$ attention heads.
-Xiao et al. (*DuoAttention*, MIT / ICLR 2025) demonstrate that heads naturally bifurcate into two distinct behavioral regimes during long-context processing:
-- **Retrieval Heads ($\sim 25\%$):** Maintain expansive receptive fields, actively fetching dispersed tokens and factual needles across long contexts ($>32\text{k}\text{--}1\text{M}$ tokens).
-- **Streaming Heads ($\sim 75\%$):** Receptive fields decay sharply outside of initial [[streaming_llm_sinks|attention sinks]] ($x_{1:4}$) and recent sliding windows ($W_{\text{local}} \approx 512$). Storing historical middle tokens for these heads wastes memory with zero utility.
+DuoAttention (Xiao et al., MIT 2024) drastically reduces KV cache memory consumption by bifurcating multi-head attention into specialized retrieval heads and streaming heads.
 
-## 2. Dual-Cache Architecture & Kernel Co-Design
-DuoAttention optimizes head-level allocations offline:
-1. **Automated Head Classification:**
-   Learns a binary head assignment vector $\mathbf{m} \in \{0, 1\}^{L \times H}$ via continuous relaxation on validation loss:
-   $$m_{l, h} = \begin{cases} 1 & \text{Retrieval Head (Allocated Full Cache)} \\ 0 & \text{Streaming Head (Allocated Constant Buffer)} \end{cases}$$
-2. **Dual-Cache Allocation:**
-   - **Retrieval Heads:** $\text{Cache}_{\text{retrieval}} \in \mathbb{R}^{T \times d_{\text{head}}}$.
-   - **Streaming Heads:** Rolling circular buffer $\text{Cache}_{\text{streaming}} \in \mathbb{R}^{(S_{\text{sink}} + W_{\text{local}}) \times d_{\text{head}}}$, independent of sequence length $T$.
-3. **Dense GPU Kernel Optimization:**
-   Unlike token-eviction algorithms ([[h2o_heavy_hitter_submodular_kv|H2O]], [[pyramidkv_adaptive_compression|PyramidKV]]) that scatter-gather non-contiguous memory, head partitioning preserves dense contiguous tensor layouts, executing directly within optimized FlashAttention kernels without index-gathering overhead.
+```mermaid
+flowchart TD
+    MHA["Pretrained Multi-Head Attention"] --> Classify{"Head Profiling via Synthetic Tasks"}
+    Classify -- ~25% of Heads --> Retrieval["Retrieval Heads: Retain Full Sequence KV Cache (Long-Range Dependencies)"]
+    Classify -- ~75% of Heads --> Streaming["Streaming Heads: Retain Only Sink Tokens + Rolling Local Window"]
+    Retrieval & Streaming --> Result["75% KV Memory Pruned | 2.18x Decoding Speedup"]
+```
 
-## 3. Empirical Scaling
-- **$2.55\times$ Memory Reduction:** Halves KV memory footprint on MHA models and delivers $1.67\times$ reduction on GQA with $0\%$ accuracy loss on Needle-in-a-Haystack and LongBench.
-- **Extreme Lengths:** Paired with 4-bit quantization, allows LLaMA-3-8B to serve **3.3 million tokens on a single 80GB A100 GPU**.
+## Core Mechanics
+1. **Functional Head Bifurcation:** Discovers that only $\sim 25\%$ of attention heads (Retrieval Heads) are responsible for global needle-in-a-haystack associative recall, while the remaining $\sim 75\%$ (Streaming Heads) focus strictly on initial sink tokens and local context.
+2. **Post-Hoc Optimization:** Identifies head roles via a lightweight convex optimization algorithm over synthetic needle retrieval benchmarks, completely eliminating the need for model fine-tuning or retraining.
+3. **Hardware Yield:** Prunes over $75\%$ of the total KV cache footprint, providing a $2.55\times$ memory reduction and accelerating decoding speed by $2.18\times$ with zero performance loss on $100\text{K}+$ contexts.
+
+Related: [[streaming_llm_sinks]], [[pyramidkv_hierarchical_attention_funnel]], [[kivi_2bit_asymmetric_kv_quantization]], [[snapkv_attention_clustering]]

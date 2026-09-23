@@ -1,24 +1,20 @@
-# Titans: Neural Long-Term Memory & Test-Time Memorization (Google 2025)
+# Titans Neural Long-Term Memory
 
-## 1. Beyond Quadratic Attention & Linear Recurrence
-Standard Transformers suffer from KV cache memory exhaustion on long contexts, while linear recurrent models (Mamba, RWKV) compress context into fixed states with irreversible capacity loss.
-Google Research (Behrouz, Zhong, & Mirrokni, Jan 2025, arXiv:2501.00663) introduced **Titans**, combining:
-- **Short-Term Memory:** Sliding-window attention capturing high-fidelity local token interactions.
-- **Neural Long-Term Memory (NLTM):** A neural network module trained to memorize at test time via gradient descent.
+Google’s Titans architecture (Behrouz et al., 2024) introduces a neural long-term memory module that learns to memorize in real time during inference via online gradient descent.
 
-## 2. Surprise-Driven Memory Updates
-Rather than updating on every token, the NLTM uses an explicit **Surprise Metric**:
-1. **Momentary Surprise ($S_t$):** Measures the gradient of associative reconstruction loss on the current token:
-   $$S_t = \nabla_{M_t} \mathcal{L}(M_t(k_t), v_t)$$
-2. **Past Surprise:** Exponential moving average tracking recent contextual predictability.
-3. **Adaptive Forgetting:** Decays memory weights for predictable tokens, preventing capacity saturation while prioritizing anomalous, highly informative facts.
+```mermaid
+flowchart LR
+    Token["Input Token x_t"] --> Window["Local Multi-Head Attention (Sliding Window)"]
+    Token --> Surprise["Surprise Metric: nabla_W L_rec(W; x_t)"]
+    Surprise --> NeuralMem["Neural LTM Module: W_{t+1} = W_t - eta nabla L_rec + Momentum"]
+    Window & NeuralMem --> Output["Gated Multi-Scale Representation"]
+```
 
-## 3. Three Integration Topologies
-- **MAC (Memory as Context):** NLTM emits summary vectors prepended directly into the sliding-window attention context.
-- **MAG (Memory as Gate):** A non-linear gating branch adaptively interpolates between short-term attention representations and long-term neural memory states:
-  $$h_t = g_t \odot h_t^{\text{Attn}} + (1 - g_t) \odot h_t^{\text{NLTM}}$$
-- **MAL (Memory as Layer):** NLTM operates as an independent transformer block stacked sequentially with attention layers.
+## Core Mechanics
+1. **Surprise-Driven Plasticity:** Memory weight updates are governed by surprise, measured as the gradient of an associative reconstruction loss between incoming key-value representations:
+   $$\mathcal{L}_{\text{rec}} = \|M(k; W) - v\|^2$$
+2. **Inference-Time Rewiring:** When tokens violate expectations, online gradient descent actively updates memory parameters:
+   $$W_t = (1 - \alpha_t) W_{t-1} - \eta_t \nabla_W \mathcal{L}_{\text{rec}}(W_{t-1}) + \beta_t \Delta W_{t-1}$$
+3. **Linear Context Scaling:** Decouples associative recall from explicit KV cache retention, scaling persistent context across millions of tokens with $\mathcal{O}(L)$ linear complexity.
 
-## 4. Scalability & Benchmark Performance
-- Enables continuous context processing beyond **2,000,000+ tokens** with constant per-step memory footprint and linear computational scaling.
-- Outperforms vanilla Transformers and Mamba on Needle-in-a-Haystack, long-document question answering, and time-series extrapolation.
+Related: [[infini_attention_compressive_memory]], [[ring_attention_blockwise_transformers]], [[streaming_llm_sinks]], [[duoattention_retrieval_streaming_heads]]
