@@ -2395,3 +2395,193 @@ Lookahead decoding divides each forward pass into two parallel branches executed
 
 - **Exactness Guarantee:** All accepted tokens strictly match the target model's causal greedy/sampled distribution.
 - **Empirical Speedup:** Delivers **$1.8\times\text{--}4.0\times$ wall-clock speedup** across MT-Bench, GSM8K, and HumanEval without requiring draft models, external data stores, or offline training.
+
+## 75. Hopper Asynchronous Warp Specialization & FP8 Low-Precision Attention (FlashAttention-3, Shah et al., Stanford 2024)
+
+### 75.1 Hardware Bottlenecks on NVIDIA Hopper Architecture
+While FlashAttention-2 (Dao, 2023) minimized memory bandwidth traffic between High-Bandwidth Memory (HBM) and Static RAM (SRAM), modern NVIDIA Hopper (H100, `sm_90a`) GPUs introduce severe execution bottlenecks under standard kernels:
+1. **Low Tensor Core Utilization:** FlashAttention-2 achieved only $240\text{--}350\text{ TFLOPS}$ in FP16, utilizing $<35\%$ of the H100 SXM5 theoretical peak ($989\text{ TFLOPS}$).
+2. **Synchronous Memory Latency:** Traditional CUDA kernels stall execution pipelines while waiting for Global Memory (GMEM) tile loads into registers before issuing Tensor Core operations.
+3. **Register File Pressure:** Loading large attention tile matrices $Q, K, V$ into registers exhausts register allocations per threadblock, reducing occupancy.
+
+Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao (*FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-Precision*, Stanford, Meta & Colfax, 2024 / arXiv:2407.08608) redesign attention to exploit Hopper's asynchronous architectural primitives.
+
+```mermaid
+flowchart TD
+    subgraph HopperThreadblock["Hopper H100 Threadblock"]
+        Producer["Producer Warps (Issue TMA Instructions)"]
+        Consumer["Consumer Warp Groups (wgmma.mma_async)"]
+        
+        TMA["TMA: Asynchronous GMEM <-> SMEM Direct Transfer (mbarrier)"]
+        Producer --> TMA
+        TMA --> SMEM_Tiles["SMEM Double Buffers (Tiles Q, K, V)"]
+        
+        SMEM_Tiles --> Consumer
+        Consumer --> PingPong["Ping-Pong GEMM Interleaving: GEMM_1 (QK^T) <-> GEMM_2 (PV)"]
+        PingPong --> HiddenSoftmax["Concurrently Overlapped Softmax ALU Operations"]
+    end
+    
+    Incoherent["Incoherent Processing: X <- X H (Randomized Hadamard Transform)"] --> Producer
+    HiddenSoftmax --> FP8Out["FP8 Tensor Core Execution (1.2 PFLOPS Throughput)"]
+```
+
+### 75.2 Hopper Hardware Primitives & Asynchronous Execution
+FlashAttention-3 introduces three architectural mechanisms:
+
+1. **Tensor Memory Accelerator (TMA) & `mbarrier` Synchronization:**
+   - Multi-dimensional tiles of $Q, K, V$ are transferred directly between GMEM and SMEM by dedicated hardware TMA engines without touching the thread register file (RF).
+   - Synchronization is orchestrated via hardware transaction barriers (`cuda::barrier` / `mbarrier.arrive` / `wait`), allowing math execution to progress while memory transfers execute concurrently.
+
+2. **Warp Specialization (Producer-Consumer Decoupling):**
+   - Warps within the threadblock are partitioned into **Producer Warps** (which issue non-blocking TMA load descriptors) and **Consumer Warp Groups** (which execute mathematical matrix operations).
+   - Eliminates instruction cache thrashing and completely hides memory transfer latency.
+
+3. **Asynchronous Tensor Core Ops (`wgmma.mma_async`) & Ping-Pong Scheduling:**
+   - Hopper Warp Groups (128 threads) issue non-blocking matrix multiplications reading inputs directly from SMEM into Tensor Cores.
+   - **Ping-Pong Scheduling:** Interleaves $\text{GEMM}_1$ ($S^{(j)} = Q K_j^\top$) and $\text{GEMM}_2$ ($O^{(j)} = \alpha O^{(j-1)} + P^{(j)} V_j$) with ALU-bound online softmax scaling across alternating warp groups:
+     $$\tilde{P}^{(j)} = \exp\left(S^{(j)} - m^{(j)}\right), \quad \alpha = \exp\left(m^{(j-1)} - m^{(j)}\right), \quad l^{(j)} = \alpha l^{(j-1)} + \operatorname{rowsum}\left(\tilde{P}^{(j)}\right)$$
+     The softmax ALU latency is completely concealed behind asynchronous matrix multiplication.
+
+### 75.3 FP8 Execution via Incoherent Processing
+To utilize Hopper's $1,978\text{ TFLOPS}$ FP8 Tensor Cores without numerical degradation:
+- **Block-Level Quantization:** Rescales matrices dynamically per sub-block tile:
+  $$S^{(j)} = (s_Q s_{K, j}) \cdot \operatorname{WGMMA}\left( Q_{\text{fp8}}, K_{j, \text{fp8}}^\top \right)$$
+- **Incoherent Processing (Randomized Hadamard Transform):** Transforms inputs $X \leftarrow X H$ prior to quantization, where $H$ is a structured orthogonal Hadamard matrix. This disperses large activation outliers across all hidden dimensions, eliminating the outlier spikes that destroy FP8 precision.
+- **Empirical Breakthrough:** FlashAttention-3 achieves **$740\text{ TFLOPS}$ in FP16** ($1.5\times\text{--}2.0\times$ faster than FA-2) and reaches **$1.2\text{ PFLOPS}$ ($1200\text{ TFLOPS}$) in FP8** with $2.6\times$ lower numerical error than standard FP8 implementations.
+
+---
+
+## 76. Non-Monetary Prospect Utility & Loss-Averse Binary Alignment (KTO, Ethayarajh et al., Stanford / ICML 2024)
+
+### 76.1 The Counterfactual Pairing Failure in Real-World Alignment
+Direct Preference Optimization (DPO) and standard RLHF presuppose von Neumann-Morgenstern Expected Utility Theory (EUT) operating over paired comparisons $(x, y_w, y_l)$. However, in production telemetry:
+1. User feedback is predominantly **unpaired binary data** (thumbs-up/thumbs-down, accept/reject, star ratings).
+2. Forcing unpaired telemetry into synthetic pairs induces label noise and generates cyclic intransitive preference graphs ($A \succ B \succ C \succ A$).
+3. EUT assumes that humans evaluate outcomes in absolute terms, whereas behavioral economics demonstrates that human preferences are intrinsically **reference-dependent and loss-averse**.
+
+Kawin Ethayarajh, Winnie Xu, Niklas Muennighoff, Dan Jurafsky, and Douwe Kiela (*KTO: Model Alignment as Prospect Theoretic Optimization*, Stanford & Contextual AI / ICML 2024 / arXiv:2402.01306) formulate **Kahneman-Tversky Optimization (KTO)** based on Kahneman & Tversky's Nobel Prize-winning **Prospect Theory (1979)**.
+
+```mermaid
+flowchart LR
+    Telemetry["Unpaired Binary Feedback: (x, y) in D_D (Desirable) or D_U (Undesirable)"] --> RefAnchor["Compute Dynamic Reference Point z_0 = E[KL(pi_theta || pi_ref)]"]
+    RefAnchor --> RewardDiff["Implicit Reward Delta: r_theta(x, y) - z_0"]
+    
+    RewardDiff --> DesirableBranch["If (x, y) in D_D: Loss = lambda_D * sigma(-beta * (r - z_0))"]
+    RewardDiff --> UndesirableBranch["If (x, y) in D_U: Loss = lambda_U * sigma(beta * (r - z_0))"]
+    
+    DesirableBranch --> KTOLoss["KTO Objective: w_D * L_D + w_U * L_U with Loss Aversion lambda_U > lambda_D"]
+    UndesirableBranch --> KTOLoss
+    KTOLoss --> PolicyGrad["Policy Update without Counterfactual Pairing"]
+```
+
+### 76.2 Prospect Theory Value Functions & The KTO Objective
+Prospect Theory establishes that human decisions are governed by a value function $v(u)$ that is:
+- *Reference-Dependent:* Gains and losses are defined relative to a neutral reference point $z_0$.
+- *Loss-Averse:* Losses hurt more than equivalent gains bring pleasure ($\lambda_{\text{loss}} > \lambda_{\text{gain}}$).
+- *Diminishingly Sensitive:* Concave for gains, convex for losses.
+
+KTO defines the implicit reward as $r_\theta(x, y) = \beta \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)}$ and formulates the alignment loss:
+$$\mathcal{L}_{\text{KTO}}(\pi_\theta; \pi_{\text{ref}}) = \mathbb{E}_{(x, y) \sim \mathcal{D}} \left[ w(y) \left( 1 - v_{\text{KTO}}(x, y) \right) \right]$$
+Using the sigmoid value function $v_{\text{KTO}}(x, y) = \sigma\left( \beta \left( \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)} - z_0 \right) \right)$ and the identity $1 - \sigma(u) = \sigma(-u)$:
+$$\mathcal{L}_{\text{KTO}} = \lambda_D \mathbb{E}_{(x, y) \in \mathcal{D}_D} \left[ \sigma\left( -\beta \left( \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)} - z_0 \right) \right) \right] + \lambda_U \mathbb{E}_{(x, y) \in \mathcal{D}_U} \left[ \sigma\left( \beta \left( \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)} - z_0 \right) \right) \right]$$
+
+### 76.3 The Dynamic Reference Point $z_0$ & Loss Aversion Ratio
+- **Dynamic Reference Point $z_0$:**
+  $$z_0 = \mathbb{E}_{x' \sim \mathcal{D}} \left[ \operatorname{KL}\left( \pi_\theta(\cdot \mid x') \parallel \pi_{\text{ref}}(\cdot \mid x') \right) \right] \approx \frac{1}{|B|} \sum_{i=1}^{|B|} \beta \log \frac{\pi_\theta(y_i \mid x_i)}{\pi_{\text{ref}}(y_i \mid x_i)}$$
+  $z_0$ represents the policy's average divergence from the base model, functioning as the status-quo anchor. A desirable output is reinforced *only if* its reward exceeds the baseline ($r_\theta > z_0$).
+- **Loss Aversion Ratio ($\lambda_U > \lambda_D$):**
+  Sets $\lambda_U \in [1.0, 1.33]$ and $\lambda_D = 1.0$, weighting negative examples more heavily to prevent catastrophic failures, hallucinations, and safety violations.
+- **Empirical Superiority:** Matches or outperforms DPO across 1B to 30B models (Llama-3, Mistral) on AlpacaEval 2 and MT-Bench without requiring paired preference data.
+
+---
+
+## 77. Low-Rank Linear Subspace Interventions & Representation Fine-Tuning (LoReFT, Wu et al., Stanford / NeurIPS 2024)
+
+### 77.1 Weight Adaptation vs. Representation Intervention
+Conventional Parameter-Efficient Fine-Tuning (PEFT) methods—such as LoRA (Hu et al., 2021)—modify model **weights** by learning low-rank matrix increments:
+$$W' = W + \frac{\alpha}{r} B A, \quad B \in \mathbb{R}^{d \times r}, A \in \mathbb{R}^{r \times k}$$
+While parameter-efficient, weight-based adaptation updates operations across all sequence tokens and transformer layers uniformly, lacking spatial and causal localization.
+
+Zhengxuan Wu, Aryaman Arora, Zheng Wang, Atticus Geiger, Dan Jurafsky, Christopher D. Manning, and Christopher Potts (*ReFT: Representation Fine-Tuning for Language Models*, Stanford / NeurIPS 2024 / arXiv:2404.03592) introduce **Representation Fine-Tuning (ReFT)**: freezing all base model weights and learning targeted, low-rank interventions directly within hidden representation manifolds.
+
+```mermaid
+flowchart LR
+    Hidden["Hidden State h in R^d at Layer l, Position p"] --> ProjOrth["Orthogonal Component: (I - R^T R) h"]
+    Hidden --> ProjSub["Subspace Projection: R h in R^r"]
+    ProjSub --> Edit["Subspace Transformation: W h + b in R^r"]
+    Edit --> Reproject["Reprojection to R^d: R^T (W h + b)"]
+    
+    ProjOrth --> Add["Sum: R_Phi(h) = (I - R^T R) h + R^T (W h + b)"]
+    Reproject --> Add
+    Add --> IntervenedOut["Intervened Hidden Representation h'"]
+```
+
+### 77.2 Mathematical Formulation of LoReFT
+The primary instantiation of ReFT is **Low-rank Linear Subspace ReFT (LoReFT)**. Given hidden activation vector $h \in \mathbb{R}^d$ at layer $l$ and token position $p$, LoReFT defines the intervention operator $R_\Phi: \mathbb{R}^d \to \mathbb{R}^d$:
+$$R_\Phi(h) = h + R^\top \left( W h + b - R h \right) = \left( I - R^\top R \right) h + R^\top \left( W h + b \right)$$
+where:
+- $R \in \mathbb{R}^{r \times d}$ is an orthonormal projection matrix satisfying $R R^\top = I_r$ ($r \ll d$, typically $r \in [1, 8]$).
+- $W \in \mathbb{R}^{r \times d}$ and $b \in \mathbb{R}^r$ are trainable linear mapping parameters.
+
+- **Orthogonal Subspace Invariance:** The operator $\left( I - R^\top R \right)$ acts as a projector onto the orthogonal complement of the subspace spanned by $R$. Any latent semantic information residing outside the $r$-dimensional target subspace is preserved with zero distortion.
+- **Subspace Linear Mapping:** In the low-rank subspace, $W h + b$ executes linear steering tailored to the target task.
+
+### 77.3 Parameter Efficiency & Performance Comparison
+LoReFT defines sparse intervention coordinates $(l, p, \Phi)$, intervening only at specific layers and prefix/suffix positions:
+- **Parameter Compression:** Requires **$10\times\text{--}50\times$ fewer trainable parameters than LoRA**, tuning as few as **$0.001\%\text{--}0.05\%$** of total model parameters.
+- **Benchmark Performance:** Matches or outperforms full LoRA fine-tuning on Commonsense Reasoning (GSM8K, MATH), GLUE, and instruction-following benchmarks while isolating causal task steering within mathematically orthogonal subspaces.
+
+---
+
+## 78. Multi-Agent Debate Dynamics, Society-of-Mind Consensus & Elo Jury Aggregation (Du et al. / Liang et al., ICML 2024)
+
+### 78.1 Autoregressive Premise Entrapment & Hallucination Cascades
+In single-agent autoregressive generation, reasoning errors compound irreversibly:
+$$\text{If token } x_t \text{ commits a logical error, } \quad P(\text{error} \mid x_{<t+k}) \to 1$$
+Because causal self-attention conditions on previous tokens, language models exhibit confirmation bias and self-justification, defending erroneous premises rather than correcting them.
+
+Yilun Du, Shuang Li, Antonio Torralba, Joshua B. Tenenbaum, and Igor Mordatch (*Improving Factuality and Reasoning in Language Models through Multiagent Debate*, MIT / ICML 2024 / arXiv:2305.14325) and Tian Liang et al. (*Encouraging Divergent Thinking in Large Language Models through Multi-Agent Debate*, 2023) formulate **Multi-Agent Debate (MAD)**, exploiting society-of-mind divergence and verification-generation asymmetry to eliminate hallucinations.
+
+```mermaid
+flowchart TD
+    Query["User Problem Query x"] --> DiverseInit["Diverse Initialization across N Agents with Heterogeneous Personas"]
+    
+    subgraph Round1["Debate Round 1"]
+        DiverseInit --> Agent1_R1["Agent 1 Proposal y_1^(1)"]
+        DiverseInit --> Agent2_R1["Agent 2 Proposal y_2^(1)"]
+        DiverseInit --> Agent3_R1["Agent 3 Proposal y_3^(1)"]
+    end
+    
+    subgraph RoundT["Debate Round t (Peer Critique)"]
+        Agent1_R1 --> PeerContext["Transcript Aggregation: M_(-i)"]
+        Agent2_R1 --> PeerContext
+        Agent3_R1 --> PeerContext
+        
+        PeerContext --> Agent1_Rt["Agent 1 Refinement: y_1^(t) ~ pi_1(x, y_1^(t-1), M_(-1))"]
+        PeerContext --> Agent2_Rt["Agent 2 Refinement: y_2^(t) ~ pi_2(x, y_2^(t-1), M_(-2))"]
+        PeerContext --> Agent3_Rt["Agent 3 Refinement: y_3^(t) ~ pi_3(x, y_3^(t-1), M_(-3))"]
+    end
+    
+    Agent1_Rt --> EloJury["Confidence-Weighted Bradley-Terry Elo Jury"]
+    Agent2_Rt --> EloJury
+    Agent3_Rt --> EloJury
+    EloJury --> VerifiedConsensus["Factual Verified Consensus Solution y*"]
+```
+
+### 78.2 Synchronous Peer Critique & Verification Asymmetry
+Let $N$ heterogeneous agents $\{\pi_1, \pi_2, \dots, \pi_N\}$ be initialized with distinct prompts or temperatures $\tau_i$. Across debate rounds $t \in \{1, \dots, T\}$, each agent updates its candidate solution conditioned on the transcript of peer responses $\mathcal{M}_{-i}^{(t-1)} = \{y_j^{(t-1)}\}_{j \neq i}$:
+$$y_i^{(t)} \sim \pi_i\left( y \mid x, y_i^{(t-1)}, \mathcal{M}_{-i}^{(t-1)} \right)$$
+
+- **Verification-Generation Asymmetry:** In formal logic, arithmetic, and factual retrieval, verifying the falsity of a claim requires lower epistemic entropy than inventing a novel proof. When an erroneous trajectory is presented, peer agents identify the derivation error, transforming truth into a game-theoretic basin of attraction:
+  $$\lim_{t \to T} \operatorname{Var}\left( \bar{\epsilon}^{(t)} \right) \to 0$$
+  where $\epsilon_i$ is individual agent hallucination noise.
+
+### 78.3 Jury Aggregation: Confidence-Weighted Bradley-Terry Elo
+Standard majority voting collapses when agents share common pretraining biases. To resolve this, debate rounds culminate in **Elo Jury Aggregation**:
+1. An independent referee model conducts pairwise debate comparisons, updating agent skill ratings $R_i$ via Bradley-Terry modeling:
+   $$P(i \succ j) = \frac{1}{1 + 10^{(R_j - R_i)/400}}$$
+2. Weighting each agent's final answer by verbalized confidence $c_i \in (0, 1]$ and Elo score:
+   $$w_i = c_i \cdot \frac{\exp(R_i / \tau)}{\sum_{k=1}^N \exp(R_k / \tau)}$$
+   $$\hat{y}_{\text{consensus}} = \operatorname{argmax}_{y \in \mathcal{Y}} \sum_{i=1}^N w_i \cdot \mathbb{I}\left( \phi\left( y_i^{(T)} \right) = y \right)$$
+
+- **Empirical Results:** Across GSM8K, MATH, and MMLU, multi-agent debate lifts accuracy by **$+8.4\%\text{--}+14.2\%$** over greedy single-agent generation and reduces hallucination frequency by **$>60\%$** without fine-tuning.
