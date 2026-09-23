@@ -10579,3 +10579,109 @@ sequenceDiagram
 - **Batch Size Scaling:** Because KV memory is slashed by **$3.56\times$ relative to GQA-8** and **$56.8\times$ relative to MHA**, inference engines (vLLM, SGLang) can serve **$>4\times$ larger concurrent batch sizes** on identical GPU clusters.
 - **Arithmetic Intensity:** Increases operational intensity during decoding by an order of magnitude, transforming memory-bound token generation closer to compute-bound efficiency.
 - **Superior Expressive Power:** Unlike GQA which permanently truncates key-value ranks, MLA projects through low-rank bottlenecks while maintaining 128 independent query heads, outperforming MHA on MMLU, GSM8K, and HumanEval.
+
+---
+
+## 301. SynCode: Subword-Terminal Mismatch Resolution & Offline DFA Mask Stores in Grammar-Constrained Decoding (Ugare et al., UIUC, TMLR 2025)
+
+### 301.1 The Subword-Terminal Mismatch Crisis in Code Generation
+While formal compilers and grammar parsers operate on clean lexical tokens known as **Terminals** (e.g. `KEYWORD`, `IDENTIFIER`, `NUMBER`, `OPERATOR`), Large Language Models (LLMs) operate on Byte-Pair Encoding (BPE) or WordPiece **Subwords**.
+
+This creates a fundamental structural impedance mismatch in grammar-constrained decoding:
+1. **Multi-Terminal Subwords:** A single LLM subword may span across multiple syntactic terminals (e.g. the single token `" = 0;"` contains an operator `=`, a literal `0`, and a statement terminator `;`).
+2. **Partial Terminal Subwords:** A subword may represent an incomplete prefix of a single terminal (e.g. the token `"def"` is an exact keyword, but the token `"de"` is merely a partial prefix that could expand into `"default"` or an identifier `"debug_mode"`).
+3. **Boundary Ambiguity:** Standard compiler lexers require seeing the complete token before classifying its terminal type. If a grammar engine forces an incremental LR parser to accept partial subwords, the parser crashes or erroneously rejects legal tokens.
+
+```mermaid
+flowchart TD
+    subgraph MismatchCrisis["The Subword vs Terminal Impedance Mismatch"]
+        LLM_Token["LLM BPE Subword: ' = 0;'"] --> Split["Crosses 3 Distinct Syntactic Terminals:"]
+        Split --> T1["Terminal 1: OPERATOR (=)"]
+        Split --> T2["Terminal 2: NUMBER (0)"]
+        Split --> T3["Terminal 3: SEMICOLON (;)"]
+        LLM_Token2["LLM BPE Subword: 'de'"] --> Partial["Incomplete Terminal Prefix:"]
+        Partial --> BranchA["Branch A: KEYWORD ('def')"]
+        Partial --> BranchB["Branch B: IDENTIFIER ('debug_mode')"]
+    end
+    subgraph SynCodeEngine["SynCode Resolution Pipeline (Ugare et al., TMLR 2025)"]
+        DFAMask["Offline DFA Mask Store: Maps (DFA State, Parser Terminal Set) -> Valid Subwords"]
+        SyncParser["Incremental LALR(1) Parser + Remainder Tracking Buffer"]
+        DFAMask & SyncParser --> ExactMask["Exact Vocabulary Logit Mask (<0.2ms GPU Overhead)"]
+        ExactMask --> ZeroSyntax["100% Syntax Error Elimination on Python, Go & SQL"]
+    end
+```
+
+---
+
+### 301.2 The Lexer-Parser Dual Automata Architecture
+**SynCode** (Ugare, Suresh, Kang, Misailovic, & Singh, UIUC, TMLR 2025) resolves the subword-terminal mismatch by decomposing grammar enforcement into a coupled **Dual-Automata System**:
+
+1. **The Lexer Deterministic Finite Automaton (DFA):**
+   The lexical rules defining all terminals in the grammar are compiled into a global Lexer DFA $\mathcal{A}_{\text{lex}} = (S, \Sigma, \delta, s_0, F)$:
+   - $S$: Finite set of lexer states.
+   - $\Sigma$: Alphabet of raw byte characters.
+   - $\delta: S \times \Sigma \to S$: Deterministic transition function.
+   - $F \subseteq S$: Final accepting states, where each $f \in F$ maps to a terminal type $T \in \mathcal{T}$.
+2. **The Incremental LALR(1) Pushdown Automaton (PDA):**
+   The Context-Free Grammar (CFG) rules are compiled into an incremental parser PDA $\mathcal{P} = (Q, \mathcal{T}, \Gamma, \Delta, q_0, Z_0)$:
+   - The parser consumes completed terminals $T \in \mathcal{T}$ emitted by the lexer DFA.
+   - At any point in the generation, the parser stack determines the **Follow Set** $\text{Follow}(q) \subseteq \mathcal{T}$, representing all syntactic terminals that are legally allowed to appear next.
+
+---
+
+### 301.3 Offline DFA Mask Store Construction & Subword Precomputation
+Naively checking whether each of the $|\mathcal{V}| \approx 128\text{k}\text{--}256\text{k}$ vocabulary subwords can legally transition the lexer DFA and satisfy the parser's follow set requires massive runtime computation, creating severe serving latency ($>20\,\text{ms}$ per token).
+
+SynCode moves this entire computation **offline into precomputed bitmasks**:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant LLM as LLM Generation Loop
+    participant State as Runtime Parser State (q) & Lexer State (s)
+    participant Store as Precomputed DFA Mask Store
+    participant GPU as GPU Logit Masking Kernel
+
+    State->>State: Parser Computes Legal Follow Terminals: Follow(q) ⊆ T
+    State->>Store: Query Key: (Lexer State s, Follow Set Follow(q))
+    Store-->>GPU: Retrieve Precomputed Binary Bitmask M ∈ {0, 1}^|V|
+    GPU->>LLM: Invalidate Disallowed Token Logits (-inf)
+    LLM-->>State: Sample Valid Token v_t
+    State->>State: Advance Lexer DFA & Push Completed Terminals to Parser Stack
+```
+
+1. **Precomputing Subword Trajectories:**
+   For each subword token $v \in \mathcal{V}$ (represented as a string of bytes $b_1 b_2 \dots b_k$):
+   - For every initial lexer state $s \in S$, SynCode traces the execution path through $\mathcal{A}_{\text{lex}}$:
+     $$s_1 = \delta(s, b_1), \quad s_2 = \delta(s_1, b_2), \quad \dots, \quad s_k = \delta(s_{k-1}, b_k)$$
+   - If the trajectory passes through one or more accepting states $f \in F$, it records the sequence of completed terminals $(T_1, T_2, \dots)$ and the residual unconsumed remainder state $s_{\text{rem}}$.
+2. **Lookup Key Compression:**
+   The DFA Mask Store maps the tuple:
+   $$\text{MaskKey} = \left( s_{\text{lexer}}, \; \text{Follow}(q) \right) \implies \text{Bitmask} \in \{0, 1\}^{|\mathcal{V}|}$$
+   At runtime, computing the logit mask requires **exactly one hash map lookup** ($<0.1\,\text{ms}$), completely bypassing runtime regular expression matching and token parsing.
+
+---
+
+### 301.4 Incremental LALR Parsing with Remainder Tracking
+When a sampled token $v_t$ represents a partial terminal (e.g. emitting `"def"` when an identifier is expected):
+1. **The Remainder Buffer:** SynCode maintains a small buffer of unconsumed characters $\text{buf}_{\text{rem}}$.
+2. **Delayed Commitment:** The incremental parser PDA is only advanced when the lexer DFA reaches a terminal boundary (whitespace, delimiter, or operator).
+3. **Lookahead Preservation:** If a subword ends in a partial state that cannot be completed by any valid character sequence under the grammar, it is assigned bit $0$ in the precomputed mask, preventing the model from ever entering dead-end prefix traps.
+
+---
+
+### 301.5 Empirical Benchmarks Across Programming Languages & Data Formats
+
+```mermaid
+flowchart LR
+    subgraph SyntaxReliability["Syntax Error Rate on HumanEval & Spider (Python / SQL)"]
+        Unconstrained["Unconstrained Llama-3-8B: 14.8% Syntax Errors"]
+        RegexOnly["Regex Masking (Outlines): 6.2% Syntax Errors (Fails on Nested ASTs)"]
+        SynCode_Perf["SynCode (TMLR 2025): 0.0% Syntax Errors (100% Valid Syntactic ASTs)"]
+    end
+```
+
+**Quantitative Results (HumanEval, MBPP, Spider SQL, Go-Benchmark):**
+- **Syntax Error Elimination:** Reduces syntax errors to **strictly $0.0\%$** across Python, Go, and SQL benchmarks.
+- **Execution Pass@1 Uplift:** Raising syntactic validity directly raises execution Pass@1 on HumanEval from **$68.2\%$ to $74.6\%$** on Llama-3-8B, because the model never squanders tokens on unparseable statements or missing closing brackets.
+- **Runtime Latency:** The offline DFA mask store delivers a **$<0.25\,\text{ms}$ latency overhead per token**, representing a **$40\times$ speedup** compared to dynamic runtime parser checkers.
