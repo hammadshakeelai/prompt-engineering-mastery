@@ -3379,6 +3379,173 @@ Implemented in **DeepSeek-V3** across 256 routed experts and 1 shared expert:
 - Completely eliminates auxiliary loss gradient interference.
 - Delivers near-perfect expert load distribution (load variance $<2\%$) throughout pretraining on 14.8 trillion tokens, ensuring maximum compute efficiency across thousands of GPUs without language modeling capacity degradation.
 
+---
+
+## 97. Model Merging via Bernoulli Delta Sparsification & Rescaling (DARE, Yu et al., ICML 2024)
+
+### 97.1 Parameter Interference & Superposition in Model Merging
+When fine-tuning homologous models derived from the same base pretrained checkpoint $\theta_{\text{pre}}$ on distinct tasks (e.g., coding, mathematical reasoning, instruction following), each model acquires a delta parameter tensor $\Delta \theta_k = \theta_{\text{ft}, k} - \theta_{\text{pre}}$.
+
+Directly averaging delta weights ($\sum \frac{1}{K} \Delta \theta_k$) induces severe **parameter interference**:
+1. Conflicting sign updates cancel out vital specialized capabilities.
+2. Dense parameter superposition saturates downstream layer activations, causing catastrophic degradation on multi-task benchmarks.
+
+Le Yu, Bowen Yu, Haiyang Yu, Fei Huang, and Yongbin Li (*Language Models are Super Mario: Absorbing Abilities from Homologous Models as a Free Lunch*, ICML 2024 / arXiv:2311.03099) uncover the extreme redundancy of fine-tuned deltas and introduce **DARE (Drop And REscale)**.
+
+```mermaid
+flowchart TD
+    FineTuned["Fine-Tuned Checkpoints theta_1, ..., theta_K"] --> DeltaCalc["Compute Delta Weights: Delta_k = theta_k - theta_pre"]
+    
+    subgraph DARE_Step["DARE Sparsification & Rescaling"]
+        DeltaCalc --> BernoulliMask["1. Bernoulli Masking: Drop 90-99% of delta coordinates (p in [0.9, 0.99])"]
+        BernoulliMask --> Rescaling["2. Rescale Surviving Coordinates by 1 / (1 - p)"]
+        Rescaling --> UnbiasedDelta["Unbiased Sparse Delta: E[Delta_hat] = Delta"]
+    end
+    
+    UnbiasedDelta --> TIES_Merge["TIES / Model Fusion: Resolves Sign Conflicts"]
+    TIES_Merge --> BaseWeights["Add to Base Pretrained Weights theta_pre"]
+    BaseWeights --> MergedSuperModel["Unified Super-Model Absorbing Diverse Skills"]
+```
+
+### 97.2 Mathematical Formulation of DARE
+For a delta parameter vector $\Delta = \theta_{\text{ft}} - \theta_{\text{pre}} \in \mathbb{R}^d$:
+1. **Bernoulli Drop:** Sample a binary random mask $m \in \{0, 1\}^d$ where each coordinate is drawn independently:
+   $$m_i \sim \operatorname{Bernoulli}(1 - p), \quad p \in [0.90, 0.99]$$
+2. **Expectation-Preserving Rescaling:** Scale the surviving coordinates by $\frac{1}{1 - p}$:
+   $$\hat{\Delta}_i = \frac{m_i \cdot \Delta_i}{1 - p}$$
+3. **Statistical Expectation Invariance:**
+   $$\mathbb{E}[\hat{\Delta}_i] = \frac{\mathbb{E}[m_i] \cdot \Delta_i}{1 - p} = \frac{(1 - p) \Delta_i}{1 - p} = \Delta_i$$
+   Because the expected activation of the sparse delta matches the original dense delta, the model's functional output distribution is preserved while eliminating $90\%\text{--}99\%$ of redundant weights.
+
+### 97.3 Integration with TIES-Merging & Performance
+When combined with TIES (Trimming, Electing, and Merging Signed gradients):
+- Eliminates $99\%$ of parameter interference, enabling the seamless fusion of dozens of task-specific models into a single base model without fine-tuning compute.
+- SOTA performance across Big-Bench, AlpacaEval, and HumanEval, allowing open-source models to absorb disparate capabilities "as a free lunch."
+
+---
+
+## 98. Monolithic Preference Alignment without Reference Models (ORPO, Hong et al., EMNLP 2024)
+
+### 98.1 The Two-Stage Alignment Overhead
+Standard alignment workflows require a two-stage process: Supervised Fine-Tuning (SFT) followed by preference alignment (RLHF, DPO, IPO). DPO requires simultaneously maintaining two large models in GPU memory: the active policy $\pi_\theta$ and the frozen reference model $\pi_{\text{ref}}$, doubling VRAM allocation and introducing cross-model synchronization overhead.
+
+Jiwoo Hong, Noah Lee, and James Thorne (*ORPO: Monolithic Preference Optimization without Reference Model*, KAIST / EMNLP 2024 / arXiv:2403.07691) eliminate the reference model by integrating preference alignment directly into the SFT loss via an **odds ratio penalty**.
+
+```mermaid
+flowchart TD
+    PrefDataset["Dataset: Prompt x, Chosen y_w, Rejected y_l"] --> Model["Active Policy pi_theta (Single Model in VRAM)"]
+    
+    Model --> SFT_Loss["Supervised Cross-Entropy Loss: L_SFT(y_w | x)"]
+    Model --> OddsRatio["Compute Log Odds Ratio: odds(y_w) / odds(y_l)"]
+    
+    OddsRatio --> OR_Penalty["Odds Ratio Penalty: -log sigma(log odds_ratio)"]
+    SFT_Loss --> CompositeLoss["Total Monolithic Loss: L_ORPO = L_SFT + lambda * L_OR"]
+    OR_Penalty --> CompositeLoss
+    
+    CompositeLoss --> Backprop["Backprop: Halves VRAM (No Reference Model Required)"]
+```
+
+### 98.2 Mathematical Formulation of ORPO
+For prompt $x$ and completion $y$, the generative probability under policy $\pi_\theta$ is $P_\theta(y \mid x) = \prod_{t=1}^{|y|} P_\theta(y_t \mid y_{<t}, x)$.
+The odds of generating completion $y$ are defined as:
+$$\operatorname{odds}_\theta(y \mid x) = \frac{P_\theta(y \mid x)}{1 - P_\theta(y \mid x)}$$
+
+The Odds Ratio (OR) between favored chosen completion $y_w$ and disfavored rejected completion $y_l$ is:
+$$\operatorname{OR}_\theta(y_w, y_l \mid x) = \frac{\operatorname{odds}_\theta(y_w \mid x)}{\operatorname{odds}_\theta(y_l \mid x)}$$
+
+The composite **ORPO loss objective** is:
+$$\mathcal{L}_{\text{ORPO}}(\theta) = \mathbb{E}_{(x, y_w, y_l)} \left[ \mathcal{L}_{\text{SFT}}(\theta) + \lambda \cdot \mathcal{L}_{\text{OR}}(\theta) \right]$$
+where:
+$$\mathcal{L}_{\text{SFT}}(\theta) = -\log P_\theta(y_w \mid x)$$
+$$\mathcal{L}_{\text{OR}}(\theta) = -\log \sigma\left( \log \operatorname{OR}_\theta(y_w, y_l \mid x) \right) = -\log \sigma\left( \log \frac{P_\theta(y_w \mid x)}{1 - P_\theta(y_w \mid x)} - \log \frac{P_\theta(y_l \mid x)}{1 - P_\theta(y_l \mid x)} \right)$$
+
+### 98.3 Properties & Empirical Gains
+1. **Monolithic Efficiency:** Requires **zero auxiliary reference models**, reducing GPU memory usage by $\sim 50\%$ and eliminating the separate post-SFT alignment phase.
+2. **Active Non-Preference Suppression:** While standard SFT only maximizes probability on $y_w$, ORPO simultaneously suppresses the likelihood of rejected sequences $y_l$ using the log odds penalty.
+3. **Benchmarks:** Mistral-7B and LLaMA-2-7B trained with ORPO achieve state-of-the-art results on AlpacaEval 2.0 ($12.2\% \to 18.5\%$) and MT-Bench ($7.23 \to 7.82$), outperforming multi-stage SFT+DPO pipelines.
+
+---
+
+## 99. Attention Sinks & Constant-Memory Infinite Context Streaming (StreamingLLM, Xiao et al., ICLR 2024)
+
+### 99.1 The Perplexity Explosion of Windowed KV Caching
+When deploying language models for streaming multi-turn chat or continuous document processing, context lengths quickly exceed GPU memory. A naive solution is **Sliding Window Attention**, which evicts older Key-Value pairs and keeps only the most recent $W$ tokens.
+
+However, Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis (*Efficient Streaming Language Models with Attention Sinks*, MIT, Meta, CMU / ICLR 2024 / arXiv:2309.17453) discover that naive windowing causes **catastrophic perplexity explosion** as soon as the sequence length exceeds window size $W$:
+- Autoregressive Transformers assign massive, disproportionate attention scores to the **initial $4$ prompt tokens**, regardless of their semantic content.
+- These initial tokens act as **Attention Sinks**: because Softmax requires attention weights across keys to sum to $1$ ($\sum_j \exp(q k_j^\top / \sqrt{d}) = 1$), the model offloads unneeded attention probability mass onto the first few tokens.
+- Evicting the initial tokens removes the Softmax normalization anchor, corrupting attention distributions across all subsequent layers.
+
+```mermaid
+flowchart LR
+    TokenStream["Streaming Token Input Sequence x_1, x_2, ..., x_t"] --> Transformer["LLM Attention Layers"]
+    
+    subgraph StreamingLLM_KV["StreamingLLM Attention Sink Cache Topology"]
+        SinkTokens["Attention Sinks: Initial 4 Tokens (Permanently Preserved)"]
+        SlidingWindow["Recent Window: Last W Tokens (FIFO Circular Buffer)"]
+    end
+    
+    Transformer --> StreamingLLM_KV
+    StreamingLLM_KV --> SoftmaxAnchor["Preserves Softmax Normalization Denominator"]
+    SoftmaxAnchor --> InfiniteGen["Stable Infinite Context Streaming (4 Million+ Tokens, Constant O(1) Memory)"]
+```
+
+### 99.2 StreamingLLM KV Cache Topology
+StreamingLLM preserves generation stability by retaining only two small KV memory buffers:
+1. **Attention Sinks:** The initial $K_{\text{sink}}$ tokens (typically $K_{\text{sink}} = 4$).
+2. **Sliding Window Cache:** The most recent $W$ rolling tokens (e.g., $W = 1020$).
+$$\mathcal{K}_{\text{cached}} = \{k_1, k_2, k_3, k_4\} \cup \{k_{t-W+1}, \dots, k_t\}$$
+$$\mathcal{V}_{\text{cached}} = \{v_1, v_2, v_3, v_4\} \cup \{v_{t-W+1}, \dots, v_t\}$$
+All intermediate historical tokens are evicted from VRAM.
+
+### 99.3 Pre-Training Sink Modification & Infinite Context Results
+- **Zero Fine-Tuning Required:** Works off-the-shelf on pretrained LLaMA, MPT, Falcon, and Pythia models.
+- **Empirical Validation:** StreamingLLM processes **over 4 million continuous tokens** with stable perplexity and zero degradation, delivering **up to $22.2\times$ inference speedup** over re-computing KV states with constant $\mathcal{O}(1)$ GPU memory consumption.
+
+---
+
+## 100. Non-Linear Reasoning Topologies: Graph-of-Thought (GoT) Arbitrary DAG Aggregation (Besta et al., AAAI 2024)
+
+### 100.1 Transcending Chains and Trees of Thought
+Human cognitive problem-solving is neither purely linear (Chain-of-Thought, CoT) nor strictly hierarchical (Tree-of-Thought, ToT). Complex tasks (e.g., multi-document synthesis, scientific discovery, constraint optimization) require:
+1. Generating diverse thought vectors in parallel.
+2. Merging and distilling multiple disparate thoughts into a unified consensus.
+3. Looping back through refinement cycles to repair errors.
+
+Maciej Besta et al. (*Graph of Thoughts: Solving Elaborate Problems with Large Language Models*, ETH Zurich / AAAI 2024 / arXiv:2308.09687) generalize prompt reasoning into **Graph-of-Thought (GoT)**: modeling LLM reasoning as an arbitrary **Directed Acyclic Graph (DAG)**.
+
+```mermaid
+flowchart TD
+    Problem["Input Complex Task P"] --> Gen1["Thought 1: Decompose Subproblem A"]
+    Problem --> Gen2["Thought 2: Decompose Subproblem B"]
+    Problem --> Gen3["Thought 3: Alternative Approach C"]
+    
+    subgraph DAG_Aggregation["Graph-of-Thought (GoT) Transformations"]
+        Gen1 --> Agg1["Aggregate Thought: Synthesize A & B"]
+        Gen2 --> Agg1
+        Gen3 --> Score1["Score Thought C: Evaluator Model"]
+        Score1 --> Refine1["Refine & Repair Thought C"]
+        Agg1 --> FinalCombine["Graph Fusion: Merge Synthesized A+B with Refined C"]
+        Refine1 --> FinalCombine
+    end
+    
+    FinalCombine --> TerminalEval["Verified Optimal Solution G* (+62% Quality)"]
+```
+
+### 100.2 Graph Reasoning Formulation & Transformation Operators
+A reasoning graph is defined as $\mathcal{G} = \langle \mathcal{V}, \mathcal{E}, \mathcal{T} \rangle$, where vertices $v \in \mathcal{V}$ represent intermediate thought states, directed edges $(u, v) \in \mathcal{E}$ capture epistemic dependencies, and $\mathcal{T}$ represents graph transformation operators:
+1. **Generate Operator $\mathcal{T}_{\text{gen}}(v, k)$:** Emits $k$ novel candidate thoughts conditioned on parent thought $v$:
+   $$v'_1, \dots, v'_k \sim \pi_{\text{LM}}(\cdot \mid v)$$
+2. **Aggregate Operator $\mathcal{T}_{\text{agg}}(\{v_1, \dots, v_m\})$:** Synthesizes multiple thoughts into a consolidated thought:
+   $$v_{\text{agg}} \sim \pi_{\text{LM}}\left(\cdot \mid \Phi\left(v_1, \dots, v_m\right)\right)$$
+3. **Score Operator $\mathcal{T}_{\text{score}}(v)$:** Evaluates heuristic quality score $s(v) \in [0, 1]$ via self-evaluating prompt.
+4. **Refine Operator $\mathcal{T}_{\text{refine}}(v, \text{feedback})$:** Modifies thought $v$ in-place to correct errors based on critique.
+
+### 100.3 Empirical Superiority across Complex Benchmarks
+- **Sorting & Set Operations:** Slashes error rates by **$62\%$** compared to Tree-of-Thought, while reducing prompt token consumption by **$>31\%$** via iterative thought aggregation and pruning.
+- **Document Summarization:** Outperforms CoT and ToT in factual coverage and redundancy elimination, establishing arbitrary DAG aggregation as the theoretical ceiling of inference-time prompt topologies.
+
+
 
 
 
