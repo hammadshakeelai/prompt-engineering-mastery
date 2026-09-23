@@ -366,6 +366,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/semantic_kernel_arch.md|Semantic Kernel Arch]]
 - [[raw_research/snippets/set_of_mark_visual_grounding.md|Set Of Mark Visual Grounding]]
 - [[raw_research/snippets/sglang_radix_jumpforward.md|Sglang Radix Jumpforward]]
+- [[raw_research/snippets/simplex_geometry_superposition.md|Simplex Geometry Superposition]]
 - [[raw_research/snippets/simpo_length_normalized.md|Simpo Length Normalized]]
 - [[raw_research/snippets/simpo_reference_free_alignment.md|Simpo Reference Free Alignment]]
 - [[raw_research/snippets/simpo_reference_free_margin_alignment.md|Simpo Reference Free Margin Alignment]]

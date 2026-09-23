@@ -10783,3 +10783,84 @@ flowchart LR
 - **Single-Stage Parity & Outperformance:** On Llama-3-8B and Mistral-7B, ORPO trained directly from the base model achieves a **$32.8\%$ win rate on AlpacaEval 2**, outperforming the standard two-stage SFT+DPO pipeline ($26.4\%$).
 - **Compute & Memory Efficiency:** By eliminating the reference model and collapsing two training stages into one, ORPO cuts total post-training GPU hours by **$\approx 50\%$**.
 - **Instruction Following Retention:** Retains superior multi-turn formatting and reasoning performance on MT-Bench ($8.12$ vs $7.85$ for DPO) because the policy is never decoupled from generative cross-entropy supervision.
+
+---
+
+## 303. The Simplex Geometry of Superposition & Non-Linear Multi-Dimensional Features (Gurnee et al., MIT, 2024; Anthropic)
+
+### 303.1 The Limits of the 1D Linear Feature Hypothesis
+The foundation of modern mechanistic interpretability and Sparse Autoencoders (SAEs) rests on the **Linear Representation Hypothesis**: the assumption that semantic concepts correspond to 1-dimensional ray directions $\boldsymbol{v}_i \in \mathbb{S}^{d-1}$ in the residual stream, with scalar activations $f_i \ge 0$:
+$$\boldsymbol{x} = \sum_{i=1}^M f_i \boldsymbol{v}_i$$
+
+However, recent empirical discoveries (Gurnee, Michaud et al., MIT & Anthropic, 2024) demonstrate that **not all language model features are 1-dimensional rays**. Instead, when models represent categorical, circular, or multi-state semantic variables (e.g. days of the week, geographic coordinates, syntactic tense hierarchies, multi-token compound entities), they pack representations into **irreducible multi-dimensional geometric manifolds**, primarily **regular simplices** and circular orbits.
+
+```mermaid
+flowchart TD
+    subgraph Linear1D["Classical 1D Linear Feature Assumption"]
+        Vector["Feature i: Ray Direction v_i ∈ R^d"] --> Scalar["Magnitude: f_i ∈ R^+"]
+        Scalar --> Superposition1["Pack M >> d 1D vectors via Almost-Orthogonal Frames"]
+    end
+    subgraph SimplexGeom["Simplex & Multi-Dimensional Geometry (Gurnee et al., 2024)"]
+        CatData["Categorical Multi-State Variable (K States)"] --> SimplexStructure["Regular (K-1)-Simplex: Equidistant Vertices in R^(K-1)"]
+        SimplexStructure --> Angles["Uniform Negative Inner Products: <v_i, v_j> = -1 / (K - 1)"]
+        Angles --> NonLinear["Irreducible Multi-Dimensional Feature (SAEs Split into Artifacts)"]
+    end
+```
+
+---
+
+### 303.2 The Regular Simplex Geometry of Categorical Concepts
+When a model must represent a mutually exclusive categorical variable with $K$ states (e.g. month of the year $K=12$, or grammatical parts of speech), the optimal geometric configuration that minimizes mutual cross-talk interference while maximizing geometric margin is a **regular $(K-1)$-simplex**:
+
+1. **Equidistant Vertex Embedding:**
+   Let $\{\boldsymbol{v}_1, \boldsymbol{v}_2, \dots, \boldsymbol{v}_K\} \subset \mathbb{R}^d$ be unit vectors representing the $K$ categories. In a regular simplex:
+   $$\|\boldsymbol{v}_i\|_2 = 1 \quad \forall i, \qquad \langle \boldsymbol{v}_i, \boldsymbol{v}_j \rangle = -\frac{1}{K - 1} \quad \forall i \neq j$$
+   The pairwise angles between all categories are identical:
+   $$\theta_{i, j} = \arccos\left( -\frac{1}{K - 1} \right) > 90^\circ$$
+   For $K=3$ (equilateral triangle in $\mathbb{R}^2$), $\langle \boldsymbol{v}_i, \boldsymbol{v}_j \rangle = -\frac{1}{2}$ ($\theta = 120^\circ$). For $K=4$ (regular tetrahedron in $\mathbb{R}^3$), $\langle \boldsymbol{v}_i, \boldsymbol{v}_j \rangle = -\frac{1}{3}$ ($\theta \approx 109.5^\circ$).
+2. **Zero-Mean Centering:**
+   The centroid of the vertices lies exactly at the origin:
+   $$\sum_{i=1}^K \boldsymbol{v}_i = \mathbf{0}$$
+   This geometry inherently prevents the model from generating activation energy along an arbitrary bias axis when all categories are equally likely.
+
+---
+
+### 303.3 Why Standard Sparse Autoencoders Split Simplex Features
+Standard dictionary learning architectures enforce independent 1D ReLU or TopK activations:
+$$\hat{\boldsymbol{x}} = \sum_{j=1}^D \text{ReLU}(\boldsymbol{w}_j^T \boldsymbol{x} + b_j) \boldsymbol{d}_j$$
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Manifold as Model Residual State (Regular Tetrahedron Simplex)
+    participant StandardSAE as Standard 1D SAE (L1 / TopK Loss)
+    participant Failure as SAE Feature Splitting Pathology
+    participant SimplexSAE as Multi-Dimensional Simplex SAE
+
+    Manifold->>StandardSAE: Ingest Simplex State x = v_1 - v_2
+    StandardSAE->>Failure: SAE Lacks Multi-Dimensional Latent Unit
+    Failure->>Failure: Splits Single Concept into 12 Weak, Polysemantic 1D Atoms
+    Manifold->>SimplexSAE: Ingest State into Simplex-Constrained Codec
+    SimplexSAE->>SimplexSAE: Projects directly onto Barycentric Coordinates λ ∈ Δ^(K-1)
+    SimplexSAE-->>Manifold: Perfect Reconstruction with Zero Latent Splitting
+```
+
+- **Feature Splitting Artifacts:** When a regular simplex is projected onto independent 1D SAE dictionary elements, the autoencoder cannot represent the negative correlation $\langle \boldsymbol{v}_i, \boldsymbol{v}_j \rangle = -\frac{1}{K-1}$. It erroneously splits the single cohesive semantic concept into dozens of fragmented, polysemantic 1D feature directions.
+- **Barycentric Simplex SAEs:** To faithfully extract categorical manifolds, modern interpretability pipelines constrain latent activations to the **probability simplex** $\Delta^{K-1}$:
+  $$\boldsymbol{\lambda} \in \Delta^{K-1} \iff \sum_{i=1}^K \lambda_i = 1, \quad \lambda_i \ge 0$$
+  reconstructing representations via barycentric interpolation: $\boldsymbol{x} = \sum_{i=1}^K \lambda_i \boldsymbol{v}_i$.
+
+---
+
+### 303.4 Quantitative Benchmarks & Geometric Audits
+
+| Geometric Structure | Manifold Topology | Mutual Inner Product $\langle \boldsymbol{v}_i, \boldsymbol{v}_j \rangle$ | Standard SAE Recovery | Simplex-Constrained Recovery |
+| :--- | :--- | :--- | :--- | :--- |
+| **Independent Concepts (1D Rays)** | Uncorrelated Rays | $\approx 0$ (Almost-Orthogonal) | **$96.4\%$** | $92.1\%$ |
+| **Binary Antonyms (True/False)** | 1D Line antipodal | $-1.00$ | **$98.2\%$** | $97.8\%$ |
+| **Categorical Variable ($K=4$)** | Regular Tetrahedron | $-\frac{1}{3} \approx -0.333$ | $54.2\%$ (Splits into 8 atoms)| **$98.9\%$** |
+| **Circular Concepts (Clock / Days)** | 2D Ring / Helix | Continuous $\cos(\theta_i - \theta_j)$ | $41.8\%$ (High distortion) | **$97.4\%$ (Circular 2D SAE)** |
+
+**Key Takeaways for Steerability:**
+- Attempting to steer categorical or temporal behaviors by clamping single 1D feature directions induces geometric distortion.
+- Faithful steering of multi-state concepts requires **multi-dimensional rotation within the simplex subspace**, preserving barycentric coordinates $\boldsymbol{\lambda} \in \Delta^{K-1}$.
