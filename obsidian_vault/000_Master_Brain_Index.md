@@ -293,6 +293,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/red_teaming.md|Red Teaming]]
 - [[raw_research/snippets/reflexion_patterns.md|Reflexion Patterns]]
 - [[raw_research/snippets/refusal_direction_geometry.md|Refusal Direction Geometry]]
+- [[raw_research/snippets/refusal_geometry_closed_form_weight_ablation.md|Refusal Geometry Closed Form Weight Ablation]]
 - [[raw_research/snippets/repocoder_and_aider_repo_map.md|Repocoder And Aider Repo Map]]
 - [[raw_research/snippets/representation_circuit_breakers_zou.md|Representation Circuit Breakers Zou]]
 - [[raw_research/snippets/representation_engineering_repe.md|Representation Engineering Repe]]
