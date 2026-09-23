@@ -9573,3 +9573,73 @@ Evaluating the policy gradient with respect to $\theta$:
 **Empirical Performance (Llama-3 8B & Mistral 7B):**
 - **Unpaired Matching DPO:** Across AlpacaEval 2.0, MT-Bench, and GSM8K, KTO trained purely on unpaired binary data matches or slightly exceeds DPO trained on identical underlying paired preferences ($+1.2\%$ win rate on AlpacaEval 2.0).
 - **Extreme Class Imbalance Tolerance:** When trained on a heavily skewed distribution containing $90\%$ positive feedback and only $10\%$ negative feedback (mirroring real-world web telemetry), KTO maintains optimal gradient scaling, whereas standard RLHF collapse occurs due to lack of paired negative counterweights.
+
+---
+
+## 291. Circuit Breakers: Direct Representation Rerouting for Robust Alignment & Non-Linear Jailbreak Defense (Zou et al., NeurIPS 2024)
+
+### 291.1 The Fragility of Surface-Level Output Alignments
+Standard post-training alignment paradigms (RLHF via PPO, DPO, and KTO) operate purely at the **surface token level**: they train the model's policy distribution to assign higher probability to canned refusal strings (*"I cannot assist with that request"*) and lower probability to harmful completions.
+
+As demonstrated by mechanistic audits and Model Abliteration (Section 283), this surface-level objective creates a dangerous security illusion:
+1. **Intact Computational Circuits:** The model's internal capability to reason about, synthesize, and plan hazardous tasks (cyber-exploits, chemical weapons, toxic generation) remains fully intact within the intermediate transformer layers ($l \in [0.3 L, 0.7 L]$).
+2. **Linear Veneer Bypass:** Because refusal is mediated by a low-dimensional affine hyperplane, adversarial jailbreaks (e.g., GCG token optimization, Crescendo multi-turn manipulation, Many-Shot ICL priming, and token smuggling) easily perturb activations around the linear deflection boundary.
+3. **Abliteration Vulnerability:** A single closed-form rank-1 projection $W' = W(I - \hat{r} \hat{r}^\top)$ permanently disables surface refusal without degrading model intelligence.
+
+```mermaid
+flowchart TD
+    subgraph TraditionalFailure["Surface RLHF Refusal (Fragile Linear Veneer)"]
+        HarmInput["Adversarial Jailbreak / GCG Attack"] --> DeepLayers["Intermediate Layers (Hazardous Circuit Intact)"]
+        DeepLayers --> LinearGuard["Linear Refusal Boundary (Easily Bypassed / Ablated)"]
+        LinearGuard --> ExploitOut["Harmful Completion Emitted"]
+    end
+    subgraph CircuitBreakerPipeline["Circuit Breakers: Non-Linear Representation Rerouting (NeurIPS 2024)"]
+        HarmInput2["Adversarial Jailbreak / GCG Attack"] --> MidLayer["Critical Intervention Layers l ∈ L_break"]
+        MidLayer --> RerouteEngine["Representation Rerouting: Force h_l into Orthogonal Null Attractor"]
+        RerouteEngine --> BrokenCircuit["Internal Circuit Broken: Zero Downstream Coherence"]
+        BrokenCircuit --> SafeOutput["Zero Harmful Payload (Immune to Model Abliteration)"]
+    end
+```
+
+---
+
+### 291.2 Mathematical Architecture of Representation Rerouting
+**Circuit Breakers** (Zou et al., NeurIPS 2024) abandons token-level refusal training. Instead, it directly short-circuits the model's internal representation manifold when hazardous concepts are detected, mapping harmful activations into an uninformative orthogonal attractor space:
+
+1. **Intervention Layer Selection:**
+   Let $\mathcal{L}_{\text{break}} \subset \{1, \dots, L\}$ denote the set of critical middle layers (e.g., layers $14\text{--}22$ in a 32-layer transformer) where abstract semantic intentions are consolidated prior to lexical decoding.
+2. **The Reroute Objective ($\mathcal{L}_{\text{reroute}}$):**
+   For harmful prompts $x_{\text{harm}} \sim \mathcal{D}_{\text{harm}}$, the goal is to maximize the geometric divergence between the modified hidden states $h_l(x_{\text{harm}})$ and the unaligned baseline model's states $h_l^0(x_{\text{harm}})$. This is formalized by minimizing their cosine similarity:
+   $$\mathcal{L}_{\text{reroute}}(\theta) = \mathbb{E}_{x_{\text{harm}} \sim \mathcal{D}_{\text{harm}}} \left[ \frac{1}{|\mathcal{L}_{\text{break}}|} \sum_{l \in \mathcal{L}_{\text{break}}} \frac{\langle h_l(x_{\text{harm}}), \; h_l^0(x_{\text{harm}}) \rangle}{\|h_l(x_{\text{harm}})\|_2 \, \|h_l^0(x_{\text{harm}})\|_2} \right]$$
+   Minimizing this objective forces the model to rotate its internal activation vector orthogonal to (or in the opposite direction of) the hazardous reasoning trajectory, destroying the semantic coherence required to produce an exploit.
+3. **The Utility Retain Objective ($\mathcal{L}_{\text{retain}}$):**
+   To prevent representation collapse on harmless inputs, a strict conservation loss penalizes any latent drift on benign prompts $x_{\text{benign}} \sim \mathcal{D}_{\text{benign}}$:
+   $$\mathcal{L}_{\text{retain}}(\theta) = \mathbb{E}_{x_{\text{benign}} \sim \mathcal{D}_{\text{benign}}} \left[ \frac{1}{|\mathcal{L}_{\text{break}}|} \sum_{l \in \mathcal{L}_{\text{break}}} \frac{\|h_l(x_{\text{benign}}) - h_l^0(x_{\text{benign}})\|_2^2}{\|h_l^0(x_{\text{benign}})\|_2^2} + \alpha \, \mathcal{L}_{\text{NTP}}(x_{\text{benign}}) \right]$$
+   where $\mathcal{L}_{\text{NTP}}$ preserves next-token prediction perplexity on coding, mathematics, and reasoning corpora.
+4. **Unified Optimization Problem:**
+   $$\min_\theta \mathcal{L}_{\text{CB}}(\theta) = \mathcal{L}_{\text{reroute}}(\theta) + \lambda_{\text{retain}} \mathcal{L}_{\text{retain}}(\theta)$$
+   where $\lambda_{\text{retain}} \approx 2.0\text{--}5.0$ balances safety enforcement with intellectual fidelity.
+
+---
+
+### 291.3 Robustness to Attacks & Immunity to Model Abliteration
+```mermaid
+flowchart LR
+    subgraph RobustnessComparison["Attack Success Rate (ASR) Across Adversarial Suites"]
+        LlamaDefault["Llama-3-Instruct: 86.4% ASR under GCG + Many-Shot"]
+        DPO_Model["Standard DPO: 72.1% ASR under AutoDAN / PAIR"]
+        CircuitBreaker["Circuit Breakers: 1.8% ASR (Shatters Jailbreak Manifolds)"]
+    end
+```
+
+**Quantitative Results (Zou et al., NeurIPS 2024 / LLaMA-3 8B & Mistral 7B):**
+1. **Adversarial Jailbreak Immunity:**
+   - On automated white-box and transfer attacks (GCG, AutoDAN, PAIR, TAP), the Attack Success Rate (ASR) plunges from **$>85\%$ down to $<2.0\%$**.
+   - On Many-Shot In-Context Jailbreaks ($128+$ harmful few-shot demonstrations), Circuit Breakers maintains **$<3.5\%$ ASR**, whereas standard RLHF models collapse to $>90\%$ compliance.
+2. **Immunity to Model Abliteration:**
+   Because Circuit Breakers fundamentally reshapes the non-linear manifold of the transformer across multiple layers rather than establishing a rank-1 vector projection, **orthogonal weight abliteration fails to recover harmful capabilities** (ASR remains $<4\%$).
+3. **General Capability Conservation:**
+   - MMLU: $66.4\% \to 66.2\%$ ($-0.2\%$ delta).
+   - GSM8K: $77.8\% \to 77.5\%$ ($-0.3\%$ delta).
+   - HumanEval: $62.2\% \to 62.0\%$ ($-0.2\%$ delta).
+   Proving that dangerous generative capabilities can be surgically neutralized at the representation layer without degrading the model's core intelligence.
