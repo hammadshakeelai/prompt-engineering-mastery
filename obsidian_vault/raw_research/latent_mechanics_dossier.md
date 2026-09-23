@@ -9011,3 +9011,79 @@ flowchart LR
 1. **The Fragility Paradox:** Post-training alignment does not destroy or unlearn latent dangerous capabilities (e.g. detailed knowledge of chemical synthesis or exploit creation). Alignment merely superimposes a thin, one-dimensional linear deflection shield.
 2. **Subspace Orthogonality to General Intelligence:** The refusal direction $\hat{r}$ has near-zero cosine similarity with linguistic, syntactic, and reasoning subspaces ($\langle \hat{r}, v_{\text{reasoning}} \rangle \approx 0$). Consequently, amputating $\hat{r}$ from model weights leaves general reasoning, coding, and mathematical capabilities completely unperturbed ($<0.3\%$ delta).
 3. **Defense Countermeasures:** Standard fine-tuning alignment is fundamentally insufficient for high-assurance safety. Robust safety requires non-linear representation engineering, such as **Circuit Breakers** (Zou et al., 2024; rerouting hazardous representations to an orthogonal garbage attractor manifold) or internal representation pruning.
+
+---
+
+## 284. InfLLM: Training-Free Million-Token Context via Dynamic Memory Units and Block-Level KV Paging (NeurIPS 2024)
+
+### 284.1 The Memory Horizon Amnesia of Attention Sinks
+StreamingLLM demonstrated that autoregressive transformers allocate disproportionate attention mass to the initial $k \approx 4$ tokens of a prompt—termed **attention sinks**—regardless of their semantic content. Preserving these sink tokens alongside a local sliding window of $W$ tokens maintains bounded softmax denominators and prevents perplexity explosion over infinite generation:
+$$\text{Memory}_{\text{StreamingLLM}} = \{x_1, \dots, x_4\} \cup \{x_{t-W+1}, \dots, x_t\}$$
+
+**The Fatal Flaw of Pure Sinks (Contextual Amnesia):**
+While StreamingLLM prevents numerical collapse on continuous language modeling, it permanently purges all intermediate historical tokens ($x_5$ through $x_{t-W}$). Consequently, it is structurally incapable of:
+1. **Associative Recall & Needle-in-a-Haystack:** If a critical definition, system constraint, or database record is introduced $50\text{K}$ tokens prior, its Key-Value tensors are gone. Retrieval accuracy collapses to $0\%$.
+2. **Multi-Hop Agentic Reasoning:** Long-horizon code refactoring or multi-turn conversational agents cannot consult decisions made earlier in the session.
+3. **Training-Free Context Expansion:** Extending context via RoPE scaling (e.g. YaRN, LongRoPE) requires fine-tuning on expensive long datasets, which often introduces short-context quality degradation.
+
+```mermaid
+flowchart TD
+    subgraph StreamingAmnesia["StreamingLLM Architecture (Amnesia Pathology)"]
+        Sinks["Sink Tokens (1..4)"] --- Middle["Middle 99% of History Permanently Evicted (Zero Recall)"]
+        Middle --- Sliding["Sliding Window (t-W..t)"]
+    end
+    subgraph InfLLMArchitecture["InfLLM Dynamic Memory Units (NeurIPS 2024)"]
+        Sinks_HBM["Attention Sinks (Fixed in GPU HBM)"]
+        Window_HBM["Local Sliding Window (Fixed in GPU HBM)"]
+        HostUnits["Distant Context: Chunked Memory Units U_i (Stored in Host DRAM)"]
+        Query["Decoding Step Query q_t"] --> RepMatching["Score q_t against Block Centroids k_rep,i"]
+        RepMatching --> TopK["Select Top-k Relevant Blocks"]
+        TopK --> PCIe["Asynchronous PCIe 5.0 Stream into GPU Buffer"]
+        PCIe --> FusedAttn["Attention across Sinks + Window + Dynamically Paged Units"]
+    end
+```
+
+---
+
+### 284.2 Mathematical Formulation of InfLLM
+**InfLLM** (Xiao et al., NeurIPS 2024) proves that pre-trained LLMs possess intrinsic long-context retrieval capabilities without requiring fine-tuning or RoPE modification, provided distant Key-Value caches are partitioned into **coarse-grained memory units** and fetched on demand:
+
+1. **Memory Unit Discretization:**
+   The non-local sequence history (excluding initial sinks $\mathcal{S}$ and local window $\mathcal{W}$) is partitioned into contiguous blocks of length $B$ (typically $B = 64$ or $128$ tokens):
+   $$\mathcal{U}_i = \left\{ (k_j, v_j) \mid j \in [i \cdot B, (i+1)B - 1] \right\} \quad \text{for } i \in \{1, \dots, N_{\text{units}}\}$$
+   All units $\{\mathcal{U}_i\}$ are offloaded to host CPU DRAM, consuming negligible GPU VRAM.
+2. **Block Representative Key Formulation:**
+   To determine whether a distant unit contains tokens relevant to the current query $q_t \in \mathbb{R}^{d_k}$ without performing full attention over all distant tokens, each block is summarized by a representative vector $k_{\text{rep}, i}$. InfLLM uses an element-wise maximum or centroid formulation:
+   $$k_{\text{rep}, i} = \frac{1}{B} \sum_{j \in \mathcal{U}_i} k_j \in \mathbb{R}^{d_k}$$
+3. **Block-Level Relevance Scoring:**
+   At decoding step $t$, the inner product between query $q_t$ and the representative keys is evaluated:
+   $$r_i = \frac{q_t^\top k_{\text{rep}, i}}{\sqrt{d_k}}$$
+4. **Dynamic Top-$K$ Paging:**
+   The top-$K_{\text{page}}$ units with the highest relevance scores are selected:
+   $$\mathcal{I}_{\text{active}} = \text{TopK}\left( \{r_i\}_{i=1}^{N_{\text{units}}}, \; K_{\text{page}} \right)$$
+   The selected blocks are dynamically loaded into a pre-allocated GPU circular buffer via asynchronous PCIe DMA transfers.
+5. **Fused Composite Attention:**
+   The attention distribution is computed exclusively over the union of active memory pools:
+   $$\mathcal{K}_{\text{active}} = \mathcal{S} \cup \mathcal{W} \cup \left( \bigcup_{i \in \mathcal{I}_{\text{active}}} \mathcal{U}_i \right)$$
+   $$A_t = \text{Softmax}\left( \frac{q_t K_{\text{active}}^\top}{\sqrt{d_k}} \right) V_{\text{active}}$$
+   Since $|\mathcal{K}_{\text{active}}| = |\mathcal{S}| + |\mathcal{W}| + K_{\text{page}} \cdot B$ is bounded by a fixed budget (e.g. $4 + 2048 + 8 \times 64 = 2564$ tokens), **GPU attention compute and KV cache memory remain strictly $O(1)$ constant regardless of whether the context is $10\text{K}$ or $1\text{,}000\text{,}000$ tokens**.
+
+---
+
+### 284.3 Empirical Validation & Long-Context Scaling
+```mermaid
+flowchart LR
+    subgraph ContextScaling["Passkey Retrieval Accuracy Across Context Window"]
+        S_LLM["StreamingLLM: 0% Retrieval Accuracy beyond 4K Tokens"]
+        FullAttn["Full Dense Attention: OOM (Out of Memory) at 64K on 24GB GPU"]
+        InfLLM_Res["InfLLM: >92% Retrieval Accuracy up to 1,024,000 Tokens on 24GB GPU"]
+    end
+```
+
+**Quantitative Results on Llama-3 8B and Mistral 7B (Xiao et al., NeurIPS 2024):**
+- **Maximum Context Reach:** Scales off-the-shelf models trained on $8\text{K}$ or $32\text{K}$ contexts to **$1\text{,}024\text{,}000$ tokens** on a single consumer $24\text{ GB}$ RTX 4090 / A10G GPU.
+- **Needle-in-a-Haystack & Passkey Retrieval:**
+  - StreamingLLM: $0.0\%$ retrieval success rate.
+  - H2O (Heavy Hitter Oracle): $24.6\%$ retrieval success rate (due to irreversible eviction).
+  - **InfLLM:** **$94.8\%$ retrieval success rate** across the full $1\text{M}$ sequence.
+- **Decoding Latency:** Overlapping PCIe block prefetching with GPU GEMM execution preserves **$>85\%$ of native generation speed**, requiring only $2.1\,\text{ms}$ additional overhead per decoding step.
