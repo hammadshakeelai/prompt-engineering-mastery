@@ -9928,3 +9928,116 @@ flowchart LR
 **Quantitative Results (Open LLM Leaderboard & MergeKit Ecosystem):**
 - **Elimination of Interference:** DARE + TIES merges $8$ distinct fine-tuned checkpoints (Math, Code, Roleplay, Legal, Medical, Refusal) with **zero performance degradation**, outperforming individual models on multi-disciplinary evaluations.
 - **Compute Efficiency:** Merging executes in **$<3$ minutes on CPU/RAM** for a 70B parameter model, completely bypassing millions of dollars in continuous pre-training and multi-task fine-tuning costs.
+
+---
+
+## 295. The Privileged Basis Dilemma in Transformer Residual Streams: Rotational Invariance, Non-Linear Symmetry Breaking & Superposition (Elhage et al., Anthropic; Engels et al., 2024)
+
+### 295.1 The Mathematical Formulation of Rotational Invariance
+In Transformer architectures, the residual stream acts as a central communication bus across layers:
+$$x_{l+1} = x_l + f_{\text{attn}}^l(\text{Norm}(x_l)) + f_{\text{mlp}}^l(\text{Norm}(x_l))$$
+where $x_l \in \mathbb{R}^d$ is the latent representation at layer $l$. A fundamental question in mechanistic interpretability is whether the coordinate axes of $\mathbb{R}^d$ carry privileged semantic meaning, or whether the residual stream is **rotationally invariant** (i.e. invariant under transformations by the orthogonal group $O(d)$).
+
+Let $Q \in O(d)$ be an orthogonal transformation matrix satisfying $Q^T Q = Q Q^T = I_d$. An architecture or component $F: \mathbb{R}^d \to \mathbb{R}^d$ is rotationally equivariant if applying $Q$ to the input state rotates the output by the identical transformation:
+$$F(Q x) = Q F(x)$$
+
+```mermaid
+flowchart TD
+    subgraph SymmetryBreak["Rotational Symmetry vs Privileged Basis in Transformers"]
+        Input["Residual Stream State x ∈ R^d"] --> MHA["Multi-Head Attention Block"]
+        Input --> MLP["Multi-Layer Perceptron (MLP) Block"]
+        Input --> Norm["RMSNorm / LayerNorm"]
+        MHA -->|Rotational Equivariance| Equiv["Invariant under Q ∈ O(d): Q W_O W_V Q^T"]
+        MLP -->|Elementwise Non-Linearity| NonEquiv["Breaks Invariance: σ(Q z) ≠ Q σ(z)"]
+        Norm -->|Learned Affine Scaling γ| SoftBias["Learned Scales γ_i Impose Soft Coordinate Axis Alignment"]
+        NonEquiv & SoftBias --> Superposition["Overcomplete Superposition: Features Form Non-Orthogonal Frame"]
+    end
+```
+
+---
+
+### 295.2 Attention Rotational Equivariance Proof
+Consider a standard Multi-Head Attention (MHA) block with $H$ heads and dimension $d_k = d / H$. For head $h$, the query, key, value, and output projection matrices are $W_Q^h, W_K^h, W_V^h \in \mathbb{R}^{d_k \times d}$ and $W_O^h \in \mathbb{R}^{d \times d_k}$.
+
+Under an orthogonal transformation of the residual stream $\tilde{x} = Q x$:
+1. We define transformed projection matrices:
+   $$\tilde{W}_Q^h = W_Q^h Q^T, \quad \tilde{W}_K^h = W_K^h Q^T, \quad \tilde{W}_V^h = W_V^h Q^T, \quad \tilde{W}_O^h = Q W_O^h$$
+2. The attention logits between tokens $i$ and $j$ remain strictly invariant:
+   $$A_{i, j}^h = \frac{1}{\sqrt{d_k}} (\tilde{W}_Q^h \tilde{x}_i)^T (\tilde{W}_K^h \tilde{x}_j) = \frac{1}{\sqrt{d_k}} (W_Q^h Q^T Q x_i)^T (W_K^h Q^T Q x_j) = \frac{1}{\sqrt{d_k}} (W_Q^h x_i)^T (W_K^h x_j)$$
+   since $Q^T Q = I_d$.
+3. The concatenated value output yields:
+   $$\tilde{f}_{\text{attn}}(\tilde{x}) = \sum_{h=1}^H \tilde{W}_O^h \sum_j \text{softmax}(A_{i, j}^h) \tilde{W}_V^h \tilde{x}_j = \sum_{h=1}^H Q W_O^h \sum_j \text{softmax}(A_{i, j}^h) W_V^h Q^T Q x_j = Q f_{\text{attn}}(x)$$
+
+**Theorem:** *In the absence of MLPs and coordinate-aligned normalization, an Attention-Only Transformer has no privileged basis in its residual stream; any rotated coordinate system represents an identically expressive model with equal training dynamics.*
+
+---
+
+### 295.3 Non-Linear Symmetry Breaking in MLP Blocks
+The Multi-Layer Perceptron (MLP) block fundamentally breaks rotational symmetry through elementwise non-linear activation functions. For an intermediate hidden dimension $d_{\text{mlp}} = 4d$ (or $d_{\text{mlp}} = \frac{8}{3}d$ in SwiGLU architectures):
+$$f_{\text{mlp}}(x) = W_{\text{down}} \, \sigma(W_{\text{gate}} x) \odot (W_{\text{up}} x)$$
+where $\sigma: \mathbb{R} \to \mathbb{R}$ is applied coordinate-wise (e.g. GELU, SiLU, ReLU).
+
+1. **Non-Equivariance of Activation Functions:**
+   For a generic orthogonal matrix $Q \in O(d)$ and vector $z \in \mathbb{R}^d$:
+   $$\sigma(Q z) \neq Q \, \sigma(z)$$
+   The non-linearity operates independently along each standard basis vector $e_i = (0, \dots, 1, \dots, 0)^T$.
+2. **Privileged Hidden Neurons:**
+   Inside the MLP hidden layer, individual neurons correspond to meaningful, monosemantic or polysemantic concepts because the basis is fixed by the non-linearity.
+3. **Residual Stream Leakage:**
+   When the MLP down-projection $W_{\text{down}} \in \mathbb{R}^{d \times d_{\text{mlp}}}$ maps activations back to the residual stream:
+   $$f_{\text{mlp}}(x) = \sum_{j=1}^{d_{\text{mlp}}} [W_{\text{down}}]_{:, j} \cdot \sigma([W_{\text{gate}} x]_j)$$
+   it adds features along explicit directional vectors $[W_{\text{down}}]_{:, j} \in \mathbb{R}^d$. While the MLP layer itself has a privileged basis, does this force the residual stream into a privileged coordinate basis?
+
+---
+
+### 295.4 RMSNorm, LayerNorm & Soft Coordinate Anchoring
+Modern LLMs apply RMSNorm or LayerNorm prior to each sub-layer:
+$$\text{RMSNorm}(x) = \frac{x}{\sqrt{\frac{1}{d} \sum_{k=1}^d x_k^2 + \epsilon}} \odot \gamma$$
+where $\gamma \in \mathbb{R}^d$ is a learned per-channel gain parameter.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Stream as Residual Stream (x ∈ R^d)
+    participant Norm as RMSNorm (Scale γ ∈ R^d)
+    participant MLP as SwiGLU MLP (Privileged Coordinate Basis)
+    participant StreamOut as Updated Stream (x + Δx)
+
+    Stream->>Norm: Pass State Vector x
+    Norm->>Norm: Elementwise Scaling by Learned Channel Gains γ_i
+    Note over Norm: Coordinates with Large γ_i Have Amplified Impact
+    Norm->>MLP: Normalized State x_norm
+    MLP->>MLP: Elementwise Non-Linearity σ(z) Breaks O(d) Invariance
+    MLP->>StreamOut: Inject Directional Output Δx = W_down h
+    StreamOut->>Stream: Add to Residual Bus (Preserves Superposition Frame)
+```
+
+- **Isotropic RMS Calculation:** The denominator $\|x\|_2 / \sqrt{d}$ is rotationally invariant, since $\|Q x\|_2 = \|x\|_2$.
+- **Coordinate Anisotropy via $\gamma$:** The elementwise multiplication $\odot \gamma$ scales each coordinate independently. Because $\gamma_i$ varies across dimensions (empirical variance $\sigma^2(\gamma) \in [0.15, 0.45]$ in Llama-3), it imposes a soft anisotropic prior, penalizing rotations that misalign high-variance directions with high-$\gamma_i$ axes.
+
+---
+
+### 295.5 The Overcomplete Superposition Theorem
+Although MLPs and LayerNorm induce soft directional preferences, empirical interpretability shows that the residual stream does **not** allocate one neuron per concept. Instead, it operates in **overcomplete superposition** (Elhage et al., 2022).
+
+1. **Capacity via Johnson-Lindenstrauss:**
+   In a $d$-dimensional space, the maximum number of mutually orthogonal vectors is exactly $d$. However, the number of almost-orthogonal vectors with pairwise inner products $|\langle v_i, v_j \rangle| \le \epsilon$ scales exponentially:
+   $$M \ge \exp\left( \frac{\epsilon^2 d}{2} \right) \gg d$$
+2. **Linear Representation Hypothesis:**
+   Features $f_i \ge 0$ are represented as 1D unit directions $v_i \in \mathbb{S}^{d-1}$. The residual state is a linear superposition:
+   $$x = \sum_{i=1}^M f_i v_i$$
+   The readout of feature $i$ incurs cross-talk interference from other active features:
+   $$\hat{f}_i = v_i^T x = f_i + \sum_{j \neq i} f_j \langle v_i, v_j \rangle$$
+   Because features are sparse ($P(f_j > 0) \ll 1$), the interference term $\sum_{j \neq i} f_j \langle v_i, v_j \rangle$ is typically near zero.
+3. **Why Sparse Autoencoders (SAEs) Are Necessary:**
+   Because features lie along arbitrary directions $\{v_i\}$ rather than standard basis vectors $e_k$, inspecting raw residual stream coordinates yields uninterpretable polysemantic activations. SAEs with dictionary dimension $D_{\text{sae}} = 32d$ successfully unmix the superposed frame $\{v_i\}_{i=1}^M$ into isolated, human-interpretable features.
+
+---
+
+### 295.6 Mechanistic Summary & Benchmark Audits
+| Component | Rotational Invariance $O(d)$ | Basis Property | Feature Organization |
+| :--- | :--- | :--- | :--- |
+| **Attention-Only Transformer** | **Strictly Invariant** | Fully unprivileged | Arbitrary continuous rotations |
+| **Transformer MLP Blocks** | **Broken** (Elementwise $\sigma$) | **Strictly Privileged** | Coordinate-aligned internal neurons |
+| **RMSNorm / LayerNorm** | **Softly Broken** (Channel $\gamma$) | **Soft Coordinate Bias** | Anisotropic coordinate scaling |
+| **Residual Stream Overall** | **Functionally Superposed** | **Non-Privileged Frame** | Overcomplete non-orthogonal directions ($M \gg d$) |
