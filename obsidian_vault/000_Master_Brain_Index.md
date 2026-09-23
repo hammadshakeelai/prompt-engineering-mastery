@@ -425,6 +425,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/toolformer_gorilla.md|Toolformer Gorilla]]
 - [[raw_research/snippets/topk_sparse_autoencoders.md|Topk Sparse Autoencoders]]
 - [[raw_research/snippets/transcoder_networks_mlp_circuit_tracing.md|Transcoder Networks Mlp Circuit Tracing]]
+- [[raw_research/snippets/transcoders_mechanistic_mlp_linearization.md|Transcoders Mechanistic Mlp Linearization]]
 - [[raw_research/snippets/transcoders_mlp_feature_circuits.md|Transcoders Mlp Feature Circuits]]
 - [[raw_research/snippets/transformerlens_activation_patching.md|Transformerlens Activation Patching]]
 - [[raw_research/snippets/triforce_hierarchical_speculative_decoding.md|Triforce Hierarchical Speculative Decoding]]
