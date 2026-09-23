@@ -7301,5 +7301,79 @@ flowchart TD
    - **Acceptance Uplift:** Grammar synchronization elevates empirical acceptance rate $\alpha$ from $<30\%$ to $>85\%$ on structured JSON generation benchmarks.
    - **End-to-End Latency:** Combined with deterministic structural bypass, delivers up to **$3.5\times\text{--}4.8\times$ wall-clock speedup** over unconstrained autoregressive decoding across LLaMA-3 and Qwen architectures.
 
+---
+
+## 256. Disentangling Length Bias in Preference Optimization: Length-Normalized DPO & Margin Alignment
+
+### 256.1 Sequence vs. Per-Token Reward Accumulation Topology
+```mermaid
+flowchart TD
+    subgraph VanillaDPO["Standard DPO (Implicit Reward Summation / Verbosity Hack)"]
+        IMPLICIT["Implicit Reward: r_θ(x, y) = β · \sum_{t=1}^{|y|} \log \frac{π_θ(y_t | x, y_{<t})}{π_ref(y_t | x, y_{<t})}"]
+        IMPLICIT --> ACCUM["Cumulative Sum Over Sequence Length |y|"]
+        ACCUM --> BIAS["Longer Sequences Artificially Inflate Reward: r(x, y_long) > r(x, y_short)"]
+        BIAS --> COLLAPSE["Raw Win Rate High on AlpacaEval 2.0, but Length-Controlled (LC) Win Rate Collapses"]
+    end
+    subgraph LengthNorm["Length-Normalized Alignment (Park et al. 2024 / SimPO)"]
+        NORM_R["Length-Normalized Reward: \bar{r}_θ(x, y) = \frac{β}{|y|} \log \frac{π_θ(y|x)}{π_ref(y|x)}"]
+        NORM_R --> TARGET_MARGIN["Explicit Target Margin γ: P(y_w ≻ y_l) = σ(\bar{r}_w - \bar{r}_l - γ)"]
+        TARGET_MARGIN --> PARETO["Disentangled Quality: Eliminates Verbosity Bloat & Boosts LC Win Rate (+5-8%)"]
+    end
+```
+
+### 256.2 Mathematical Formulation of Length Bias & Normalization
+1. **The Linear Length Exploit in Direct Preference Optimization:**
+   In standard DPO, the implicit reward is defined at the sequence level as an unnormalized sum of token log-probabilities:
+   $$r_{\text{DPO}}(x, y) = \beta \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)} = \beta \sum_{t=1}^{|y|} \log \frac{\pi_\theta(y_t \mid x, y_{<t})}{\pi_{\text{ref}}(y_t \mid x, y_{<t})}$$
+   When a response $y$ maintains a modest per-token advantage $\epsilon = \mathbb{E}\left[\log \frac{\pi_\theta}{\pi_{\text{ref}}}\right] > 0$, the total accumulated reward scales linearly with output length:
+   $$r_{\text{DPO}}(x, y) \approx \beta \cdot |y| \cdot \epsilon$$
+   Consequently, the policy learns to game the Bradley-Terry objective by inflating token verbosity ("verbosity hacking") rather than improving reasoning precision or conciseness.
+2. **Length-Controlled Evaluation Discrepancy:**
+   On benchmarks like AlpacaEval 2.0, raw win rates reward lengthy responses due to GPT-4-as-a-judge verbosity bias. However, under Length-Controlled (LC) win rate evaluations—where length disparities are statistically controlled via logistic regression—unnormalized DPO drops precipitously:
+   $$\text{WinRate}_{\text{raw}} - \text{WinRate}_{\text{LC}} \gg 10\%$$
+3. **Length-Normalized Reward & Target Margin Objective:**
+   Park et al. (2024) and Meng et al. (SimPO, 2024) normalize the implicit reward by sequence length $|y|^\alpha$ ($\alpha \approx 1$):
+   $$\bar{r}_\theta(x, y) = \frac{\beta}{|y|} \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)}$$
+   $$\mathcal{L}_{\text{LN-DPO}}(\theta) = -\mathbb{E}_{(x, y_w, y_l)}\left[\log \sigma\left(\bar{r}_\theta(x, y_w) - \bar{r}_\theta(x, y_l) - \gamma\right)\right]$$
+   where $\gamma > 0$ represents a target margin enforcing that winning responses achieve a strictly bounded average token-level quality superiority over losing candidates.
+4. **Empirical Results:**
+   Length-normalized optimization eliminates extraneous padding tokens, reduces inference generation latency by $20\%\text{--}35\%$, and drives significant improvements on Length-Controlled AlpacaEval 2.0 (+5.6%) and MT-Bench while maintaining concise, factually dense outputs.
+
+---
+
+## 257. WARM & WARP: Weight-Averaged Reward Models & Policies for Alignment
+
+### 257.1 Weight-Space Linear Mode Connectivity Topology
+```mermaid
+flowchart TD
+    subgraph WARM["Weight-Averaged Reward Models (WARM; Ramé et al., Google DeepMind 2024)"]
+        BASE_RM["Shared Pre-trained Base Model θ_0"] --> T1["Fine-tune Split 1: θ_{RM, 1}"]
+        BASE_RM --> T2["Fine-tune Split 2: θ_{RM, 2}"]
+        BASE_RM --> TM["Fine-tune Split M: θ_{RM, M}"]
+        T1 & T2 & TM --> AVG["Direct Weight Averaging: θ_WARM = \frac{1}{M} \sum_{m=1}^M θ_{RM, m}"]
+        AVG --> SMOOTH["Smooths Reward Loss Landscape & Cancels Out Spurious Correlates (Zero Extra Inference Latency)"]
+    end
+    subgraph WARP["Weight-Averaged Reward-trained Policies (WARP)"]
+        POLICY_0["Base Aligned Policy π_0"] --> RL_RUNS["Parallel / Iterative RL Checkpoints {π_1, ..., π_K}"]
+        RL_RUNS --> SLERP["Spherical Linear Interpolation (SLERP) / EMA Weight Merge"]
+        SLERP --> PARETO_OPT["Pushes Policy Beyond Single-Run RLHF Pareto Frontier"]
+    end
+```
+
+### 257.2 Mathematical Mechanics of WARM & WARP
+1. **Linear Mode Connectivity in Reward Space:** Ramé et al. (2024) prove that fine-tuning multiple reward models from the same pre-trained initialization $\theta_0$ across varied data splits or hyperparameter seeds yields checkpoints lying in the same low-loss basin. Unlike ensemble inference—which scales memory and computation by $M\times$ during training rollouts—WARM averages parameter tensors directly:
+   $$\theta_{\text{WARM}} = \frac{1}{M} \sum_{m=1}^M \theta_m, \quad \theta_m = \theta_0 + \Delta \theta_m$$
+2. **Mitigation of Goodhart's Law / Reward Hacking:**
+   Spurious correlations and noise idiosyncratic to individual training splits average toward zero:
+   $$\mathbb{E}\left[\epsilon_{\text{WARM}}\right] = \frac{1}{M} \sum_{m=1}^M \epsilon_m \to 0 \quad \text{as } M \to \infty$$
+   This prevents policy gradient optimization (PPO/GRPO) from exploiting blind spots in the reward function, significantly delaying the onset of the Goodhart collapse curve ($\sqrt{D_{\text{KL}}}$ plateau).
+3. **Weight-Averaged Reward-Trained Policies (WARP):**
+   WARP extends weight averaging directly to policy updates across iterative reinforcement learning stages. Policy weights are merged using Spherical Linear Interpolation (SLERP) or linear exponential moving averages (EMA):
+   $$\theta_{t+1} = \text{SLERP}\left(\theta_t, \theta_{\text{new}}, \alpha\right) = \frac{\sin((1 - \alpha)\Omega)}{\sin \Omega} \theta_t + \frac{\sin(\alpha \Omega)}{\sin \Omega} \theta_{\text{new}}$$
+   where $\cos \Omega = \frac{\langle \theta_t, \theta_{\text{new}} \rangle}{\|\theta_t\| \|\theta_{\text{new}}\|}$.
+4. **Empirical Superiority:**
+   - **WARM Impact:** Improves reward generalization on Anthropic-HH and increases downstream RLHF policy win rate by up to $15\%$ compared to single reward models.
+   - **WARP Impact:** Pushes policies past the classical RLHF Pareto frontier on AlpacaEval 2.0, achieving state-of-the-art win rates without degrading validation perplexity or incurring catastrophic KL divergence collapse.
+
 
 
