@@ -9315,3 +9315,84 @@ flowchart LR
 - **Circuit Faithfulness:** On the canonical Indirect Object Identification (IOI) benchmark, EAP-IG achieves **$96.8\%$ circuit faithfulness** (matching the true causal circuit recovered by exhaustive manual patching), whereas standard EAP plateaus at $54.2\%$ because it fails to capture saturated S-Inhibition attention heads.
 - **Compute Efficiency:** Evaluates the entire $10^7$-edge circuit across a 70B parameter model in **$42$ seconds** on an 8xH100 node, delivering a **$>1500\times$ speedup** over exhaustive patching.
 - **Circuit Sparsity:** Prunes away **$>99.2\%$ of model components**, isolating a clean, highly interpretable sub-circuit of only $28$ attention heads that account for the complete end-to-end task capability.
+
+---
+
+## 288. KIVI: 2-Bit Asymmetric KV Cache Quantization via Channel-Token Duality & SRAM Dequantization (Liu et al., 2024)
+
+### 288.1 The Failure of Symmetric Low-Bit KV Cache Quantization
+During long-context autoregressive generation (e.g., $32\text{K}\text{--}128\text{K}$ tokens), the Key-Value (KV) cache memory footprint vastly outgrows the static model parameter weights:
+$$\text{Memory}_{\text{KV}} = 2 \times L_{\text{layers}} \times N_{\text{heads}} \times d_{\text{head}} \times T \times b_{\text{bits}}$$
+For Llama-3 70B ($L=80, N_{\text{kv}}=8, d_h=128$), an FP16 context of $128\text{K}$ tokens consumes **$52.4\,\text{GB}$ per single user stream**, requiring aggressive quantization to prevent GPU Out-of-Memory (OOM) failures.
+
+However, conventional uniform quantization schemes treat Key and Value matrices symmetrically (applying standard per-token or per-tensor INT4/INT2 quantization). When pushed to **2-bit quantization**, symmetric methods suffer catastrophic degradation:
+- Symmetrically quantized models lose over $50\%$ accuracy on LongBench tasks.
+- Attention entropy collapses, producing infinite repetitive loops.
+
+```mermaid
+flowchart TD
+    subgraph GeometricAsymmetry["Key vs Value Activation Distribution Asymmetry"]
+        Key["Key Tensors K ∈ R^{T x d_k}"] --> KeyOutliers["Extreme Persistent Outliers Along Channel Dimension c"]
+        Value["Value Tensors V ∈ R^{T x d_v}"] --> ValueOutliers["Continuous Variation Along Token Dimension t (No Channel Spikes)"]
+    end
+    subgraph KIVI_Solution["KIVI: 2-Bit Asymmetric Duality (Liu et al., 2024)"]
+        KeyOutliers --> PerChannel["Keys Quantized PER-CHANNEL Across Tokens (Tames Persistent Outliers)"]
+        ValueOutliers --> PerToken["Values Quantized PER-TOKEN Across Hidden Dimension (Preserves State Density)"]
+        PerChannel & PerToken --> SRAM["Fused Dequantization in GPU SRAM during FlashAttention GEMM"]
+        SRAM --> Parity["Lossless 2-Bit Performance: 4x Memory Reduction & 3.47x Throughput Gain"]
+    end
+```
+
+---
+
+### 288.2 The Mathematical Mechanics of Asymmetric Channel-Token Duality
+KIVI (Liu et al., 2024) identifies an empirical geometric duality between Key and Value tensors:
+
+1. **The Key Geometry (Channel Outliers):**
+   In attention computation $A = \text{Softmax}(Q K^\top / \sqrt{d})$, specific feature channels in $K$ act as positional coordinates or syntactic anchor dimensions. Across sequence length $T$, these outlier channels maintain high magnitude across *all* tokens ($|K_{t, c}| \gg \sigma$).
+   - If quantized per-token (across channels), the outlier channel blows up the dynamic range $\Delta_t$ for that token, crushing all other channels into zero.
+   - **KIVI Solution (Per-Channel Quantization):** By grouping tokens into blocks of size $B$ and quantizing **per-channel across the token axis**, the outlier channel is scaled by its own dedicated channel scale $\Delta_c^{(K)}$, completely preserving the precision of all remaining channels:
+     $$\Delta_c^{(K)} = \frac{\max_{t \in B} K_{t, c} - \min_{t \in B} K_{t, c}}{2^b - 1}, \quad Z_c^{(K)} = \text{round}\left( -\frac{\min_{t \in B} K_{t, c}}{\Delta_c^{(K)}} \right)$$
+     $$\bar{K}_{t, c} = \text{clip}\left( \text{round}\left( \frac{K_{t, c}}{\Delta_c^{(K)}} \right) + Z_c^{(K)}, \; 0, \; 2^b - 1 \right)$$
+2. **The Value Geometry (Token Vectors):**
+   Unlike Keys, Value vectors $V$ participate in the weighted sum post-softmax: $O_i = \sum_j A_{i, j} V_j$. Values exhibit smooth, spherically symmetric distributions across channels, but their norms fluctuate significantly from token to token depending on lexical content.
+   - If quantized per-channel across tokens, inter-token variance causes scaling distortion.
+   - **KIVI Solution (Per-Token Quantization):** Values are quantized **per-token across the hidden dimension $d_v$**:
+     $$\Delta_t^{(V)} = \frac{\max_c V_{t, c} - \min_c V_{t, c}}{2^b - 1}, \quad Z_t^{(V)} = \text{round}\left( -\frac{\min_c V_{t, c}}{\Delta_t^{(V)}} \right)$$
+     $$\bar{V}_{t, c} = \text{clip}\left( \text{round}\left( \frac{V_{t, c}}{\Delta_t^{(V)}} \right) + Z_t^{(V)}, \; 0, \; 2^b - 1 \right)$$
+
+---
+
+### 288.3 Streaming Residual Buffer & Fused SRAM Kernels
+To eliminate quantization noise on the most sensitive, immediate context, KIVI divides the temporal sequence into two functional pools:
+
+```mermaid
+flowchart LR
+    subgraph SequencePools["KIVI Memory Organization"]
+        Recent["Recent Tokens (t - L_buf .. t): Full Precision FP16 Residual Buffer"]
+        Distant["Past Tokens (1 .. t - L_buf): 2-Bit Quantized Blocks (Block Size B = 32)"]
+    end
+    Recent & Distant --> FusedKernel["Fused Attention Kernel: Dequantize 2-bit -> FP16 Inside Tensor Core SRAM"]
+```
+
+1. **Streaming Residual Buffer:**
+   The most recent $L_{\text{buffer}} = 64\text{--}128$ tokens are retained in native FP16. As generation progresses past block boundary $B$, historical chunks are asynchronously packed into 2-bit integers.
+2. **Fused Dequantization in GPU SRAM:**
+   Standard quantization engines incur memory-bandwidth bottlenecks by dequantizing 2-bit tensors back into FP16 inside high-bandwidth memory (HBM). KIVI loads packed 2-bit integers directly into on-chip **SRAM (Shared Memory)**, dequantizes on-the-fly using bit-shift ALU instructions, and feeds FP16 registers directly into Tensor Core matrix multiplication units without writing intermediate floats to VRAM.
+
+---
+
+### 288.4 Empirical Benchmarks & Hardware Efficiency
+```mermaid
+flowchart LR
+    subgraph ServingThroughput["Peak Serving Throughput (Llama-2 13B at 32K Context)"]
+        FP16["FP16 Baseline: 1.0x (OOM at Batch Size > 4)"]
+        INT4["INT4 Baseline: 1.8x Throughput"]
+        KIVI_2Bit["KIVI 2-Bit: 3.47x Throughput (Supports 4x Larger Batch Size)"]
+    end
+```
+
+**Quantitative Results (Liu et al., 2024 / LongBench & L-Eval):**
+- **Memory Footprint:** Reduces active KV cache memory from $16.0\,\text{bits/token}$ down to an effective **$2.6\,\text{bits/token}$** (including scales, zero-points, and the FP16 residual buffer)—a **$4.1\times$ reduction** over FP16 and **$2.0\times$ reduction** over standard INT4.
+- **Serving Concurrency & Throughput:** Enables an instantaneous **$4\times$ increase in maximum batch size** on an 80GB A100/H100, translating to a **$2.35\times\text{--}3.47\times$ end-to-end decoding throughput speedup**.
+- **Accuracy Parity:** Across LongBench tasks (NarrativeQA, Qasper, MultiFieldQA, Passkey retrieval), KIVI 2-bit achieves **$99.2\%$ of full FP16 performance**, completely outperforming uniform 2-bit baselines which degrade by $>40\%$.
