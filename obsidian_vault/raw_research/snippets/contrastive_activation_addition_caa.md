@@ -1,27 +1,21 @@
-# Contrastive Activation Addition (CAA)
+# Contrastive Activation Addition (CAA): Inference-Time Model Steering
 
-Contrastive Activation Addition (CAA; Rimsky et al., 2024) is a training-free activation engineering framework that modulates LLM behavioral traits by injecting mean-difference steering vectors directly into intermediate residual streams.
+## 1. Steerability Without Fine-Tuning
+System prompts are fragile to jailbreaks and context drift, while fine-tuning (SFT/RLHF) modifies billions of parameters and induces an "alignment tax" on general reasoning. Grounded in the **Linear Representation Hypothesis**, **Contrastive Activation Addition (CAA)** (Rimsky et al., Redwood Research, NYU, & Anthropic, ICML 2024) steers high-level model behaviors (honesty, sycophancy, refusal) purely at inference time via additive vectors in the residual stream.
 
 ```mermaid
-flowchart TD
-    Pairs["Contrastive Prompt Pairs: (p_pos, p_neg)"] --> Forward["Forward Pass through Frozen LLM"]
-    Forward --> Extract["Extract Activations: h_l(p_pos), h_l(p_neg)"]
-    Extract --> MeanDiff["Steering Vector v_l = mean(h_pos - h_neg)"]
-    MeanDiff --> Intervene["Inference Injection: h_l'(x) = h_l(x) + alpha * v_l"]
-    Intervene --> Steered["Linear Steered Output (Sycophancy / Truthfulness Controlled)"]
+flowchart LR
+    Pairs["N Contrastive Pairs: (p_i^+, p_i^-)"] --> Extract["Extract Activations at Layer l"]
+    Extract --> MeanDiff["Steering Vector: v_l = (1/N) ∑ (a(p_i^+) - a(p_i^-))"]
+    MeanDiff --> Forward["Inference Intervention: x_l' = x_l + α · (v_l / ||v_l||)"]
+    Forward --> Steered["Steered Output (Zero Weight Updates, Zero Tax)"]
 ```
 
-## Mathematical Mechanics
-1. **Mean Difference Extraction:** Pairs $N$ prompts that differ solely along a target behavioral axis (e.g. sycophancy, hallucination, refusal). The steering vector $v_l$ is extracted at layer $l$:
-   $$v_l = \frac{1}{N} \sum_{i=1}^N \left(h_l\left(p_{\text{pos}}^{(i)}\right) - h_l\left(p_{\text{neg}}^{(i)}\right)\right)$$
-2. **Residual Stream Injection:** During inference on new inputs, the scaled vector is added at target layer $l$:
-   $$h_l'(x_t) = h_l(x_t) + \alpha \cdot v_l$$
-   where scalar $\alpha \in \mathbb{R}$ continuously modulates behavioral intensity ($\alpha > 0$ amplifies, $\alpha < 0$ suppresses).
-3. **Linear Compositionality:** Multiple orthogonal steering vectors can be composed simultaneously without retraining:
-   $$h_l'(x) = h_l(x) + \sum_{k} \alpha_k v_{l, k}$$
+## 2. Mathematical Formulation & Layer Dynamics
+1. **Offline Extraction:** Given contrastive prompt pairs inducing opposing behaviors (e.g. truthfulness vs sycophancy):
+   $$\mathbf{v}_l = \frac{1}{N} \sum_{i=1}^N \left( a_l(p_i^+) - a_l(p_i^-) \right)$$
+2. **Inference Intervention:** For arbitrary unseen queries $q$, add the normalized vector scaled by continuous multiplier $\alpha$:
+   $$\tilde{x}_{l, t} = x_{l, t} + \alpha \cdot \frac{\mathbf{v}_l}{\| \mathbf{v}_l \|_2}$$
 
-## Key Empirical Findings
-- Middle-to-late transformer layers ($40\%\text{--}70\%$ depth) offer the highest steering efficacy and selectivity.
-- Outperforms standard RLHF and system-prompt instructions in suppressing sycophancy and hallucinations on TruthfulQA with zero parameter degradation.
-
-Related: [[representation_engineering_repe]], [[loreft_representation_finetuning]], [[model_abliteration_refusal_geometry]], [[proxy_tuning_logit_arithmetic]]
+- **Mid-Layer Dominance:** Layers $L/3$ to $2L/3$ (e.g. layers 12–20 in Llama-2-7B) yield the highest steerability without corrupting syntactic coherence.
+- **Empirical Impact:** Cuts sycophancy by **$75\%$**, increases TruthfulQA accuracy by **$+17.8\%$**, and incurs **$0.0\%$ degradation on MMLU / GSM8k** due to near-perfect subspace orthogonality.

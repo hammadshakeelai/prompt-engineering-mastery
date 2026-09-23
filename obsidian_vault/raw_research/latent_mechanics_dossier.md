@@ -12386,3 +12386,92 @@ sequenceDiagram
 
 **Theoretical Conclusion:**
 KTO establishes that human alignment does not fundamentally require relative ranking. By grounding policy updates in human behavioral economics (loss aversion relative to an implicit reference point), models can be aligned directly from real-world telemetry and binary feedback signals without the computational and logistic overhead of generating pairwise preference counterfactuals.
+
+---
+
+## 319. Contrastive Activation Addition (CAA): Steering Language Models Without Optimization via Mean-Difference Vectors (Rimsky et al., ICML 2024)
+
+### 319.1 The Trilemma of Model Steerability: Prompts vs. Weights vs. Activations
+Controlling high-level model behaviors (e.g., honesty, sycophancy, refusal, toxicity) typically forces practitioners into a compromise:
+
+1. **System Prompt Steering:**
+   Extremely fragile; vulnerable to prompt injections, Many-Shot context flooding, and persona drift over long conversation horizons.
+2. **Weight Optimization (SFT / DPO / RLHF):**
+   Requires extensive compute, alters billions of parameters, and frequently induces **catastrophic forgetting** or tax on general mathematical reasoning capabilities (the "alignment tax").
+3. **Activation Engineering (Inference-Time Steerability):**
+   Grounds steerability in the **Linear Representation Hypothesis**: high-level semantic concepts, ethical stances, and behavioral personas are represented as linear 1D direction vectors $\mathbf{v} \in \mathbb{R}^{d_{\text{model}}}$ within the Transformer's residual stream.
+
+```mermaid
+flowchart TD
+    subgraph Contrastive_Extraction["Offline Vector Extraction (N Contrastive Pairs)"]
+        PairP["Positive Prompt: p_i^+ ('Be completely truthful...')"] --> ActP["Layer l Residual: a_l(p_i^+)"]
+        PairM["Negative Prompt: p_i^- ('Lie or hallucinate...')"] --> ActM["Layer l Residual: a_l(p_i^-)"]
+        ActP & ActM --> MeanDiff["Mean Difference: v_l = (1/N) ∑ (a_l(p_i^+) - a_l(p_i^-))"]
+    end
+    subgraph Inference_Steering["Inference-Time Forward Pass (Zero Weight Changes)"]
+        UserQ["Arbitrary User Prompt q"] --> LayerPrev["Layer l-1 Residual: x_{l-1}"]
+        LayerPrev --> LayerL["Layer l Attention & MLP: x_l"]
+        LayerL --> VectorAdd["Activation Addition: x_l_steered = x_l + α · v_l"]
+        VectorAdd --> LayerNext["Layer l+1 Residual Stream"]
+        LayerNext --> Output["Steered Generation (Zero Training, Zero Catastrophic Forgetting)"]
+    end
+```
+
+---
+
+### 319.2 The Contrastive Activation Addition (CAA) Algorithm
+**Contrastive Activation Addition (CAA)** (Rimsky, Gabrieli, Schulz, Megill, & Turner; Redwood Research, NYU, & Anthropic; ICML 2024) isolates pure behavioral concepts by contrasting prompt pairs that differ *only* in the target behavior.
+
+#### A. Contrastive Dataset Construction
+Given a target persona or behavioral axis $\mathcal{B}$, construct a dataset of $N$ paired prompts:
+$$\mathcal{D}_{\mathcal{B}} = \{ (p_i^+, p_i^-) \}_{i=1}^N$$
+where $p_i^+$ induces the desirable behavior (e.g., objective factual truthfulness) and $p_i^-$ induces the undesirable counterpart (e.g., sycophantic agreement with a false user claim).
+
+#### B. Mean-Difference Direction Vector
+Pass both prompt sets through the frozen model. Extract the residual stream activations at layer $l$ at the transition token position $t^\star$ (the final token of the prompt before generation begins):
+$$a_l(p_i^+) \in \mathbb{R}^{d_{\text{model}}}, \quad a_l(p_i^-) \in \mathbb{R}^{d_{\text{model}}}$$
+The steering vector $\mathbf{v}_l$ is computed as the unnormalized or normalized mean difference across the dataset:
+$$\mathbf{v}_l = \frac{1}{N} \sum_{i=1}^N \left( a_l(p_i^+) - a_l(p_i^-) \right), \quad \hat{\mathbf{v}}_l = \frac{\mathbf{v}_l}{\| \mathbf{v}_l \|_2}$$
+
+#### C. Continuous Inference-Time Intervention
+During generation of an unseen user query $q$, modify the residual stream at layer $l$ for every generated token $t$:
+$$\tilde{x}_{l, t} = x_{l, t} + \alpha \cdot \hat{\mathbf{v}}_l$$
+where $\alpha \in \mathbb{R}$ is the **steering coefficient**:
+- $\alpha > 0$: Amplifies the target behavior (e.g., increasing truthfulness or resistance to sycophancy).
+- $\alpha < 0$: Inverts the behavior (eliciting the negative persona for red-teaming and safety evaluation).
+- $\alpha = 0$: Recovers the original base model behavior exactly.
+
+---
+
+### 319.3 Optimal Layer Localization & Subspace Orthogonality
+
+```mermaid
+flowchart LR
+    subgraph LayerLocalization["Steerability Efficacy vs. Layer Depth (Llama-2-13B, L=40)"]
+        Early["Layers 1-10: Syntax & Token Decoding (Low Steerability, High Corruption)"]
+        Middle["Layers 12-24: High-Level Latent Semantics (Optimal Steering Efficacy: >90%)"]
+        Late["Layers 26-40: Output Logit Projection (Overfitting, Repetitive Collapse)"]
+    end
+```
+
+1. **Mid-Layer Specialization:**
+   Empirical sweeps show that steering vectors extracted from middle layers ($L/3$ to $2L/3$, e.g., layers $12\text{--}20$ in Llama-2-7B) yield the highest behavioral steerability without collapsing token diversity or grammatical coherence.
+2. **Orthogonality to General Capabilities:**
+   Because $\hat{\mathbf{v}}_l$ is a 1D vector in a high-dimensional space ($d_{\text{model}} = 4096$ or $8192$), its inner product with the vast majority of task-specific capability circuits is near zero:
+   $$\langle \hat{\mathbf{v}}_l, \; \mathbf{w}_{\text{MMLU}} \rangle \approx 0$$
+   Consequently, CAA achieves dramatic behavioral steering with **zero degradation on MMLU or GSM8k benchmarks**.
+
+---
+
+### 319.4 Quantitative Benchmarks Across Behavioral Axes (Rimsky et al., 2024)
+
+| Behavioral Axis | Base Llama-2-13B-Chat | SFT Model | Contrastive Activation Addition (CAA) |
+| :--- | :--- | :--- | :--- |
+| **Sycophancy Score (Lower is Better)** | $48.2\%$ Sycophantic | $24.6\%$ | **$12.1\%$ ($-75\%$ Reduction)** |
+| **TruthfulQA Accuracy (Higher is Better)**| $51.4\%$ | $56.8\%$ | **$69.2\%$ ($+17.8\%$ Absolute Gain)** |
+| **Corrigibility / Safety Compliance** | $62.0\%$ | $74.5\%$ | **$88.4\%$ Compliance** |
+| **MMLU General Knowledge Preservation** | $54.8\%$ | $52.1\%$ ($-2.7\%$ Tax) | **$54.8\%$ ($0.0\%$ Degradation)** |
+| **Training FLOPs / Parameter Updates** | $0$ FLOPs | $10^{18}$ FLOPs, 100% Weights | **$0$ FLOPs, $0$ Weights Altered** |
+
+**Systems Impact:**
+CAA proves that safety alignment and behavioral conditioning can be executed dynamically at the inference layer via simple vector additions in GPU SRAM, bypassing post-training fine-tuning while enabling dynamic, user-tunable behavioral steerability.
