@@ -130,6 +130,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/crescendo_multi_turn_jailbreak.md|Crescendo Multi Turn Jailbreak]]
 - [[raw_research/snippets/crewai_delegation.md|Crewai Delegation]]
 - [[raw_research/snippets/cross_layer_attention_cla.md|Cross Layer Attention Cla]]
+- [[raw_research/snippets/cross_layer_attention_kv_sharing.md|Cross Layer Attention Kv Sharing]]
 - [[raw_research/snippets/crosscoders_and_transcoders.md|Crosscoders And Transcoders]]
 - [[raw_research/snippets/cursor_system_prompt_design.md|Cursor System Prompt Design]]
 - [[raw_research/snippets/cutting_edge_2025.md|Cutting Edge 2025]]

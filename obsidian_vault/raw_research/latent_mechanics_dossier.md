@@ -7421,5 +7421,45 @@ flowchart TD
    - Across Gemma-2B, LLaMA-3-8B, and Pythia residual streams, Gated SAEs achieve a strictly superior Pareto frontier: at identical $L_0$ sparsity ($k \approx 30\text{--}60$ active features per token), Gated SAEs achieve **$20\%\text{--}40\%$ lower reconstruction MSE** than standard $L_1$ SAEs.
    - Eliminates feature splitting artifacts and dead latents, recovering cleaner, highly monosemantic circuits for downstream mechanistic steering and model auditing.
 
+---
+
+## 259. Cross-Layer Attention (CLA): Structural KV Cache Halving via Inter-Layer Sharing
+
+### 259.1 Independent Layer KV vs. Cross-Layer Attention Topology
+```mermaid
+flowchart TD
+    subgraph StandardMHA["Standard Transformer (Independent KV per Layer)"]
+        L1_IN["Layer 2l-1 Input"] --> Q1["Q_{2l-1}"] & K1["K_{2l-1} (Stored in VRAM)"] & V1["V_{2l-1} (Stored in VRAM)"]
+        L2_IN["Layer 2l Input"] --> Q2["Q_{2l}"] & K2["K_{2l} (Stored in VRAM)"] & V2["V_{2l} (Stored in VRAM)"]
+        K1 & V1 & K2 & V2 --> TOTAL_VRAM["Total KV Cache: 2L × H_kv × d_k Tokens (High Memory Wall)"]
+    end
+    subgraph CrossLayer["Cross-Layer Attention (CLA; Brandon et al., 2024)"]
+        CL1_IN["Layer 2l-1 Input"] --> CQ1["Q_{2l-1}"] & CK["Shared K_{2l-1, 2l} (Stored Once)"] & CV["Shared V_{2l-1, 2l} (Stored Once)"]
+        CL2_IN["Layer 2l Input"] --> CQ2["Q_{2l} (Independent Query Head)"]
+        CK & CV --> REUSE["Layer 2l Reuses Precomputed Shared K & V Directly"]
+        CQ2 & REUSE --> ATTN2["Attn_{2l} = Softmax(Q_{2l} K^T / √d) V"]
+        REUSE --> HALVED["50% KV VRAM Reduction at Architecture Level (2x Serving Throughput)"]
+    end
+```
+
+### 259.2 Mathematical Formulation of Cross-Layer Attention
+1. **Inter-Layer Representational Redundancy:** Empirical mechanistic analysis of deep transformers reveals that intermediate key-value geometries exhibit high cosine similarity across adjacent layers:
+   $$\cos\left(K_i^{(l)}, K_i^{(l+1)}\right) > 0.92, \quad \cos\left(V_i^{(l)}, V_i^{(l+1)}\right) > 0.88$$
+   Allocating dedicated parameters and GPU High-Bandwidth Memory (HBM) to store nearly identical key-value matrices across all $L$ layers creates an artificial memory bottleneck during autoregressive decoding.
+2. **Layer-Sharing Partitioning:** Brandon et al. (2024) partition the $L$ transformer layers into sharing blocks of size $S$ (typically $S = 2$). For sharing block index $b = \lceil l / S \rceil$:
+   - **Independent Query Projections:** Every layer retains unique query projection weights to preserve layer-specific attention routing:
+     $$Q^{(l)} = W_Q^{(l)} h^{(l)}, \quad \forall l \in \{1, \dots, L\}$$
+   - **Shared Key-Value Projections:** Key and value heads are computed solely at the anchor layer of each block and shared across all $S$ layers in that block:
+     $$K^{(l)} \equiv K^{(S(b-1)+1)} = W_K^{(b)} h^{(S(b-1)+1)}, \quad \forall l \in \{(b-1)S+1, \dots, bS\}$$
+     $$V^{(l)} \equiv V^{(S(b-1)+1)} = W_V^{(b)} h^{(S(b-1)+1)}, \quad \forall l \in \{(b-1)S+1, \dots, bS\}$$
+3. **Attention Computation with Shared Tensors:**
+   Layer $l$ computes scaled dot-product attention using its unique query $Q^{(l)}$ against the shared key-value pair of its block:
+   $$\text{Attn}^{(l)} = \text{Softmax}\left(\frac{Q^{(l)} \left(K^{(S(b-1)+1)}\right)^\top}{\sqrt{d_k}}\right) V^{(S(b-1)+1)}$$
+4. **Hardware & Serving Throughput Multipliers:**
+   - **KV-Cache Footprint:** When combined with Grouped-Query Attention (GQA, group ratio $G/H = 1/8$), Cross-Layer Attention ($S = 2$) reduces total KV cache memory by:
+     $$\text{Memory Factor} = \frac{1}{S} \cdot \frac{G}{H} = \frac{1}{2} \cdot \frac{1}{8} = \frac{1}{16} \implies 93.75\% \text{ reduction}$$
+   - **Throughput & Batch Size:** Halving the KV cache footprint doubles the maximum serving batch size supported within fixed GPU VRAM, cutting time-to-first-token (TTFT) and doubling decoding token throughput.
+   - **Perplexity Invariance:** Pre-training from scratch or uptraining dense baselines with CLA yields negligible validation perplexity degradation ($\Delta \text{PPL} < 0.05$), unlocking hardware efficiency gains without sacrificing downstream benchmark capabilities.
+
 
 
