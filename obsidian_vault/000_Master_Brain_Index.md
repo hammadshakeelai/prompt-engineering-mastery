@@ -192,6 +192,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/instruction_tuning.md|Instruction Tuning]]
 - [[raw_research/snippets/instructor_pydantic.md|Instructor Pydantic]]
 - [[raw_research/snippets/ipo_identity_preference_optimization.md|Ipo Identity Preference Optimization]]
+- [[raw_research/snippets/iterative_dpo_moving_reference_anchors.md|Iterative Dpo Moving Reference Anchors]]
 - [[raw_research/snippets/judge_bias_mitigation.md|Judge Bias Mitigation]]
 - [[raw_research/snippets/jumprelu_sae_gemma_scope.md|Jumprelu Sae Gemma Scope]]
 - [[raw_research/snippets/kangaroo_self_speculative_decoding.md|Kangaroo Self Speculative Decoding]]

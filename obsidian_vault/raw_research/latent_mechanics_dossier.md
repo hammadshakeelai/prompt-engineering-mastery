@@ -7649,5 +7649,49 @@ flowchart TD
    $$M_w = \begin{cases} 1 & \text{if } \text{Valid}(w \mid \mathcal{I}_k) \\ 0 & \text{otherwise} \end{cases}, \quad z'_w = z_w + \log(M_w)$$
    This enables decoding under arbitrary, naturally ambiguous programming language grammars (Python, SQL, C++) without requiring manual, error-prone grammar refactoring into deterministic LR(1) forms, completely eliminating syntax compilation errors.
 
+---
+
+## 265. Iterative Direct Preference Optimization: Multi-Round On-Policy Re-Ranking & Moving Reference Anchors
+
+### 265.1 Single-Turn DPO Saturation vs. Iterative Optimization Topology
+```mermaid
+flowchart TD
+    subgraph SingleTurn["Single-Turn DPO (Static Policy Saturation)"]
+        STATIC_PAIRS["Static Dataset D_0 = {(x, y_w, y_l)}"] --> DPO_1["Single DPO Training Run"]
+        DPO_1 --> SATURATE["Policy Saturation: π_θ Diverges from π_ref (Hits KL Divergence Ceiling D_KL ≈ D_max)"]
+        SATURATE --> OVERFIT["Degrades on Out-of-Distribution Generations with No Mechanism to Learn from New Errors"]
+    end
+    subgraph IterativeDPO["Iterative DPO (Pang et al., 2024; Snorkel / UltraFeedback)"]
+        INIT["Base Policy π_0"] --> ROUND1["Round 1: Sample On-Policy Candidates y ~ π_0"]
+        ROUND1 --> RM1["Score & Pair with Reward Model R: (y_w^(1), y_l^(1))"]
+        RM1 --> TRAIN1["Train π_1 via DPO with Anchor π_ref = π_0"]
+        TRAIN1 --> ROUND2["Round 2: Sample Fresh Candidates y ~ π_1"]
+        ROUND2 --> RM2["Re-Rank & Pair: (y_w^(2), y_l^(2))"]
+        RM2 --> TRAIN2["Train π_2 via DPO with Moving Anchor π_ref = π_1 (Resets KL Budget)"]
+        TRAIN2 --> ROUNDK["Continual Multi-Round Ascension to Optimal Policy π*"]
+    end
+```
+
+### 265.2 Mathematical Formulation of Iterative DPO
+1. **The KL Divergence Ceiling in Single-Turn Alignment:** In classical DPO, the optimization is anchored to a frozen pre-trained reference model $\pi_{\text{ref}} = \pi_{\text{SFT}}$. The implicit reward formulation:
+   $$r_\theta(x, y) = \beta \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)}$$
+   forces policy $\pi_\theta$ to operate within a rigid trust region centered at $\pi_{\text{ref}}$. As optimization proceeds across multiple epochs on static data, the policy hits a performance plateau where further parameter updates either overfit to spurious dataset artifacts or induce catastrophic mode collapse:
+   $$D_{\text{KL}}\left(\pi_\theta \parallel \pi_{\text{ref}}\right) \ge \Delta_{\max}$$
+2. **Moving Reference Anchor Protocol:**
+   Iterative DPO decomposes alignment into $K$ discrete cycles $k \in \{1, 2, \dots, K\}$. At cycle $k$:
+   - **On-Policy Trajectory Generation:** Sample $M$ candidate outputs per prompt from the *current* policy checkpoint:
+     $$y_1, \dots, y_M \sim \pi_{\theta_{k-1}}(\cdot \mid x), \quad x \sim \mathcal{D}_{\text{prompts}}$$
+   - **Oracle Re-Ranking & Pairing:** An authoritative reward model $R(x, y)$ or verifier oracle ranks completions to construct hard contrastive pairs:
+     $$y_w^{(k)} = \arg\max_{y \in \{y_1, \dots, y_M\}} R(x, y), \quad y_l^{(k)} = \arg\min_{y \in \{y_1, \dots, y_M\}} R(x, y)$$
+   - **Moving Anchor DPO Update:** The policy $\pi_{\theta_k}$ is optimized using the *immediately preceding checkpoint* as the reference anchor:
+     $$\pi_{\text{ref}}^{(k)} \leftarrow \pi_{\theta_{k-1}}$$
+     $$\mathcal{L}_{\text{Iter-DPO}}^{(k)}(\theta) = -\mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}_k}\left[\log \sigma\left(\beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\theta_{k-1}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\theta_{k-1}}(y_l \mid x)}\right)\right]$$
+3. **KL Budget Reset & Monotonic Improvement Guarantee:**
+   By updating the reference anchor $\pi_{\text{ref}} \leftarrow \pi_{\theta_{k-1}}$ at each round, the KL penalty $\beta D_{\text{KL}}(\pi_\theta \parallel \pi_{\theta_{k-1}})$ is reset to zero. This permits the policy to take a fresh, stable step along the reward gradient without accumulating unbounded distance from the local reference, effectively creating a **piecewise linear trust-region path** toward the optimal policy $\pi^*$:
+   $$\mathcal{R}\left(\pi_{\theta_K}\right) \ge \mathcal{R}\left(\pi_{\theta_{K-1}}\right) \ge \dots \ge \mathcal{R}\left(\pi_0\right)$$
+4. **Empirical Results:**
+   - On the UltraFeedback benchmark, Iterative DPO raises AlpacaEval 2.0 win rates from $14.5\%$ (single-turn DPO) to **$28.2\%$** across 3 rounds on LLaMA-2-70B and Mistral-7B.
+   - Completely closes the gap with online Actor-Critic PPO while using half the GPU memory and running with deterministic batch stability.
+
 
 
