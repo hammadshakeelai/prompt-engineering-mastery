@@ -1298,3 +1298,96 @@ flowchart TD
 - **Confabulation Detection Superiority:** On high-stakes factual benchmarks (TriviaQA, CoQA, BioASQ), Semantic Entropy achieves AUROC scores of **$0.85\text{--}0.92$**, outperforming raw token entropy, length-normalized perplexity, and self-evaluation prompting ("Are you sure?") by **$10\text{--}20$ AUROC points**.
 - **Cross-Task Generalizability:** Operates without task-specific training data or fine-tuning, providing a reliable, mathematically rigorous epistemic guardrail for agentic and reasoning systems.
 
+## 49. Automated Step Supervision & Monte Carlo Process Reward Models (Math-Shepherd, Wang et al., ACL 2024 / arXiv:2312.08935)
+
+### 49.1 Outcome Reward Models (ORMs) vs. Process Reward Models (PRMs)
+In complex multi-step reasoning, evaluating completions using Outcome Reward Models (ORMs)—which output a single scalar reward $R(\tau) \in \{0, 1\}$ at the final sequence token—suffers from two catastrophic alignment pathologies:
+- **False Negative Attribution:** A mathematically rigorous 20-step derivation that makes a trivial arithmetic error on step 20 receives $R = 0$, misattributing blame to the flawless first 19 steps.
+- **False Positive Reward Hacking:** An erroneous intermediate derivation that coincidentally arrives at the correct numerical answer through cancelling bugs receives $R = 1$, actively reinforcing faulty reasoning heuristics.
+
+Process Reward Models (PRMs, e.g., Lightman et al., 2023) resolve this by assigning an evaluation score $r_t \in [0, 1]$ to every individual reasoning step $s_t$. However, scaling PRMs historically required prohibitive manual human step annotations (e.g., PRM800K).
+
+### 49.2 Math-Shepherd: Automated Monte Carlo Step Attribution
+Peiyi Wang et al. (*Math-Shepherd: Verify and Reinforce LLMs Step-by-step without Human Annotations*, ACL 2024 / arXiv:2312.08935) automate process reward generation using Monte Carlo rollout estimation:
+
+```mermaid
+flowchart TD
+    Problem["Math Problem x"] --> Step1["Step 1: s_1"]
+    Step1 --> Step2["Step 2: s_2"]
+    Step2 --> Rollouts["Sample M Independent Monte Carlo Rollouts to Terminal Answer"]
+    Rollouts --> Eval["Evaluate Final Answers Against Ground Truth y*"]
+    Eval --> StepScore["Compute Step Reward r(s_2) = (1/M) * Sum I(Rollout_m == y*)"]
+    StepScore --> PRM_Train["Train PRM Head via Binary Cross-Entropy Loss"]
+```
+
+1. **Step Quality Definition:** The correctness of intermediate reasoning state $s_t = (x, a_1, \dots, a_t)$ is defined as its expected potential to complete a valid proof path to the ground-truth target $y^*$.
+2. **Empirical Monte Carlo Estimation:**
+   Given intermediate prefix $s_t$, sample $M$ stochastic continuation trajectories $\{\tau_t^{(1)}, \dots, \tau_t^{(M)}\}$ using an autoregressive base generator:
+   $$r(s_t) = \frac{1}{M} \sum_{m=1}^M \mathbb{I}\left( \text{Terminal}(\tau_t^{(m)}) = y^* \right)$$
+   Assign hard binary pseudo-labels $y_t = \mathbb{I}(r(s_t) > \tau_{\text{thresh}})$ or soft regression targets $y_t = r(s_t)$.
+3. **PRM Architecture & Loss:**
+   A classification head is appended to the intermediate step delimiter token (e.g., `\n\n`):
+   $$\mathcal{L}_{\text{PRM}}(\theta) = -\sum_{t=1}^T \left[ y_t \log \sigma(w^\top h_t) + (1 - y_t) \log (1 - \sigma(w^\top h_t)) \right]$$
+
+### 49.3 Inference-Time Search & Test-Time Compute (TTC)
+During inference, Math-Shepherd guides decoding via:
+- **Best-of-$N$ Re-ranking:** Aggregates step probabilities via product $S(\tau) = \prod_{t=1}^T r_t$ or minimum bottleneck $S(\tau) = \min_{t} r_t$, outperforming ORM reranking by **$+5.2\%$ on GSM8K and $+3.8\%$ on MATH**.
+- **Step-Level Beam Search:** Prunes search branches where $r_t < \epsilon$, redirecting test-time FLOPs to high-probability verification paths.
+
+---
+
+## 50. Continuous Token-Level Latent Reasoning & Inner Monologues (Quiet-STaR, Zelikman et al., ICML 2024 / arXiv:2403.09629)
+
+### 50.1 Demystifying Explicit vs. Continuous Latent Reasoning
+Current chain-of-thought (CoT) prompting models reason only when explicitly commanded by instructions or prompted with specific delimiters (`<think> ... </think>`). However, natural human cognition generates continuous, non-vocalized sub-symbolic thoughts before uttering words.
+Eric Zelikman et al. (*Quiet-STaR: Language Models Can Teach Themselves to Think Before Speaking*, Stanford / ICML 2024 / arXiv:2403.09629) extend the Self-Taught Reasoner (STaR) framework to general, unstructured pretraining corpora, training language models to generate **latent rationales at every token position**.
+
+### 50.2 Dual-Stream Architecture & Parallel Thought Sampling
+Quiet-STaR inserts $T$ internal rationale tokens $t_1, \dots, t_T$ between input sequence tokens $x_i$:
+
+1. **Tokenwise Parallel Rationale Generation:**
+   Using customized attention masks, the model samples $N$ candidate thought trajectories of length $T$ for each token position $i$ in parallel:
+   $$t_{1:T}^{(i)} \sim \pi_\theta\left( \cdot \mid x_{\le i} \right)$$
+2. **Learned Thought Mixing Head:**
+   The model predicts future tokens using a dynamic interpolation between thought-augmented logits and baseline non-thought logits:
+   $$P_{\text{mix}}(x_{i+1} \mid x_{\le i}) = \alpha_i \cdot P_\theta(x_{i+1} \mid x_{\le i}, t_{1:T}^{(i)}) + (1 - \alpha_i) \cdot P_\theta(x_{i+1} \mid x_{\le i})$$
+   where $\alpha_i = \sigma(W_{\text{mix}} h_i) \in [0, 1]$ is a learned scalar gate.
+
+### 50.3 Non-Myopic REINFORCE Optimization
+Thoughts must not merely predict the immediate next token $x_{i+1}$ (which encourages trivial restatements), but aid in anticipating the broader sequence horizon $x_{i+1:i+n}$:
+1. **Horizon Reward Function:**
+   $$R_i = \sum_{j=1}^n \left( \log P_\theta(x_{i+j} \mid x_{\le i}, t_{1:T}^{(i)}) - \log P_\theta(x_{i+j} \mid x_{\le i}) \right)$$
+2. **Policy Gradient Update with Learned Baseline:**
+   $$\nabla_\theta \mathcal{L}_{\text{quiet}} = -\mathbb{E}_{t_{1:T} \sim \pi_\theta} \left[ (R_i - b_i) \sum_{k=1}^T \nabla_\theta \log \pi_\theta(t_k \mid x_{\le i}, t_{<k}) \right]$$
+   where $b_i = \frac{1}{N} \sum_{m=1}^N R_i^{(m)}$ is an empirical leave-one-out baseline.
+- **Empirical Impact:** Without task-specific supervision, Quiet-STaR improves zero-shot GSM8K performance from **$5.9\%$ to $10.9\%$** on open base models and boosts CommonsenseQA from **$36.3\%$ to $47.2\%$**, proving that continuous internal reasoning can emerge directly from autoregressive prediction objectives.
+
+---
+
+## 51. Product Quantization & Maximum Inner Product Search for KV Caches (PQCache, Zhang et al., 2024 / arXiv:2407.12820)
+
+### 51.1 The Linear Scaling Barrier in Long-Context Retrieval
+As context windows scale to $10^6$ tokens, Key-Value cache memory saturates GPU VRAM ($>32\,\text{GB}$ per stream), while linear attention scans $\text{Softmax}(Q K^\top / \sqrt{d}) V$ become severely memory-bandwidth bound. Eviction heuristics (e.g., SnapKV) permanently delete tokens, risking irreversible retrieval amnesia.
+Zhang et al. (*PQCache: Product Quantization-based KVCache for Long Context LLM Inference*, arXiv:2407.12820) introduce a vector-indexed KV cache architecture that replaces brute-force linear attention scans with **sub-linear Maximum Inner Product Search (MIPS)** over Product Quantized key spaces.
+
+### 51.2 Product Quantization of Key Projections
+During prefill, Key activation vectors $k \in \mathbb{R}^d$ across all layers and heads are decomposed into $m$ disjoint orthogonal sub-vectors:
+$$k = [k^{(1)}, k^{(2)}, \dots, k^{(m)}], \quad k^{(s)} \in \mathbb{R}^{d/m}$$
+
+Each subspace is quantized into $K$ centroid vectors using Lloyd-Max k-means clustering, forming codebooks $\mathcal{C}_1, \dots, \mathcal{C}_m$ where $|\mathcal{C}_s| = 256$ ($8\,\text{bits}$ index per sub-vector):
+$$q(k) = [c_{1, i_1}, c_{2, i_2}, \dots, c_{m, i_m}], \quad i_s \in \{0, \dots, 255\}$$
+Storing an 8-bit cluster index per sub-vector reduces Key cache storage by **$8\times\text{--}16\times$** relative to FP16/BF16.
+
+### 51.3 Asymmetric Distance Computation & Maximum Inner Product Search (MIPS)
+During autoregressive decoding, the active query $q_t \in \mathbb{R}^d$ is also partitioned into $m$ sub-vectors: $q_t = [q_t^{(1)}, \dots, q_t^{(m)}]$.
+1. **Precomputing Subspace Inner Product Lookup Tables:**
+   Compute inner products between query sub-vector $q_t^{(s)}$ and all $K$ centroids in codebook $\mathcal{C}_s$:
+   $$T_s[j] = \langle q_t^{(s)}, c_{s, j} \rangle, \quad j \in \{0, \dots, 255\}$$
+   This requires only $m \cdot K$ scalar multiplications per head, entirely independent of context length $L_{\text{ctx}}$.
+2. **Sub-Linear Key Attention Estimation via Table Lookups:**
+   The approximate attention logit for any historical key $k_i$ is computed via $m$ table lookups and additions:
+   $$\langle q_t, k_i \rangle \approx \sum_{s=1}^m T_s[\text{code}_s(k_i)]$$
+3. **Top-$K$ Sparse Attention Evaluation:**
+   Execute MIPS across PQ codes to retrieve the top-$\kappa$ highest-affinity tokens ($< 10\%$ of context). Only the retrieved Value states $V_{\text{top}}$ are fetched from memory, slashing decoding memory bandwidth consumption by **$70\%\text{--}85\%$**.
+- **Empirical Accuracy:** Achieves a **$+4.60\%$ improvement** on InfiniteBench long-context evaluation over token-eviction baselines while sustaining constant-time attention query latency across $128\text{k}\text{--}1\text{M}$ contexts.
+
