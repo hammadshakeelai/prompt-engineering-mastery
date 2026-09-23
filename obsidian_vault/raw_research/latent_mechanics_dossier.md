@@ -10864,3 +10864,91 @@ sequenceDiagram
 **Key Takeaways for Steerability:**
 - Attempting to steer categorical or temporal behaviors by clamping single 1D feature directions induces geometric distortion.
 - Faithful steering of multi-state concepts requires **multi-dimensional rotation within the simplex subspace**, preserving barycentric coordinates $\boldsymbol{\lambda} \in \Delta^{K-1}$.
+
+---
+
+## 304. Cross-Layer Attention (CLA): Layer-Wise KV Cache Sharing & Orthogonal Memory Decoupling (Brandon et al., MIT, Stanford & CMU, NeurIPS 2024)
+
+### 304.1 The Orthogonal Dimension to Intra-Layer Compression
+Existing techniques for compressing the Key-Value (KV) cache—such as Multi-Query Attention (MHA $\to$ MQA) and Grouped-Query Attention (GQA)—operate strictly **within a single layer**, reducing the number of KV heads from $n_h$ down to $n_{kv}$. However, in a standard $L$-layer transformer, the model still instantiates and stores $L$ independent KV caches:
+$$\text{Memory}_{\text{Total}} = L \times \text{Memory}_{\text{Layer}}$$
+
+**Cross-Layer Attention (CLA)** (Brandon, Nrusimha, Qian, Ankner, Chen, Jia, & Ragan-Kelley, MIT, Stanford, & CMU, NeurIPS 2024) exploits an orthogonal architectural dimension: **sharing Key and Value activations across adjacent layers**:
+
+```mermaid
+flowchart TD
+    subgraph TraditionalGQA["Standard Multi-Layer GQA (L Independent Caches)"]
+        L1["Layer 1: Computes Q_1, K_1, V_1 -> Caches K_1, V_1"]
+        L2["Layer 2: Computes Q_2, K_2, V_2 -> Caches K_2, V_2"]
+        L3["Layer 3: Computes Q_3, K_3, V_3 -> Caches K_3, V_3"]
+        L4["Layer 4: Computes Q_4, K_4, V_4 -> Caches K_4, V_4"]
+        L1 & L2 & L3 & L4 --> TotalCaches["Total KV Footprint: 4 Full Layer Caches"]
+    end
+    subgraph CrossLayerAttention["Cross-Layer Attention (2-to-1 Sharing, NeurIPS 2024)"]
+        Anchor1["Layer 1 (Anchor): Computes Q_1, K_1, V_1 -> Caches K_1, V_1"]
+        Follower1["Layer 2 (Follower): Computes Q_2 -> Reuses K_1, V_1 (Zero Extra Memory!)"]
+        Anchor2["Layer 3 (Anchor): Computes Q_3, K_3, V_3 -> Caches K_3, V_3"]
+        Follower2["Layer 4 (Follower): Computes Q_4 -> Reuses K_3, V_3 (Zero Extra Memory!)"]
+        Anchor1 & Follower1 & Anchor2 & Follower2 --> HalfCaches["Total KV Footprint: 2 Layer Caches (50% Exact Memory Reduction)"]
+    end
+```
+
+---
+
+### 304.2 Mathematical Formulation & Attention Routing
+In a transformer with $L$ layers partitioned into sharing blocks of size $R$ (sharing ratio, typically $R=2$ or $R=4$):
+1. **Layer Classification:**
+   - **Anchor Layers ($l \equiv 0 \pmod R$):** Generate new Key and Value projection matrices from their input hidden states $\boldsymbol{x}_l$:
+     $$\mathbf{K}_l = W_l^K \boldsymbol{x}_l, \qquad \mathbf{V}_l = W_l^V \boldsymbol{x}_l$$
+     and append them to the global KV cache.
+   - **Follower Layers ($l \not\equiv 0 \pmod R$):** Do not instantiate Key/Value projection matrices. Instead, they dynamically query the nearest preceding anchor layer's cached tensors:
+     $$\mathbf{K}_l \triangleq \mathbf{K}_{\lfloor l / R \rfloor \cdot R}, \qquad \mathbf{V}_l \triangleq \mathbf{V}_{\lfloor l / R \rfloor \cdot R}$$
+2. **Unique Query Projections:**
+   Crucially, **every layer retains its own independent Query projection matrix** $W_l^Q$:
+   $$\mathbf{Q}_l = W_l^Q \boldsymbol{x}_l$$
+   The attention calculation at follower layer $l$ is:
+   $$\mathbf{O}_l = \text{softmax}\left( \frac{\mathbf{Q}_l \, (\mathbf{K}_{\text{anchor}})^T}{\sqrt{d_k}} \right) \mathbf{V}_{\text{anchor}}$$
+
+Because the query vector $\mathbf{Q}_l$ reflects the updated residual representations $\boldsymbol{x}_l$ after intermediate MLP and attention transformations, the attention distribution remains dynamically responsive to higher-level reasoning while reading from frozen anchor keys.
+
+---
+
+### 304.3 Compounding Compression: Orthogonal Synergy with GQA and MLA
+Because Cross-Layer Attention operates across layers while GQA and MLA operate within layers, their memory compression ratios are **strictly multiplicative**:
+
+```mermaid
+flowchart LR
+    MHA["Dense MHA Base: 100% KV Memory"] --> GQA["Apply GQA-8: 12.5% KV Memory (8x Reduction)"]
+    GQA --> CLA["Apply 2-to-1 CLA: 6.25% KV Memory (16x Compound Reduction)"]
+    CLA --> Quant["Apply 4-bit Quantization: 1.56% KV Memory (64x Overall Compression)"]
+```
+
+$$\text{Memory Factor} = \left( \frac{n_{kv}}{n_h} \right) \times \left( \frac{1}{R} \right) \times \left( \frac{b_{\text{quant}}}{16} \right)$$
+
+For a model with $n_h = 128$ heads, $R=2$ layer sharing, and $n_{kv} = 8$ GQA heads, the KV cache footprint shrinks by:
+$$\text{Reduction} = \frac{1}{16} \times \frac{1}{2} = \frac{1}{32} \quad (32\times \text{ total reduction vs MHA})$$
+When paired with DeepSeek's Multi-Head Latent Attention (MLA, $576$ elements/token), a 2-to-1 CLA architecture slashes cache requirements to an astonishing **$288$ scalars ($576\,\text{bytes}$) per token**, allowing a 70B model to host $500\text{k}$ token contexts in $<12\,\text{GB}$ of HBM.
+
+---
+
+### 304.4 Empirical Benchmarks Across Pre-Training and Serving Engines
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Engine as vLLM / SGLang Serving Engine
+    participant HBM as GPU High Bandwidth Memory
+    participant Cores as Tensor Cores
+
+    Engine->>HBM: Decode Step t: Load Anchor Cache K_1, V_1
+    HBM->>Cores: Stream K_1, V_1 to SRAM
+    Cores->>Cores: Layer 1 Attention (Q_1 against K_1)
+    Note over Cores: K_1, V_1 RETAINED IN ON-CHIP SRAM!
+    Cores->>Cores: Layer 2 Attention (Q_2 against K_1) -> ZERO HBM RELOAD!
+    Cores->>Engine: Stream Emitted Next Token
+```
+
+**Quantitative Results (NeurIPS 2024 Benchmarks on Llama-3 Architecture):**
+- **Perplexity Parity:** On Wikitext-103 and C4, 2-to-1 CLA ($R=2$) models exhibit identical validation loss ($\Delta \text{PPL} \le +0.08$) compared to dense GQA baselines trained with identical FLOP budgets.
+- **SRAM Reuse & Bandwidth Elimination:** In fused kernel execution, because Layer 2 reuses the Key/Value cache of Layer 1, the tensors $\mathbf{K}_1, \mathbf{V}_1$ remain resident in fast on-chip SRAM, eliminating a second multi-gigabyte HBM memory fetch and boosting decoding speed by **$1.52\times\text{--}1.94\times$**.
+- **Context Length Scaling:** Allows single-node 8xH100 clusters to serve **$2.1\times$ larger concurrent batch sizes** at $64\text{k}\text{--}128\text{k}$ sequence horizons with zero loss in associative recall.
