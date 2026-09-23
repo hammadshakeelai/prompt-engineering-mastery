@@ -11901,3 +11901,118 @@ flowchart LR
 - **Arithmetic Saturation on GPUs:** Because modern GPU Tensor Cores are memory-bandwidth bound during decoding, verifying a 64-token tree takes only $\approx 8\%$ more wall-clock time than verifying a single token, converting idle compute into speculative acceleration.
 - **Hardware-Aware Adaptability:** On high-FLOP architectures (NVIDIA L40), Sequoia reaches an astonishing **$10.33\times$ speedup** without retraining or modifying model weights.
 - **Provable Safety:** Guarantees **$100\%$ mathematical fidelity** to the target model's output distribution across all temperature settings.
+
+---
+
+## 314. Group Relative Policy Optimization (GRPO): Critic-Free Reinforcement Learning & Group-Normalized Advantages (DeepSeekMath & DeepSeek-R1; Shao et al., 2024)
+
+### 314.1 The Memory & Value Alignment Bottleneck in Classical PPO
+Proximal Policy Optimization (PPO; Schulman et al., 2017) served as the standard algorithm for Reinforcement Learning from Human Feedback (RLHF) and Reinforcement Learning with Verifiable Rewards (RLVR). However, PPO suffers from massive computational and architectural overhead:
+
+1. **The Dual-Network Memory Tax:**
+   PPO requires instantiating two primary networks of comparable size:
+   - The **Policy / Actor Network** $\pi_\theta$ emitting generation tokens.
+   - The **Critic / Value Network** $V_\phi$ estimating the scalar value $V(s)$ for every state $s$.
+   Alongside frozen copies of the reference model $\pi_{\text{ref}}$ and the reward model $R_\psi$, serving a 70B parameter model under PPO requires simultaneously maintaining **four separate multi-gigabyte models in GPU memory**, consuming up to $4\times$ the VRAM of standard inference and causing severe pipeline scheduling stalls.
+2. **Value Function Approximation Error:**
+   In long-horizon mathematical proofs and code generation (where trajectories exceed $4\text{k}\text{--}16\text{k}$ tokens), training a neural network $V_\phi$ to accurately predict the terminal outcome from intermediate reasoning steps is notoriously brittle. Value network drift injects high variance into generalized advantage estimation ($\text{GAE}$), causing gradient collapse.
+
+```mermaid
+flowchart TD
+    subgraph PPO_Architecture["Classical PPO Architecture (4 Models in VRAM)"]
+        Actor["Actor Policy π_θ (Active)"]
+        Critic["Critic Value Network V_ϕ (Active, Size of Actor)"]
+        RefModel["Frozen Reference Model π_ref"]
+        RewardModel["Reward Model R_ψ"]
+        Actor & Critic & RefModel & RewardModel --> VRAM_Overload["Massive VRAM Footprint + Value Drift"]
+    end
+    subgraph GRPO_Architecture["DeepSeek GRPO Architecture (Critic-Free, O(1) Memory Overhead)"]
+        GRPO_Actor["Actor Policy π_θ (Single Model in VRAM)"] --> GroupSample["Sample G Outputs per Query: {o_1, o_2, ..., o_G}"]
+        GroupSample --> RuleVerifier["Rule-Based Verifiable Rewards: r_i ∈ {0, 1}"]
+        RuleVerifier --> GroupNorm["Group Advantage Normalization: A_i = (r_i - mean(r)) / std(r)"]
+        GroupNorm --> ClippedSurrogate["Clipped Surrogate Update (Zero Critic Overhead, 50% Memory Savings)"]
+    end
+```
+
+---
+
+### 314.2 The Mathematical Formulation of GRPO
+**Group Relative Policy Optimization (GRPO)** (Shao, Wang, Zhu, et al., DeepSeek-AI, 2024) powers the reasoning emergence in **DeepSeekMath**, **DeepSeek-V3**, and **DeepSeek-R1**. GRPO completely **eliminates the Critic network $V_\phi$**, deriving baseline advantages directly from relative score distributions within a sampled group.
+
+#### A. Group Sampling & Rule-Based Verifiable Scoring
+For each prompt query $q \sim \mathcal{D}$:
+1. The model samples a group of $G$ independent candidate completions (typically $G \in [8, 16]$) from the old policy $\pi_{\theta_{\text{old}}}$:
+   $$\{o_1, o_2, \dots, o_G\} \sim \pi_{\theta_{\text{old}}}(\cdot \mid q)$$
+2. Each completion $o_i$ is evaluated by an automated reward harness, producing scalar rewards $r_i$. In reasoning tasks (DeepSeek-R1), rewards are **rule-based and verifiable**:
+   $$r_i = r_{\text{accuracy}}(o_i) + r_{\text{format}}(o_i)$$
+   where $r_{\text{accuracy}} \in \{0, 1\}$ evaluates exact mathematical ground truth or unit test execution in a Python sandbox, and $r_{\text{format}} \in \{0, 0.1\}$ enforces proper `<think>...</think>` reasoning token separation.
+
+#### B. Group Advantage Standardization
+Instead of estimating advantage via $A_t = R_t - V(s_t)$, GRPO computes the advantage $A_i$ of completion $o_i$ by **normalizing rewards across the sampled group**:
+$$A_i = \frac{r_i - \text{mean}\left(\{r_1, r_2, \dots, r_G\}\right)}{\text{std}\left(\{r_1, r_2, \dots, r_G\}\right) + \epsilon}$$
+- **Self-Balancing Baseline:** If all completions in a group succeed ($r_i = 1$) or all fail ($r_i = 0$), the standard deviation approaches zero, and gradient updates vanish, preventing the model from over-optimizing on trivial prompts.
+- **Relative Excellence:** A completion receives a positive advantage ($A_i > 0$) if and only if its reasoning quality outperforms the peer completions generated for that identical query.
+
+---
+
+### 314.3 The GRPO Clipped Surrogate Objective
+The policy parameters $\theta$ are updated by maximizing the token-level clipped surrogate objective with an analytical KL-divergence penalty:
+
+$$\mathcal{L}_{\text{GRPO}}(\theta) = -\frac{1}{G} \sum_{i=1}^G \frac{1}{|o_i|} \sum_{t=1}^{|o_i|} \left[ \min\left( \frac{\pi_\theta(o_{i, t} \mid q, o_{i, <t})}{\pi_{\text{old}}(o_{i, t} \mid q, o_{i, <t})} A_i, \; \text{clip}\left( \frac{\pi_\theta(o_{i, t} \mid q, o_{i, <t})}{\pi_{\text{old}}(o_{i, t} \mid q, o_{i, <t})}, \; 1 - \epsilon, \; 1 + \epsilon \right) A_i \right) \right] + \beta \, \mathbb{D}_{\text{KL}}(\pi_\theta \,||\, \pi_{\text{ref}})$$
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Prompt as Query q (Math / Code Problem)
+    participant Model as Policy Actor π_θ
+    participant Verifier as Sandboxed Compiler / Math Verifier
+    participant GroupNorm as Group Advantage Engine
+    participant Backprop as Optimizer Update Step
+
+    Prompt->>Model: Query q
+    Model->>Model: Sample G=8 Outputs: o_1, ..., o_8
+    Model->>Verifier: Evaluate 8 Candidate Chains
+    Verifier-->>GroupNorm: Emits Exact Rewards: r_1, ..., r_8
+    GroupNorm->>GroupNorm: Standardize: A_i = (r_i - mean(r)) / std(r)
+    GroupNorm->>Backprop: Compute Clipped Ratio: min(r_t A_i, clip(r_t) A_i)
+    Backprop->>Model: Update Weights θ with ZERO Critic Memory Overhead
+```
+
+#### Analytical KL Regularization (Schulman Estimator)
+To prevent drift from the base model $\pi_{\text{ref}}$, GRPO applies the unbiased, low-variance token-level KL estimator:
+$$\mathbb{D}_{\text{KL}}(\pi_\theta \,||\, \pi_{\text{ref}}) = \frac{\pi_{\text{ref}}(o_{i, t} \mid q, o_{i, <t})}{\pi_\theta(o_{i, t} \mid q, o_{i, <t})} - \log \frac{\pi_{\text{ref}}(o_{i, t} \mid q, o_{i, <t})}{\pi_\theta(o_{i, t} \mid q, o_{i, <t})} - 1$$
+
+---
+
+### 314.4 The Emergence of Autonomous Reasoning (DeepSeek-R1-Zero)
+A monumental breakthrough of GRPO demonstrated in **DeepSeek-R1-Zero** is that applying pure reinforcement learning with verifiable rewards directly to a base model **without any prior Supervised Fine-Tuning (SFT)** triggers an autonomous phase transition in reasoning behavior:
+
+1. **The "Aha! Moment":**
+   As training progresses through thousands of GRPO steps, the model autonomously discovers how to allocate test-time compute. Without human demonstration prompts, it begins emitting phrases like:
+   $$\text{"Wait, let me double check that step...", "Hold on, this formula might be invalid..."}$$
+   and actively backtracks from flawed logical branches to reconstruct correct solutions.
+2. **Dynamic Trajectory Expansion:**
+   Reasoning length expands spontaneously from a few hundred tokens up to over $28\text{k}$ tokens per problem, scaling compute directly in proportion to problem hardness.
+
+---
+
+### 314.5 Empirical Benchmarks Across Post-Training RL Topologies
+
+```mermaid
+flowchart LR
+    subgraph BenchmarkComparison["MATH 500 Accuracy Scaling (70B Parameter Models)"]
+        SFT_Base["SFT Baseline (DeepSeek-V2.5): 62.4%"]
+        PPO_Model["PPO with Learned Critic: 74.2% (High VRAM Crash Rate)"]
+        GRPO_Model["GRPO (DeepSeek-R1): 91.2% (State-of-the-Art, 50% Lower VRAM)"]
+    end
+```
+
+| Dimension | Classical PPO (Schulman et al.) | REINFORCE Leave-One-Out (RLOO) | Group Relative Policy Optimization (GRPO) |
+| :--- | :--- | :--- | :--- |
+| **Critic Network ($V_\phi$)** | **Required (Full Model Size)** | Eliminated | **Eliminated (Critic-Free)** |
+| **Active Models in VRAM** | $4$ (Actor, Critic, Ref, Reward) | $2$ (Actor, Ref) | **$2$ (Actor, Ref)** |
+| **Advantage Estimation** | Generalized Advantage ($\text{GAE}$) | Leave-One-Out Mean | **Group Mean & Variance Standardization** |
+| **Reward Compatibility** | Dense Token / Terminal Reward | Terminal Scalar | **Rule-Based Verifiable + Format Tags** |
+| **VRAM Footprint / Node** | $100\%$ (High OOM Risk) | $\approx 55\%$ | **$\approx 50\%$ (Enables 70B+ on 8xH100)** |
+| **MATH 500 Benchmark** | $74.2\%$ | $78.6\%$ | **$91.2\%$ (Matches OpenAI o1)** |
+| **AIME 2024 Pass@1** | $28.4\%$ | $34.2\%$ | **$79.8\%$ (Autonomous Self-Correction)** |

@@ -205,6 +205,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/graph_of_thoughts.md|Graph Of Thoughts]]
 - [[raw_research/snippets/graphrag_hierarchical_community_summarization.md|Graphrag Hierarchical Community Summarization]]
 - [[raw_research/snippets/grok_system_prompt_steering.md|Grok System Prompt Steering]]
+- [[raw_research/snippets/grpo_group_relative_policy_optimization.md|Grpo Group Relative Policy Optimization]]
 - [[raw_research/snippets/grpo_mechanics.md|Grpo Mechanics]]
 - [[raw_research/snippets/h2o_heavy_hitter_oracle_kv_cache.md|H2O Heavy Hitter Oracle Kv Cache]]
 - [[raw_research/snippets/h2o_heavy_hitter_submodular_kv.md|H2O Heavy Hitter Submodular Kv]]
