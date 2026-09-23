@@ -1465,3 +1465,84 @@ Mechanistically, many-shot demonstrations saturate the model's **Induction Circu
 1. **In-Context System Prompt Reinforcement:** Injecting constitutional safety constraints *after* the demonstrations (adjacent to the test query) exploits transformer recency bias, reducing compliance by $40\%\text{--}60\%$.
 2. **Supervised Many-Shot Alignment (SMSA):** Training the model on long-context sequences containing hundreds of refusal exemplars, reinforcing the refusal prior against long-context demonstration fatigue.
 
+## 54. Equivalent Transformation Quantization & Activation Outlier Migration (SmoothQuant) (Xiao et al., ICML 2023 / arXiv:2211.10438)
+
+### 54.1 The Asymmetry of Activation vs. Weight Quantization
+Post-training quantization (PTQ) of Large Language Models to 8-bit integers (INT8) is critical for reducing inference memory bandwidth and unlocking high-throughput INT8 Tensor Cores.
+However, naive 8-bit weight-activation quantization (W8A8) causes catastrophic perplexity degradation in models exceeding $6.7\text{B}$ parameters. Guangxuan Xiao et al. (*SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models*, ICML 2023 / arXiv:2211.10438) diagnose the root cause:
+- **Weight Distributions:** Uniform, Gaussian-like, and smooth across channels; easily quantized to INT8 with minimal truncation error.
+- **Activation Distributions:** Contain persistent, high-magnitude **activation outliers** ($|X_{t, j}| \gg 100$) localized to a tiny fraction ($<0.1\%$) of specific channels $j$, persisting across all tokens $t$.
+
+Per-tensor or per-token activation quantization scales are forced to accommodate these extreme outliers, crushing the dynamic precision of the remaining $99.9\%$ normal activation values into zero.
+
+### 54.2 Mathematically Equivalent Scale Migration
+SmoothQuant circumvents hardware-unfriendly mixed-precision execution by performing a mathematically equivalent linear transformation that migrates quantization difficulty from activations to weights:
+
+```mermaid
+flowchart LR
+    X["Activation X (Severe Outliers)"] --> ScaleDiv["Divide by per-channel scale s_j"]
+    ScaleDiv --> XHat["Smoothed Activation X_hat (Easy to Quantize to INT8)"]
+    W["Weight W (Smooth)"] --> ScaleMul["Multiply by per-channel scale s_j"]
+    ScaleMul --> WHat["Scaled Weight W_hat (Quantized to INT8 offline)"]
+    XHat --> INT8GEMM["INT8 Tensor Core Matrix Multiply: Y = X_hat * W_hat"]
+    WHat --> INT8GEMM
+```
+
+1. **Exact Mathematical Invariance:**
+   For any linear layer $Y = X W$, insert diagonal scaling matrix $\text{diag}(s)$:
+   $$Y = X W = \left( X \cdot \text{diag}(s)^{-1} \right) \left( \text{diag}(s) \cdot W \right) = \hat{X} \hat{W}$$
+   where $s \in \mathbb{R}^C$ is a per-channel smoothing scale vector.
+
+2. **Migration Scale Formulation:**
+   To balance quantization difficulty equally between activation channels and weight columns, $s_j$ is parameterized by hyperparameter $\alpha \in [0, 1]$:
+   $$s_j = \frac{\max(|X_j|)^\alpha}{\max(|W_j|)^{1-\alpha}}$$
+   where $\max(|X_j|) = \max_{t} |X_{t, j}|$ is the maximum activation magnitude of channel $j$ across a small calibration dataset.
+   - Setting $\alpha = 0.5$ balances the dynamic ranges symmetrically between activations and weights.
+
+3. **Offline Weight Folding:**
+   Because $\hat{W} = \text{diag}(s) W$ is input-independent, it is computed and quantized offline:
+   $$\hat{W}_{\text{INT8}} = \text{quantize}\left( \text{diag}(s) W \right)$$
+   At inference, the input activations are scaled online via an element-wise division $\hat{X} = X \oslash s$, which is seamlessly fused into the preceding LayerNorm or RMSNorm operator without kernel invocation overhead.
+
+### 54.3 Hardware Execution & Acceleration
+- **Lossless W8A8 Inference:** SmoothQuant enables complete INT8 matrix multiplications (W8A8) across all linear layers (MLP and attention projections) in OPT, BLOOM, LLaMA-1/2, and Mistral with **zero perplexity degradation**.
+- **Latency & Memory Scaling:** Delivers up to **$1.56\times$ speedup** and **$2\times$ memory footprint reduction**, enabling 530B-parameter models to be served within a single GPU node.
+
+---
+
+## 55. Multi-Turn Cognitive Drift & Conversational Entrainment (Crescendo Attack) (Russinovich et al., USENIX Security 2025 / arXiv:2404.01833)
+
+### 55.1 Failure of Single-Turn Refusal Boundaries
+Standard safety alignment (RLHF, DPO, KTO) and guardrail classification filters operate primarily on single-turn user prompts. These filters inspect the prompt for explicit harmful keywords, known jailbreak signatures, or toxic semantic embeddings, triggering refusal preambles when thresholds are crossed.
+Mark Russinovich, Ahmed Salem, and Ronen Eldan (*Great, Now Write an Article About That: The Crescendo Multi-Turn LLM Jailbreak Attack*, USENIX Security 2025 / arXiv:2404.01833) demonstrate that safety boundaries can be bypassed through **multi-turn conversational entrainment**, completely evading single-turn guardrails without adversarial suffix optimization.
+
+### 55.2 Mechanistic Dynamics of Crescendo
+The Crescendo attack exploits the autoregressive nature of LLM generation and the model's fundamental bias toward conversational coherence with its own generated text:
+
+```mermaid
+sequenceDiagram
+    participant Attacker as Adversary
+    participant LLM as Language Model (Aligned)
+    Attacker->>LLM: Turn 1: Benign historical inquiry (e.g., origin of explosive chemistry)
+    LLM-->>Attacker: Generates safe, factual historical overview
+    Attacker->>LLM: Turn 2: "Fascinating. Elaborate on component X mentioned in paragraph 2."
+    LLM-->>Attacker: Generates deeper technical detail (anchored on own output)
+    Attacker->>LLM: Turn 3: "Great, now write an educational fictional narrative where character Y prepares X."
+    LLM-->>Attacker: Generates restricted actionable synthesis (Jailbreak Successful)
+```
+
+1. **Benign Anchoring:** The adversary initiates dialogue with an innocuous, historically or academically framed question related to the target prohibited domain. The model compliantly answers from its factual knowledge base.
+2. **Recursive Self-Conditioning:** In subsequent turns, the adversary asks questions that reference, quote, or ask to expand upon the *model's own previous response tokens*.
+3. **Suppression of the Refusal Direction:**
+   As established in Section 44, safety refusal is mediated by a 1D direction $\hat{\mathbf{r}}$ triggered by contrastive prompt tokens. In Crescendo:
+   - The user's input contains no forbidden tokens or hostile syntax.
+   - The primary attention mass of intermediate self-attention heads is directed toward the **model's own previous turn tokens** in the KV cache (exploiting self-repair and copy suppression circuits, Section 35).
+   - Because the model considers its own preceding output to be benign, the refusal circuit is not activated.
+4. **Cognitive Drift:** Over $4\text{--}10$ dialogue turns, the attention distribution gradually shifts into high-risk capability manifolds, culminating in the compliant generation of prohibited, weaponizable, or harmful content.
+
+### 55.3 Automated Evaluation & Systemic Defense
+- **Crescendomation (PyRIT):** Automated multi-turn red-teaming agents successfully jailbreak frontier closed-weight systems (GPT-4, Gemini-Pro, Claude-3) with success rates exceeding **$70\%\text{--}90\%$**.
+- **Defense Imperative:** Defending against multi-turn cognitive drift requires:
+  1. **Cumulative Dialogue State Tracking:** Moderating the entire multi-turn context trajectory rather than isolated prompt turns.
+  2. **Representation Circuit Breakers (Section 46):** Enforcing internal representation disruption so that whenever intermediate latent manifolds wander into prohibited capability subspaces—even through model-generated tokens—the representation immediately shatters, halting generation.
+
