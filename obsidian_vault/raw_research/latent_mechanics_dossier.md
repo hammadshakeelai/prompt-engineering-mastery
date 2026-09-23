@@ -11795,3 +11795,109 @@ flowchart LR
 - **Guaranteed P99 Latency SLA:** Eliminates conversational freezing by bounding the maximum execution time of any individual batch to $\le 40\,\text{ms}$.
 - **Massive Pipeline Scaling:** Yields up to **$6.9\times$ throughput expansion** on large multi-GPU pipeline configurations by transforming pipeline bubbles into useful decode computations.
 - **Production Standard:** Chunked-prefill principles have since been adopted as core primitives in vLLM (`--enable-chunked-prefill`) and TensorRT-LLM.
+
+---
+
+## 313. Sequoia & SpecInfer: Tree-Structured Speculative Decoding, Dynamic Programming Tree Optimization & Exact Distribution Invariance (Chen et al., NeurIPS 2024 Spotlight; Miao et al., ASPLOS 2024)
+
+### 313.1 The Linear Chain Bottleneck in Speculative Decoding
+Speculative decoding (Leviathan et al., ICML 2023; Chen et al., 2023) accelerates autoregressive generation by using a small draft model $q(x \mid x_{<t})$ to speculate $K$ consecutive tokens, which are then verified in parallel by the target model $p(x \mid x_{<t})$ in a single forward pass.
+
+However, standard speculative decoding generates a **strictly linear chain** of candidate tokens:
+$$x_1 \to x_2 \to x_3 \to \dots \to x_K$$
+**The Early-Rejection Pathology:**
+If token $x_2$ is rejected by the verifier, the entire remaining draft chain $\{x_3, \dots, x_K\}$ is immediately discarded, regardless of whether those downstream tokens would have been accepted. Because acceptance probability decays exponentially with chain length ($\mathbb{P}[\text{accept } K] \approx \alpha^K$), linear speculative decoding plateaus at an expected acceptance length of only $\mathbb{E}[L] \approx 1.5\text{--}2.5$ tokens per step, leaving GPU Tensor Cores severely underutilized.
+
+```mermaid
+flowchart TD
+    subgraph LinearDraft["Linear Chain Speculation (Leviathan et al.)"]
+        DraftChain["Chain: x_1 -> x_2 -> x_3 -> x_4 -> x_5"] --> TargetVerify["Verify with Target Model"]
+        TargetVerify --> RejectAt2["x_2 Rejected! -> Discards x_3, x_4, x_5!"]
+        RejectAt2 --> LowSpeedup["Speedup Caps at 1.8x - 2.2x"]
+    end
+    subgraph TreeDraft["Tree-Structured Speculation (SpecInfer & Sequoia, NeurIPS 2024)"]
+        Tree["Draft Tree T: Branches along Top-k Choices"] --> TreeAttn["Verify Full Tree in 1 Forward Pass via Tree Attention"]
+        TreeAttn --> AcceptPath["Accepts Deepest Valid Path (e.g., x_1 -> x'_2 -> x_3 -> x_4)"]
+        AcceptPath --> HighSpeedup["Speedup Reaches 4.04x - 10.33x with ZERO Quality Loss"]
+    end
+```
+
+---
+
+### 313.2 Tree Attention Mechanics
+**SpecInfer** (Miao et al., ASPLOS 2024) and **Sequoia** (Chen et al., NeurIPS 2024 Spotlight) generalize speculation from linear chains to **arbitrary directed token trees** $\mathcal{T} = (\mathcal{V}_{\mathcal{T}}, \mathcal{E}_{\mathcal{T}})$.
+
+1. **Tree Attention Mask Formulation:**
+   To evaluate all nodes in the speculative tree simultaneously in a single forward execution without inter-branch token leakage, the target model employs a **Tree Attention Mask** $M \in \{0, -\infty\}^{|\mathcal{T}| \times |\mathcal{T}|}$:
+   $$M_{i, j} = \begin{cases} 0 & \text{if } j \in \text{Ancestors}(i) \cup \{i\} \\ -\infty & \text{otherwise} \end{cases}$$
+   Every node $i$ attends strictly to its ancestors along its unique path from the root, allowing dozens of branching hypotheses to be verified concurrently in a single batch.
+
+```mermaid
+flowchart LR
+    subgraph TreeTopology["Tree Attention Topology"]
+        Root["Token x_1"] --> B1["Branch 1: x_2A"]
+        Root --> B2["Branch 2: x_2B"]
+        B1 --> B11["x_3A1"]
+        B1 --> B12["x_3A2"]
+        B2 --> B21["x_3B1"]
+    end
+    subgraph AttentionMaskMatrix["Causal Tree Attention Mask Matrix M"]
+        Mask["Diagonal Block Mask: B11 attends to [Root, B1, B11]; B21 attends to [Root, B2, B21]; Cross-Branch Attention = -inf"]
+    end
+    TreeTopology --> AttentionMaskMatrix
+```
+
+---
+
+### 313.3 Dynamic Programming Tree Structure Optimization (Sequoia)
+A central challenge in tree speculative decoding is **how to partition a token budget $K$ (e.g. $K=64$) across tree depth and width**. Deep, narrow trees maximize peak speedup on predictable text, while shallow, wide trees maximize robustness on high-entropy text.
+
+**Sequoia** (Chen et al., NeurIPS 2024) solves this via an optimal **Dynamic Programming (DP)** algorithm:
+
+Let $V(d, k)$ denote the maximum expected accepted tokens for a sub-tree of depth $d$ allocated a remaining budget of $k$ tokens. Let $P(\text{accept} \mid b)$ be the conditional acceptance probability of branching factor $b$:
+$$V(d, k) = \max_{b \in \{1, \dots, k\}} \left\{ P(\text{accept } b) \cdot \left( 1 + \sum_{i=1}^b V(d - 1, k_i) \right) \right\} \quad \text{s.t. } \sum_{i=1}^b k_i = k - b$$
+
+By solving this recurrence relation offline over calibration data, Sequoia derives the **mathematically optimal tree topology $\mathcal{T}^\star$** for any arbitrary draft model and target model pair.
+
+---
+
+### 313.4 Exact Distribution Invariance & Multi-Candidate Rejection Sampling
+To maintain rigorous zero-hallucination compliance, tree speculative decoding must guarantee that the final generated text follows the target distribution $p(x)$ **identically**, with zero distribution drift ($\mathcal{D}_{\text{TV}} = 0$).
+
+1. **Multi-Candidate Verification Algorithm:**
+   Let $\mathcal{C}(u) = \{v_1, \dots, v_b\}$ be the children of node $u$ in the tree. The target model computes probabilities $p(v_i \mid x_{\le u})$ and the draft model provides $q(v_i \mid x_{\le u})$.
+2. **Sequential Acceptance Probability:**
+   The algorithm evaluates candidates sequentially:
+   $$\alpha(v_i) = \min\left( 1, \; \frac{p(v_i \mid x_{\le u})}{q(v_i \mid x_{\le u})} \right)$$
+   If candidate $v_i$ is accepted, verification proceeds down its subtree.
+3. **Targeted Resampling on Rejection:**
+   If all children are rejected, a recovery token is sampled from the residual target distribution:
+   $$p_{\text{residual}}(v) = \frac{\max(0, \; p(v \mid x_{\le u}) - q(v \mid x_{\le u}))}{\sum_{w} \max(0, \; p(w \mid x_{\le u}) - q(w \mid x_{\le u}))}$$
+   *Proof (Miao et al., 2024):* The marginal probability of emitting token $v$ matches $p(v \mid x_{\le u})$ exactly, proving **strict distribution invariance**.
+
+---
+
+### 313.5 Quantitative Benchmarks Across Hardware Topologies
+
+```mermaid
+flowchart LR
+    subgraph SpeedupMatrix["End-to-End Generation Speedup (Llama-2-70B Target + Llama-2-7B Draft)"]
+        Vanilla["Autoregressive Baseline: 1.00x"]
+        LinearSpec["Linear Speculation (K=5): 2.14x Speedup"]
+        SpecInferTree["SpecInfer Tree (Fixed Tree): 2.85x Speedup"]
+        SequoiaDP["Sequoia (Hardware-Aware DP Tree): 4.04x Speedup on A100 (10.33x on L40)"]
+    end
+```
+
+| Method | Speculation Topology | Budget $K$ | Expected Accepted Tokens / Step ($\mathbb{E}[L]$) | A100 Speedup | L40 Speedup | Distribution Shift ($\mathcal{D}_{\text{TV}}$) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Autoregressive Baseline** | None | $0$ | $1.00$ | $1.00\times$ | $1.00\times$ | $0.00$ |
+| **Linear Speculative (Leviathan)**| Linear Chain | $5$ | $2.12$ | $1.95\times$ | $2.14\times$ | $0.00$ |
+| **SpecInfer (Miao et al.)** | Static Tree | $32$ | $3.24$ | $2.62\times$ | $3.15\times$ | $0.00$ |
+| **Medusa (Multi-Head)** | Static Heads | $64$ | $2.85$ | $2.30\times$ | $2.75\times$ | $>0.05$ (Heuristic) |
+| **Sequoia (Chen et al. 2024)**| **DP Optimal Tree** | **$64$** | **$4.42$** | **$4.04\times$** | **$10.33\times$** | **$0.00$ (Provably Exact)** |
+
+**Key Systems Findings:**
+- **Arithmetic Saturation on GPUs:** Because modern GPU Tensor Cores are memory-bandwidth bound during decoding, verifying a 64-token tree takes only $\approx 8\%$ more wall-clock time than verifying a single token, converting idle compute into speculative acceleration.
+- **Hardware-Aware Adaptability:** On high-FLOP architectures (NVIDIA L40), Sequoia reaches an astonishing **$10.33\times$ speedup** without retraining or modifying model weights.
+- **Provable Safety:** Guarantees **$100\%$ mathematical fidelity** to the target model's output distribution across all temperature settings.

@@ -374,6 +374,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/semantic_entropy_hallucination_detection.md|Semantic Entropy Hallucination Detection]]
 - [[raw_research/snippets/semantic_entropy_pruning.md|Semantic Entropy Pruning]]
 - [[raw_research/snippets/semantic_kernel_arch.md|Semantic Kernel Arch]]
+- [[raw_research/snippets/sequoia_specinfer_tree_speculative_decoding.md|Sequoia Specinfer Tree Speculative Decoding]]
 - [[raw_research/snippets/set_of_mark_visual_grounding.md|Set Of Mark Visual Grounding]]
 - [[raw_research/snippets/sglang_radix_jumpforward.md|Sglang Radix Jumpforward]]
 - [[raw_research/snippets/simplex_geometry_superposition.md|Simplex Geometry Superposition]]
