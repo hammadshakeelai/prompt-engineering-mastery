@@ -62,6 +62,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[research_engine/research_pivot_08.md]]
 - [[research_engine/research_pivot_09.md]]
 - [[research_engine/research_pivot_10.md]]
+- [[research_engine/research_pivot_11.md]]
 
 ## 🧩 5. Atomic Concept Snippets Knowledge Graph
 - [[raw_research/snippets/activation_steering_vectors.md|Activation Steering Vectors]]
@@ -187,6 +188,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/model_merging_slerp_ties_dare.md|Model Merging Slerp Ties Dare]]
 - [[raw_research/snippets/mooncake_disaggregated_kv_architecture.md|Mooncake Disaggregated Kv Architecture]]
 - [[raw_research/snippets/mt_bench_arena.md|Mt Bench Arena]]
+- [[raw_research/snippets/mtp_multi_token_prediction_architecture.md|Mtp Multi Token Prediction Architecture]]
 - [[raw_research/snippets/multi_agent_debate.md|Multi Agent Debate]]
 - [[raw_research/snippets/multi_query_retriever.md|Multi Query Retriever]]
 - [[raw_research/snippets/multi_token_prediction_mtp.md|Multi Token Prediction Mtp]]
@@ -260,6 +262,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/speculative_rag.md|Speculative Rag]]
 - [[raw_research/snippets/speech_native_latent_audio_steerability.md|Speech Native Latent Audio Steerability]]
 - [[raw_research/snippets/spin_self_play_fine_tuning.md|Spin Self Play Fine Tuning]]
+- [[raw_research/snippets/sppo_self_play_nash_alignment.md|Sppo Self Play Nash Alignment]]
 - [[raw_research/snippets/state_space_duality_mamba2.md|State Space Duality Mamba2]]
 - [[raw_research/snippets/step_back_prompting.md|Step Back Prompting]]
 - [[raw_research/snippets/streaming_llm_sinks.md|Streaming Llm Sinks]]
@@ -284,5 +287,6 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/universal_self_consistency.md|Universal Self Consistency]]
 - [[raw_research/snippets/visual_cot_and_spatial_prompting.md|Visual Cot And Spatial Prompting]]
 - [[raw_research/snippets/xgrammar_constrained_decoding.md|Xgrammar Constrained Decoding]]
+- [[raw_research/snippets/yarn_rope_frequency_scaling.md|Yarn Rope Frequency Scaling]]
 - [[raw_research/snippets/yoco_you_only_cache_once.md|Yoco You Only Cache Once]]
 - [[raw_research/snippets/zep_memory.md|Zep Memory]]

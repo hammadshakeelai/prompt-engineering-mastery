@@ -1731,6 +1731,152 @@ The critical theoretical breakthrough in Snell et al. is that **the compute-opti
 
 - **Compute-Optimal Routing:** By training a lightweight difficulty classifier or using early step-entropy to route questions to the optimal search mechanism, systems achieve the same target accuracy on MATH and GSM8K with **$>4\times$ less compute** compared to uniform Best-of-$N$.
 
-### 59.4 Empirical Frontier Results & Parameter Equivalence
 - **Parameter Trade-off Invariance:** A **7B parameter model** scaled with compute-optimal test-time compute matches or exceeds the performance of a **$14\times$ larger model (70B+)** run with standard greedy decoding, using identical total compute budgets.
 - **Foundation for Frontier Reasoning Models:** This formal compute-optimal framework establishes the theoretical architecture underpinning modern reasoning models (OpenAI o1/o3, DeepSeek-R1), where inference compute is dynamically budgeted according to task difficulty.
+
+## 60. Multi-Token Prediction (MTP) Speculative Architecture & Future Planning (DeepSeek-V3, 2024 / Gloeckle et al., Meta 2024)
+
+### 60.1 Next-Token Prediction Bottlenecks & Future Token Lookahead
+Standard autoregressive language modeling minimizes next-token cross-entropy:
+$$\mathcal{L}_{\text{NTP}} = -\sum_{i=1}^T \log P(x_i \mid x_{<i})$$
+While theoretically sound, pure next-token prediction exhibits fundamental limitations:
+1. **Myopic Representations:** The loss enforces greediness at position $i$ without incentivizing the representation to anticipate multi-step syntax or semantic dependencies $k$ steps ahead ($x_{i+1}, x_{i+2}$).
+2. **Inference Latency Tax:** During generation, memory bandwidth saturation limits decoding throughput to 1 token per forward model pass.
+
+Fabian Gloeckle et al. (*Better & Faster Large Language Models via Multi-token Prediction*, Meta 2024 / arXiv:2404.19737) and DeepSeek-AI (*DeepSeek-V3 Technical Report*, 2024 / arXiv:2412.19437) introduce **Multi-Token Prediction (MTP)**: training the transformer to predict $D$ future tokens simultaneously using shared trunk representations and auxiliary prediction heads.
+
+```mermaid
+flowchart TD
+    subgraph MainTrunk["Main Transformer Trunk (L Layers)"]
+        Tokens["Tokens x_1 .. x_i"] --> Repr["Hidden State h_i^(L)"]
+        Repr --> UnembedMain["Main Unembedding Head W_U"]
+        UnembedMain --> Pred1["Predict Token x_i+1 (Main NTP Loss)"]
+    end
+
+    subgraph MTPModule["MTP Module 1 (Speculative Draft Head)"]
+        Repr --> Fusion["Feature Projection & Fusion [h_i^(L); Emb(x_i+1)]"]
+        Fusion --> MTPTrans["MTP Transformer Block (Shared/Private)"]
+        MTPTrans --> UnembedShared["Shared Unembedding Head W_U"]
+        UnembedShared --> Pred2["Predict Token x_i+2 (MTP Auxiliary Loss)"]
+    end
+
+    Pred1 -.-> SpecVerification["Inference Dual-Token Verification Pass"]
+    Pred2 -.-> SpecVerification
+```
+
+### 60.2 DeepSeek-V3 MTP Module Architecture
+DeepSeek-V3 cascades $D$ sequential MTP modules ($D=1$ in primary production). At depth $k \in \{1, \dots, D\}$:
+1. **Representation Fusion:** The $k$-th MTP module takes the representation $h_i^{(k-1)}$ from the preceding depth and the embedding of token $x_{i+k}$:
+   $$u_i^{(k)} = \operatorname{RMSNorm}\left( W_{\text{proj}}^{(k)} \left[ h_i^{(k-1)} \,\|\, \operatorname{Embedding}(x_{i+k}) \right] \right)$$
+2. **Transformer Block Transformation:** $u_i^{(k)}$ is processed through a dedicated transformer block (comprising Multi-Head Latent Attention and MoE feed-forward network):
+   $$h_i^{(k)} = \operatorname{MTP-Block}^{(k)}\left(u_i^{(k)}\right)$$
+3. **Logit Prediction via Shared Unembedding:** To conserve parameter capacity and enforce vocabulary alignment, all MTP modules share the main model's unembedding matrix $W_U$:
+   $$P_{\text{MTP}}^{(k)}(x_{i+k+1} \mid x_{\le i}) = \operatorname{Softmax}\left( W_U h_i^{(k)} \right)$$
+4. **Total Multi-Token Objective:**
+   $$\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{NTP}} + \sum_{k=1}^D \lambda_k \mathcal{L}_{\text{MTP}}^{(k)}$$
+   where $\lambda_k = 0.3$, ensuring trunk representations focus primarily on immediate accuracy while integrating forward planning signals.
+
+### 60.3 Zero-Overhead Speculative Decoding Mechanics
+Unlike traditional speculative decoding which requires a secondary draft model running in a distinct runtime, DeepSeek-V3 repurposes the MTP module as an integrated draft generator:
+1. On forward pass $t$, the main model emits token $x_{t+1}$, while the MTP module simultaneously emits candidate token $\tilde{x}_{t+2}$.
+2. On forward pass $t+1$, the main model executes a single dual-token verification step over $(x_{t+1}, \tilde{x}_{t+2})$. If $\tilde{x}_{t+2}$ is accepted, two tokens are produced in a single step, and the MTP module immediately drafts $\tilde{x}_{t+3}$.
+3. **Performance:** Implemented in SGLang and vLLM, MTP speculative decoding yields **$1.8\times$ decoding speedup** with zero KV cache duplication and $<2\%$ parameter footprint.
+
+---
+
+## 61. YaRN: Frequency-Band Partitioned RoPE Scaling & Attention Entropy Calibration (Peng et al., ICLR 2024)
+
+### 61.1 Rotary Position Embeddings (RoPE) & Extrapolation Breakdown
+Rotary Position Embedding (RoPE, Su et al., 2024) encodes relative token position $m$ by rotating adjacent pairs of Query and Key vectors in 2D orthogonal subspaces:
+$$R_{\Theta, m}^d = \operatorname{diag}\left( R_{\theta_1, m}, R_{\theta_2, m}, \dots, R_{\theta_{d/2}, m} \right), \quad \theta_i = b^{-2(i-1)/d}$$
+where $b=10000$. For a target sequence length $L' = s \cdot L$ (context expansion ratio $s > 1$):
+- **Position Interpolation (PI):** Directly scales positions $m' = m / s$. This preserves global distances but compresses high-frequency rotation angles, severely corrupting local grammar, token identity, and punctuation awareness.
+- **NTK-Aware RoPE:** Disperses interpolation across the base $b' = b \cdot s^{d/(d-2)}$, but fails to account for the physical wavelength of specific Fourier components relative to context bounds.
+
+Bowen Peng, Jeffrey Quesnelle, Honglu Fan, and Enrico Shippole (*YaRN: Efficient Context Window Extension of Large Language Models*, ICLR 2024 / arXiv:2309.00071) formulate a frequency-band partitioned interpolation scheme coupled with attention entropy calibration.
+
+```mermaid
+flowchart LR
+    Dim["Embedding Subspace Dimension d"] --> Ratio["Wavelength Ratio r_d = 2*pi / theta_d"]
+    Ratio --> Split{"Wavelength Check"}
+    Split -- "r_d < alpha (Short Wavelength)" --> BandHigh["High Frequency: No Interpolation (Preserve Local Grammar)"]
+    Split -- "r_d > beta (Long Wavelength)" --> BandLow["Low Frequency: Full Linear Interpolation (Scale Distances)"]
+    Split -- "alpha <= r_d <= beta" --> BandMid["Mid Frequency: Ramp Function gamma(r_d) Smooth Blend"]
+    
+    BandHigh --> Combine["YaRN Modulated RoPE"]
+    BandLow --> Combine
+    BandMid --> Combine
+    Combine --> EntropyCorrection["Softmax Temperature Scaling: sqrt(t) = sqrt(0.1*ln(s) + 1)"]
+    EntropyCorrection --> ExtendedAttention["Zero-Degradation 128k Context Attention"]
+```
+
+### 61.2 Frequency-Band Partitioning Formulation
+YaRN categorizes each dimension's wavelength $\lambda_i = \frac{2\pi}{\theta_i}$ relative to the original pretraining context length $L$:
+$$r_i = \frac{L}{\lambda_i} = \frac{L \theta_i}{2\pi}$$
+A smooth ramp function $\gamma(r_i)$ governs the degree of interpolation:
+$$\gamma(r_i) = \begin{cases} 0 & \text{if } r_i > \beta \quad (\text{High frequency: } \lambda_i \ll L) \\ 1 & \text{if } r_i < \alpha \quad (\text{Low frequency: } \lambda_i \gg L) \\ \frac{\beta - r_i}{\beta - \alpha} & \text{if } \alpha \le r_i \le \beta \quad (\text{Intermediate transition}) \end{cases}$$
+where $\alpha=1$ and $\beta=32$. The effective YaRN frequency $\theta'_i$ is:
+$$\theta'_i = \left(1 - \gamma(r_i)\right) \theta_i + \gamma(r_i) \frac{\theta_i}{s}$$
+- **High-frequency components ($r_i > \beta$):** Remain completely un-interpolated ($\theta'_i = \theta_i$), ensuring exact local positional precision.
+- **Low-frequency components ($r_i < \alpha$):** Are fully interpolated by factor $s$, mapping long-range context distances smoothly into the trained activation space.
+
+### 61.3 Attention Entropy Calibration & Temperature Scaling
+As context length scales by $s = 32\times$ ($4\text{k} \to 128\text{k}$), tokens attend across vastly more keys. By Jensen's inequality, the entropy of the attention distribution expands:
+$$\mathcal{H}(\operatorname{Softmax}(q K^\top / \sqrt{d})) \uparrow$$
+causing attention weights to dilute and degrading retrieval sharpness. YaRN counteracts this entropy inflation by modulating the attention softmax temperature:
+$$\operatorname{Attention}(Q, K, V) = \operatorname{Softmax}\left( \frac{Q K^\top}{\sqrt{d_k} \cdot \sqrt{t}} \right) V$$
+where $\sqrt{t}$ is analytically calibrated to the expansion factor:
+$$\sqrt{t} = \sqrt{0.1 \ln(s) + 1}$$
+This temperature correction perfectly maintains the original attention peakiness across 128k sequences.
+
+- **Empirical Efficiency:** YaRN fine-tunes Llama-2-7B/13B to **128k context** requiring **$10\times$ fewer training tokens** and **$2.5\times$ fewer training steps** than standard position interpolation, achieving near-zero perplexity loss across the entire context window.
+
+---
+
+## 62. Self-Play Preference Optimization (SPPO) & Game-Theoretic Nash Alignment (Wu et al., ICML 2024)
+
+### 62.1 The Intransitivity Crisis in Bradley-Terry Preference Modeling
+All reward-model-based alignment frameworks (RLHF, DPO, SimPO) rest upon the **Bradley-Terry (BT) axiom**:
+$$P(y_1 \succ y_2 \mid x) = \sigma(r(x, y_1) - r(x, y_2))$$
+This formulation mathematically imposes **strong transitivity**:
+$$\text{If } y_1 \succ y_2 \text{ and } y_2 \succ y_3, \quad \text{then } y_1 \succ y_3$$
+In empirical human evaluation and LLM self-play, **preferences are systematically non-transitive**, exhibiting Condorcet paradoxes and cyclic preference loops ($y_1 \succ y_2 \succ y_3 \succ y_1$). Forcing cyclic human preferences into a scalar reward function $r(x, y)$ induces catastrophic reward hacking, mode collapse, and alignment instability.
+
+Yue Wu, Zhiqing Sun, Huizhuo Yuan, Jiayi Shen, Hai Zhao, and Quanquan Gu (*Self-Play Preference Optimization for Language Model Alignment*, UCLA / ICML 2024 / arXiv:2405.00675) reframe language model alignment as finding the **Nash Equilibrium of a two-player symmetric zero-sum game**.
+
+```mermaid
+flowchart TD
+    subgraph SelfPlayIter["SPPO Iteration k"]
+        PromptPool["Prompt Distribution D"] --> GenP["Current Policy pi_k"]
+        GenP --> SamplePairs["Sample Response Pairs y_1, y_2 ~ pi_k(. | x)"]
+        SamplePairs --> PrefOracle["Preference Oracle / Judge P(y_1 > y_2 | x)"]
+        PrefOracle --> WinRate["Compute Empirical Win-Rate Matrix W_k(x)"]
+        WinRate --> MWU["Multiplicative Weights Update (MWU) / Mirror Descent"]
+        MWU --> TargetPolicy["Compute Target Mixture Distribution p_(k+1)"]
+    end
+
+    TargetPolicy --> SFTLoss["Supervised Parameter Update: L_SPPO(theta)"]
+    SFTLoss --> NextGen["Updated Policy pi_(k+1) -> Converges to Nash Equilibrium pi*"]
+```
+
+### 62.2 Two-Player Zero-Sum Game Formulation
+Let $\mathcal{P}(y_1 \succ y_2 \mid x)$ denote the probability that response $y_1$ is preferred over response $y_2$ given prompt $x$. The expected payoff for policy $\pi_1$ playing against policy $\pi_2$ is:
+$$\mathcal{U}(\pi_1, \pi_2) = \mathbb{E}_{x \sim \mathcal{D}, y_1 \sim \pi_1(\cdot \mid x), y_2 \sim \pi_2(\cdot \mid x)} \left[ \mathcal{P}(y_1 \succ y_2 \mid x) - \frac{1}{2} \right]$$
+Because the game is symmetric ($\mathcal{U}(\pi_1, \pi_2) = -\mathcal{U}(\pi_2, \pi_1)$), von Neumann's Minimax Theorem guarantees the existence of a **Nash Equilibrium policy $\pi^*$** satisfying:
+$$\mathcal{U}(\pi, \pi^*) \le \mathcal{U}(\pi^*, \pi^*) = 0, \quad \forall \pi$$
+At the Nash equilibrium, the aligned model cannot be exploited by any opponent policy, rendering it immune to cyclic gaming and reward hacking.
+
+### 62.3 Multiplicative Weights Update & SPPO Objective
+SPPO solves for $\pi^*$ iteratively without external gold demonstrations. In iteration $k$:
+1. **Self-Play Response Generation:** The policy samples $K$ responses $\{y^{(1)}, \dots, y^{(K)}\} \sim \pi_k(\cdot \mid x)$ for each prompt $x$.
+2. **Oracle Pairwise Comparison:** An automated preference oracle evaluates the pairwise win-rate matrix $A_{i, j} = \mathcal{P}(y^{(i)} \succ y^{(j)} \mid x) - \frac{1}{2}$.
+3. **Multiplicative Weights Update (MWU):** The target response probability distribution $p_{k+1}(y \mid x)$ is updated via mirror descent:
+   $$p_{k+1}(y^{(i)} \mid x) \propto p_k(y^{(i)} \mid x) \exp\left( \eta \cdot \bar{A}_i \right)$$
+   where $\bar{A}_i = \frac{1}{K} \sum_{j=1}^K A_{i, j}$ is the average win margin of response $i$ against its self-play peers.
+4. **Policy Parameter Regression:** The neural policy parameters $\theta_{k+1}$ are updated via standard supervised cross-entropy minimizing KL-divergence to $p_{k+1}$:
+   $$\mathcal{L}_{\text{SPPO}}(\theta) = -\mathbb{E}_{x \sim \mathcal{D}} \left[ \sum_{i=1}^K p_{k+1}(y^{(i)} \mid x) \log \pi_\theta(y^{(i)} \mid x) \right]$$
+
+### 62.4 Theoretical Guarantees & Empirical Supremacy
+- **Convergence Rate:** SPPO guarantees convergence to an $\epsilon$-approximate Nash equilibrium at rate $\mathcal{O}(1/\sqrt{T})$ iterations.
+- **Transitivity Invariance:** Handles cyclic and intransitive preference graphs with theoretical consistency where standard Bradley-Terry optimization diverges.
+- **Benchmark Results:** Applied to Mistral-7B and Llama-3-8B across 3 self-play iterations, SPPO achieves **$28.53\%$ win-rate** on AlpacaEval 2.0 (outperforming DPO, IPO, and KTO) without using high-cost proprietary model annotations (GPT-4 distillation).
