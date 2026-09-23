@@ -7607,5 +7607,47 @@ flowchart TD
    - **Throughput Multipliers:** Delivers up to **$3\times$ higher generation throughput** and $2.8\times$ latency reductions on OPT-66B and LLaMA-2-70B under fixed hardware footprints.
    - **Task Retention:** Outperforms static windowing and random eviction, preserving accuracy within $0.5\%$ of full-cache baselines on CodeX, WikiText, and multi-turn conversational benchmarks.
 
+---
+
+## 264. Incremental Earley Parser Constrained Decoding: Ambiguous Grammars & Token Prefix Closures
+
+### 264.1 Deterministic LR/LALR Failure vs. Incremental Earley Sets Topology
+```mermaid
+flowchart TD
+    subgraph LR_Fail["Deterministic Parsers (LR(1), LALR, LL(k))"]
+        GRAMMAR_AMBIG["Ambiguous Grammar / Natural Syntax (Multiple Valid Parse Trees)"] --> CONFLICT["Shift-Reduce & Reduce-Reduce Conflicts"]
+        CONFLICT --> CRASH["Parsing Engine Rejects Grammar or Traps Decoding in Erroneous Branch"]
+    end
+    subgraph Earley["Incremental Earley Parser (SynCode / Earley-LLM, 2024)"]
+        CFG["Arbitrary Context-Free Grammar (CFG / EBNF)"] --> EARLEY_SET["State Sets I_k: Collections of Dotted Rules [A → α · β, j]"]
+        EARLEY_SET --> SCAN["1. Scanner: Matches Partial Sub-word Byte Prefixes"]
+        EARLEY_SET --> PRED["2. Predictor: Expands Non-Terminal Transitions"]
+        EARLEY_SET --> COMP["3. Completer: Resolves Finished Parent Nodes"]
+        SCAN & PRED & COMP --> MASK["Compute Token Validity Mask V_valid(I_k) across All Ambig Paths Simultaneously"]
+    end
+```
+
+### 264.2 Mathematical Formalism of Incremental Earley Decoding
+1. **The Dotted Item Representation:** An Earley item represents a partially parsed production rule at sequence position $k$:
+   $$[A \to \alpha \cdot \beta, \; j] \in \mathcal{I}_k$$
+   where $A \to \alpha \beta \in P$ is a grammar production rule, the dot ($\cdot$) indicates the current parsing progress, and $j \le k$ denotes the starting position in the token stream where expansion of $A$ began.
+2. **Three Core Inductive Operations:**
+   For state set $\mathcal{I}_k$ given the current prefix $x_1 \dots x_k$:
+   - **Prediction (Top-Down Expansion):** If $\beta$ begins with non-terminal $B \in V_N$:
+     $$\forall (B \to \gamma) \in P \implies [B \to \cdot \gamma, \; k] \in \mathcal{I}_k$$
+   - **Scanning (Terminal Consumption):** If $\beta$ begins with terminal $a \in V_T$ matching input $x_{k+1}$:
+     $$[A \to \alpha \cdot a \beta', \; j] \in \mathcal{I}_k \implies [A \to \alpha a \cdot \beta', \; j] \in \mathcal{I}_{k+1}$$
+   - **Completion (Bottom-Up Reduction):** If $[B \to \gamma \cdot, \; j] \in \mathcal{I}_k$ (production finished):
+     $$\forall [A \to \alpha \cdot B \beta', \; i] \in \mathcal{I}_j \implies [A \to \alpha B \cdot \beta', \; i] \in \mathcal{I}_k$$
+3. **Token Prefix Closures & Sub-Word Tokenizer Boundary Alignment:**
+   In sub-word tokenization (BPE/WordPiece), vocabulary tokens $w \in \mathcal{V}$ do not align with terminal grammar boundaries. A single token $w$ can contain a partial terminal, multiple complete terminals, or cross terminal boundaries (e.g., token `" 123; let"`).
+   SynCode (Ugarte et al., 2024) computes the **Token Prefix Closure**:
+   $$\text{Valid}(w \mid \mathcal{I}_k) \iff \exists \text{ terminal sequence } \tau_1 \dots \tau_m \text{ such that } \text{bytes}(w) \subseteq \text{bytes}(\tau_1 \dots \tau_m)$$
+   and $\tau_1 \dots \tau_m$ is accepted by advancing $\mathcal{I}_k \xrightarrow{\tau_1 \dots \tau_m} \mathcal{I}_{k+m}$.
+4. **Logit Masking without Schema Normalization:**
+   The validity mask $M \in \{0, 1\}^{|\mathcal{V}|}$ is computed directly from the active Earley item set:
+   $$M_w = \begin{cases} 1 & \text{if } \text{Valid}(w \mid \mathcal{I}_k) \\ 0 & \text{otherwise} \end{cases}, \quad z'_w = z_w + \log(M_w)$$
+   This enables decoding under arbitrary, naturally ambiguous programming language grammars (Python, SQL, C++) without requiring manual, error-prone grammar refactoring into deterministic LR(1) forms, completely eliminating syntax compilation errors.
+
 
 
