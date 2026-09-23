@@ -11364,3 +11364,121 @@ flowchart LR
 - **True 100% KV Hit Rate:** Transforms RAG serving from memory-bound prefill stalls into near-instantaneous decoding by decoupling KV caching from prefix order.
 - **Latency & Throughput Gains:** Reduces TTFT by up to **$3.3\times$** and multiplies server throughput by up to **$5.0\times$** on multi-document reasoning tasks (HotpotQA, MultiHop, Needle-in-a-Haystack).
 - **Quality Parity:** Retains **$>99.5\%$ of dense prefill accuracy**, resolving the semantic degradation that doomed naive cache concatenation.
+
+---
+
+## 309. Recursive JSON Schema Compilation: Pushdown Automata, Cardinality Guards & GPU-Native Gram2Token Decoding (XGrammar, Gram2Token, 2024–2025)
+
+### 309.1 The Expressive Gap: Regular Expressions vs. Recursive JSON Schemas
+Production AI applications increasingly rely on **Structured Outputs** (e.g. OpenAI Structured Outputs, Anthropic JSON Mode, vLLM/SGLang Guided Decoding). Early constrained decoding engines (such as Outlines) compile structured specifications into Deterministic Finite Automata (DFAs) derived from regular expressions.
+
+However, JSON is inherently a **Context-Free Language (Chomsky Type 2)**:
+1. **Arbitrary Nesting Depth:** JSON objects and arrays can nest arbitrarily ($`\{\dots \{\dots\}\dots\}`$), which belongs to the Dyck-$(k)$ language family. Because regular expressions possess no stack memory, DFAs cannot enforce matching open and close delimiters without arbitrarily truncating depth ($D \le K$).
+2. **Recursive References (`$ref` and `$defs`):** Complex real-world schemas define self-referential tree structures (e.g. Abstract Syntax Trees, organization charts, linked lists). Compiling recursive `$ref` schemas into finite automata causes catastrophic state space explosion.
+3. **Cardinality & Range Constraints:** Properties such as `minItems: 3`, `maxItems: 10`, `minimum: 0` require tracking numeric state counters rather than simple syntactic delimiters.
+
+```mermaid
+flowchart TD
+    subgraph DFA_Limit["Finite State Automata Limit (Outlines / Regex DFAs)"]
+        RegexDFA["DFA (Memoryless State Transitions)"] --> FailNest["Cannot Track Arbitrary Bracket Nesting (Dyck-k)"]
+        RegexDFA --> FailRef["State Explosion on Recursive $ref Schemas"]
+        RegexDFA --> FailCount["Explodes into Redundant States for minItems: 100"]
+    end
+    subgraph PDA_Engine["Pushdown Automata & Gram2Token Compilation (2024-2025)"]
+        JSONSchema["Recursive JSON Schema ($defs, anyOf, minItems)"] --> CFG_Compiler["XGrammar CFG Compiler ($ref -> Non-Terminals)"]
+        CFG_Compiler --> RegisterPDA["Pushdown Automaton + Counting Registers (minItems Bounds)"]
+        RegisterPDA --> Gram2Token["GPU-Native Gram2Token: O(1) Pushdown Kernel (<15μs Overhead)"]
+        Gram2Token --> PerfectCompliance["100.0% Strict Structural & Cardinality Enforcement"]
+    end
+```
+
+---
+
+### 309.2 Compiling `$ref` Definitions into Context-Free Production Rules
+To support full JSON Schema specifications without state explosion, modern compilers (XGrammar, Gram2Token) translate JSON Schemas into **Extended Backus-Naur Form (EBNF) Context-Free Grammars**:
+
+1. **Mapping `$defs` to Non-Terminals:**
+   Each recursive schema definition `"$defs": {"Node": {...}}` is converted into an independent non-terminal symbol $N_{\text{Node}} \in \mathcal{V}_N$:
+   $$N_{\text{Node}} \to \text{"\{"} \; \text{"\"val\":"} \; \text{INTEGER} \; \text{","} \; \text{"\"next\":"} \; (N_{\text{Node}} \mid \text{"null"}) \; \text{"\}"}$$
+2. **The Pushdown Stack:**
+   When the model emits `{"next": {`, the Pushdown Automaton (PDA) pushes $N_{\text{Node}}$ onto its internal grammar stack $\Gamma$:
+   $$\text{Stack Operation: } \Gamma \leftarrow \Gamma \circ [N_{\text{Node}}]$$
+   When the closing brace `}` is emitted, the PDA pops the top symbol, seamlessly supporting infinite recursive depth with zero extra memory allocation.
+
+---
+
+### 309.3 Register-Augmented Pushdown Automata (Cardinality Guards)
+A major bottleneck in schema compilation is array length validation:
+```json
+{
+  "items": {"type": "string"},
+  "minItems": 3,
+  "maxItems": 6
+}
+```
+If compiled into pure CFG productions, a bounded array requires expanding dozens of duplicated production branches ($A_3, A_4, A_5, A_6$), bloating grammar tables.
+
+**Register-Augmented Pushdown Automata (RPDA):**
+Modern engines equip the PDA with integer counting registers $c \in \mathbb{N}$:
+1. Upon encountering `[`, initialize counter $c \leftarrow 0$.
+2. For each comma-delimited element parsed, increment $c \leftarrow c + 1$.
+3. **Cardinality Logit Guarding:**
+   - If $c < \text{minItems}$, mask the closing bracket `]` ($\text{logit}(]) \leftarrow -\infty$), physically forcing the model to generate another item.
+   - If $c = \text{maxItems}$, mask the comma delimiter `,` ($\text{logit}(,) \leftarrow -\infty$), physically forcing the model to terminate the array.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant LLM as LLM Sampling Loop
+    participant PDA as Pushdown Automaton
+    participant Reg as Counting Register c
+    participant Mask as GPU Logit Masking Kernel
+
+    LLM->>PDA: Generates '[' (Array Start)
+    PDA->>Reg: Initialize c = 0
+    LLM->>PDA: Emits Element 1
+    PDA->>Reg: c = 1 (c < minItems: 3)
+    PDA->>Mask: Mask ']' (-inf). ONLY ',' or Whitespace Allowed!
+    LLM->>PDA: Emits ',' then Element 2
+    PDA->>Reg: c = 2 (c < minItems: 3)
+    PDA->>Mask: Mask ']' (-inf). Model CANNOT Exit Array!
+    LLM->>PDA: Emits ',' then Element 3
+    PDA->>Reg: c = 3 (minItems satisfied!)
+    PDA->>Mask: Unmask ']'. Model May Now Close Array Legally.
+```
+
+---
+
+### 309.4 Handling Disjunctive Unions (`anyOf` / `oneOf`)
+The `anyOf` and `oneOf` keywords introduce non-deterministic branching in the grammar:
+$$\text{Schema: } \text{anyOf} = [\text{StringSchema}, \; \text{NumberSchema}, \; \text{ObjectSchema}]$$
+
+1. **The Branching Hazard:** Naive branch duplication causes an exponential explosion in state space ($\mathcal{O}(2^M)$ for nested unions).
+2. **GLR Multi-Stack Forking:**
+   XGrammar and Gram2Token utilize **Generalized LR (GLR) Graph-Structured Stacks (GSS)**:
+   - When encountering an `anyOf` juncture, the PDA forks into parallel speculative evaluation heads without copying the underlying syntax tree.
+   - As soon as the first distinguishing token is emitted (e.g. `"` for string vs `1` for number vs `{` for object), invalid branches collapse instantly, maintaining linear $O(N)$ execution speed.
+
+---
+
+### 309.5 Gram2Token & GPU-Native Masking Performance
+
+```mermaid
+flowchart LR
+    subgraph BenchmarkComparison["Per-Token Grammar Masking Latency (NVIDIA H100)"]
+        OutlinesFSM["Outlines Regex FSM: 1,850 μs (CPU Stalls)"]
+        XGrammarPDA["XGrammar PDA: 65 μs (CPU-GPU Hybrid)"]
+        Gram2Token_GPU["Gram2Token: 12 μs (100% GPU-Native CUDA Kernel)"]
+    end
+```
+
+| Engine | Compilation Target | Recursion ($`\$ref`$) Support | Cardinality Guards (`minItems`) | Masking Overhead / Token |
+| :--- | :--- | :--- | :--- | :--- |
+| **Outlines (DFA)** | Regex FSM | No (Explodes / Truncates) | Unrolled (Slow) | $1,200\text{--}3,500\,\mu\text{s}$ |
+| **Microsoft LLGuidance** | Earley + Prefix Trie | **Yes (Full Lark CFG)** | Dynamic Lookahead | $30\text{--}50\,\mu\text{s}$ |
+| **XGrammar (vLLM)** | PDA + Token Slicing | **Yes (Full EBNF)** | Register Guards | $40\text{--}70\,\mu\text{s}$ |
+| **Gram2Token (2025)** | **GPU-Native Bitmask Tensor**| **Yes (Full Dyck Stack)** | **Hardware Registers** | **$<15\,\mu\text{s}$ (Zero CPU Overhead)** |
+
+**Key Takeaways:**
+- **Full JSON Expressivity:** Moving from DFAs to Register-Augmented PDAs unlocks recursive schema validation, nested array cardinality constraints, and schema union polymorphism with zero structural degradation.
+- **GPU-Native Execution:** Compiling pushdown transitions directly into CUDA tensor kernels (Gram2Token) brings masking overhead down to **$12\,\mu\text{s}$**, eliminating the host-device synchronization barrier entirely.

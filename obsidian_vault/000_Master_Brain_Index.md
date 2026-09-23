@@ -334,6 +334,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/rar_rephrase_respond.md|Rar Rephrase Respond]]
 - [[raw_research/snippets/react_trajectory_formatting.md|React Trajectory Formatting]]
 - [[raw_research/snippets/rectified_flow_conditioning.md|Rectified Flow Conditioning]]
+- [[raw_research/snippets/recursive_json_schema_pda_compilation.md|Recursive Json Schema Pda Compilation]]
 - [[raw_research/snippets/red_teaming.md|Red Teaming]]
 - [[raw_research/snippets/reflexion_patterns.md|Reflexion Patterns]]
 - [[raw_research/snippets/refusal_direction_geometry.md|Refusal Direction Geometry]]
