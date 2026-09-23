@@ -302,6 +302,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/pal_pot_program_prompting.md|Pal Pot Program Prompting]]
 - [[raw_research/snippets/parent_document_retriever.md|Parent Document Retriever]]
 - [[raw_research/snippets/plan_and_solve_prompting.md|Plan And Solve Prompting]]
+- [[raw_research/snippets/platonic_representation_hypothesis.md|Platonic Representation Hypothesis]]
 - [[raw_research/snippets/positional_encodings_extrapolation.md|Positional Encodings Extrapolation]]
 - [[raw_research/snippets/pqcache_product_quantization_kv.md|Pqcache Product Quantization Kv]]
 - [[raw_research/snippets/prefix_tuning_peft.md|Prefix Tuning Peft]]
