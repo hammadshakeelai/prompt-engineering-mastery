@@ -9823,3 +9823,108 @@ flowchart LR
 - **Perplexity Normalization:** Eliminates the **$+1.8\text{--}3.2$ perplexity spike** typically observed when prompts terminate on punctuation marks, trailing whitespaces, code indentation spaces, or quotation marks.
 - **Code Completion (HumanEval Infilling):** When prompts terminate mid-variable or mid-operator (e.g. `def process_data(d`), Token Healing raises HumanEval pass@1 by **$+8.6\%$** by preventing greedy subword mis-segmentation.
 - **Serving Efficiency:** Because the rollback requires only popping a single token and Trie mask lookup runs in $<0.05\,\mu\text{s}$, the entire healing mechanism incurs **$<0.1\%$ computational overhead**.
+
+---
+
+## 294. Geometric Model Merging in Weight Space: SLERP, TIES, DARE & Model Stock (Yadav et al., Yu et al., Jang et al., 2024)
+
+### 294.1 The Failure of Linear Weight Averaging in Deep Transformers
+Model merging combines multiple independently fine-tuned models—each specialized in distinct domains (e.g. coding, mathematical reasoning, safety alignment, multilingual translation)—into a single unified checkpoint without requiring additional GPU training steps or access to raw training data.
+
+Let $\theta_{\text{base}} \in \mathbb{R}^D$ denote the pre-trained base model weights, and let $\{\theta_i\}_{i=1}^M$ denote $M$ task-specific fine-tuned models derived from the same base initialization. The **task vector** $\tau_i \in \mathbb{R}^D$ represents the directional displacement induced by fine-tuning:
+$$\tau_i \triangleq \theta_i - \theta_{\text{base}}$$
+
+**The Linear Collapse Failure Mode:**
+Traditional linear model merging computes an affine convex combination:
+$$\theta_{\text{linear}} = \theta_{\text{base}} + \sum_{i=1}^M \alpha_i \tau_i$$
+In high-dimensional parameter spaces ($D \sim 10^{10}\text{--}10^{11}$ in 70B models), linear averaging fails catastrophically:
+1. **Directional Cancellation:** Fine-tuning across diverse objectives pushes identical parameters in opposing directions. Simple addition leads to destructive sign interference ($\tau_{i, j} + \tau_{k, j} \approx 0$), nullifying the specialized capabilities of both models.
+2. **Norm Collapse:** Because fine-tuned models lie on a high-dimensional sphere rather than a Euclidean plane, the linear chord path between them cuts through the interior of the hypersphere. The merged weight matrices suffer severe **norm reduction** ($\|\theta_{\text{linear}}\| \ll \|\theta_i\|$), attenuating hidden activation magnitudes and causing perplexity to diverge to infinity.
+
+```mermaid
+flowchart TD
+    subgraph LinearFailure["Naive Linear Averaging (Euclidean Chord)"]
+        Base["Base Model θ_base"] --> ModelA["Fine-Tuned Model A (Norm ||θ_A||)"]
+        Base --> ModelB["Fine-Tuned Model B (Norm ||θ_B||)"]
+        ModelA & ModelB --> LinearSum["Linear Combination: 0.5 θ_A + 0.5 θ_B"]
+        LinearSum --> NormShrink["Norm Collapses (||θ_merge|| << ||θ_A||) -> Perplexity Divergence"]
+    end
+    subgraph GeometricMerging["Geometric Model Merging (Arc Geodesic & Sparsification)"]
+        ModelA & ModelB --> SlerpArc["SLERP: Follows Hyperspherical Geodesic (Constant Norm)"]
+        ModelA & ModelB --> TIES_Proc["TIES: Trim 80% Tail + Majority Sign Consensus"]
+        ModelA & ModelB --> DARE_Proc["DARE: Bernoulli Masking (Drop 90% Weights) + 1/(1-p) Rescaling"]
+        SlerpArc & TIES_Proc & DARE_Proc --> SuperModel["Merged Super-Model: Retains Math, Code & Safety Simultaneously"]
+    end
+```
+
+---
+
+### 294.2 Spherical Linear Interpolation (SLERP)
+To resolve norm collapse when merging two models ($M=2$), **SLERP** (Spherical Linear Interpolation) treats weight tensors as directional vectors on a high-dimensional hypersphere $\mathbb{S}^{D-1}$, interpolating along the great-circle geodesic arc with constant angular velocity:
+
+1. **Angular Displacement ($\Omega$):**
+   The angle between the two weight matrices $\theta_1$ and $\theta_2$ is computed via their normalized inner product:
+   $$\cos \Omega = \frac{\langle \theta_1, \; \theta_2 \rangle}{\|\theta_1\|_2 \, \|\theta_2\|_2}$$
+2. **Geodesic Interpolation Formula:**
+   For interpolation parameter $t \in [0, 1]$ (where $t=0.5$ represents an equal merge):
+   $$\theta_{\text{slerp}}(t) = \frac{\sin((1 - t)\Omega)}{\sin \Omega} \, \theta_1 + \frac{\sin(t \Omega)}{\sin \Omega} \, \theta_2$$
+3. **Geometric Norm Preservation:**
+   Unlike linear blending, SLERP strictly preserves the geometric magnitude of the weights:
+   $$\|\theta_{\text{slerp}}(t)\|_2 \approx \|\theta_1\|_2 \approx \|\theta_2\|_2 \quad \forall t \in [0, 1]$$
+   completely eliminating activation attenuation and preserving internal layer scaling.
+
+---
+
+### 294.3 TIES-Merging: Trimming, Electing Signs & Disjoint Consensus
+When merging $M \ge 3$ models, multi-way angular interpolation becomes mathematically non-trivial. **TIES-Merging** (Yadav et al., NeurIPS 2023) eliminates parameter interference through a three-stage pipeline:
+
+1. **Stage 1: Magnitude Trimming:**
+   Most fine-tuning parameter updates consist of insignificant noise. TIES prunes the bottom $k\%$ (typically $k=80\%$) of parameters in each task vector based on absolute magnitude:
+   $$\hat{\tau}_{i, j} = \begin{cases} \tau_{i, j} & \text{if } |\tau_{i, j}| \ge \text{Quantile}_{80\%}(|\tau_i|) \\ 0 & \text{otherwise} \end{cases}$$
+2. **Stage 2: Electing Consensus Signs:**
+   For each parameter coordinate $j \in \{1, \dots, D\}$, compute the sum of trimmed updates across all models to determine the dominant direction:
+   $$\gamma_j = \text{sign}\left( \sum_{i=1}^M \hat{\tau}_{i, j} \right) \in \{-1, 0, +1\}$$
+3. **Stage 3: Disjoint Averaging:**
+   For coordinate $j$, only models whose parameter sign agrees with the elected consensus $\gamma_j$ are averaged:
+   $$\tau_{\text{TIES}, j} = \frac{1}{|\mathcal{A}_j|} \sum_{i \in \mathcal{A}_j} \hat{\tau}_{i, j} \quad \text{where } \mathcal{A}_j = \{ i \mid \text{sign}(\hat{\tau}_{i, j}) = \gamma_j \}$$
+   $$\theta_{\text{TIES}} = \theta_{\text{base}} + \lambda \, \tau_{\text{TIES}}$$
+
+---
+
+### 294.4 DARE (Drop And REscale) & Model Stock
+**DARE** (Yu et al., ICML 2024) introduces an extreme sparsification technique inspired by inverted dropout in weight space:
+
+```mermaid
+flowchart LR
+    subgraph DARE_Pipeline["DARE Algorithm (Drop 90% and Rescale)"]
+        Delta["Task Vector τ_i"] --> Bernoulli["Apply Random Bernoulli Mask m_j ~ Bernoulli(1 - p) with p = 0.90"]
+        Bernoulli --> Drop["90% of Weights Zeroed Out"]
+        Drop --> Rescale["Rescale Remaining 10% Weights by 1 / (1 - p) = 10x"]
+        Rescale --> Superpose["Linear Addition with Zero Parameter Clashes"]
+    end
+```
+
+1. **DARE Sparsification & Unbiased Expectation:**
+   For drop rate $p \in [0.90, 0.99]$:
+   $$\tilde{\tau}_{i, j} = \frac{1}{1 - p} \cdot m_{i, j} \cdot \tau_{i, j}, \quad m_{i, j} \sim \text{Bernoulli}(1 - p)$$
+   The mathematical expectation of the transformed task vector is perfectly invariant:
+   $$\mathbb{E}[\tilde{\tau}_{i, j}] = \frac{1}{1 - p} \cdot (1 - p) \cdot \tau_{i, j} = \tau_{i, j}$$
+   By zeroing out $90\text{--}99\%$ of delta weights, parameter collisions between models vanish, enabling interference-free linear superposition across dozens of checkpoints.
+2. **Model Stock (Jang et al., 2024):**
+   Discovers that fine-tuned model checkpoints lie on a thin hyper-spherical shell equidistant from $\theta_{\text{base}}$. Computing the geometric centroid $\theta_{\text{stock}} = \theta_{\text{base}} + \frac{1}{M} \sum_{i=1}^M \tau_i$ followed by an optimal projection back to the spherical shell establishes a new state of the art in zero-cost multi-task capability synthesis.
+
+---
+
+### 294.5 Empirical Benchmarks Across Model Merging Paradigms
+```mermaid
+flowchart LR
+    subgraph MergePerformance["Multi-Task Benchmark Parity (Llama-3 70B Merged)"]
+        Linear["Naive Linear Merge: 24.2% Average (Perplexity Collapse)"]
+        SLERP_Bench["SLERP (2 Models): 78.4% Average (Matches Specialized Models)"]
+        DARE_TIES["DARE + TIES (8 Models): 82.6% Average (Exceeds Individual Experts)"]
+    end
+```
+
+**Quantitative Results (Open LLM Leaderboard & MergeKit Ecosystem):**
+- **Elimination of Interference:** DARE + TIES merges $8$ distinct fine-tuned checkpoints (Math, Code, Roleplay, Legal, Medical, Refusal) with **zero performance degradation**, outperforming individual models on multi-disciplinary evaluations.
+- **Compute Efficiency:** Merging executes in **$<3$ minutes on CPU/RAM** for a 70B parameter model, completely bypassing millions of dollars in continuous pre-training and multi-task fine-tuning costs.
