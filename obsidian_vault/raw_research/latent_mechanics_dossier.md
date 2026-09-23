@@ -6859,5 +6859,44 @@ flowchart TD
    $$y \sim \pi_\theta(\cdot \mid x, x_{\text{abstract}})$$
 3. **Empirical Performance:** GoT improves sorting accuracy by 62% over Tree of Thoughts while reducing costs by 31%. Step-Back Prompting boosts PaLM-2L accuracy on MMLU Physics and Chemistry by 7–11% and TimeQA by 27%.
 
+---
+
+## 243. Transcoder Networks: Replacing Non-Linear MLP Blocks with Sparse Interpretable Feature Maps
+
+### 243.1 Transcoder Topology vs. Standard Autoencoders
+```mermaid
+flowchart TD
+    subgraph StandardSAE["Standard Sparse Autoencoder (Reconstructs Single Activation)"]
+        A_IN["Layer l Residual h_l"] --> SAE_ENC["Encoder: f(h_l) = ReLU(W_enc h_l + b_enc)"]
+        SAE_ENC --> SAE_DEC["Decoder: \hat{h}_l = W_dec f(h_l) + b_dec"]
+        SAE_DEC --> LOSS_SAE["Reconstruction Loss: ||h_l - \hat{h}_l||_2^2 + λ ||f||_1"]
+    end
+    subgraph Transcoder["Transcoder Network (Replaces Entire Non-Linear MLP)"]
+        X_IN["MLP Input x (Residual Stream l)"] --> MLP["Non-linear MLP Block: y = W_2 σ(W_1 x + b_1)"]
+        X_IN --> TC_ENC["Transcoder Encoder: f(x) = TopK(W_enc x + b_enc)"]
+        TC_ENC --> TC_DEC["Transcoder Decoder: \hat{y} = W_dec f(x) + b_dec"]
+        MLP & TC_DEC --> LOSS_TC["Transcoding Loss: ||y - \hat{y}||_2^2 + Sparsity Penalty"]
+        TC_DEC --> LIN_REPLACE["Direct Linear Substitution: Replaces Black-Box MLP with Interpretable Features"]
+    end
+```
+
+### 243.2 Mathematical Formulation of Transcoders
+1. **Input-to-Output Mapping through Non-Linearities:** Unlike standard Sparse Autoencoders (SAEs) that perform auto-associative reconstruction ($x \mapsto \hat{x} \approx x$), a Transcoder (Dunefsky et al., 2024; Anthropic Mechanistic Interpretability Team) learns to predict the output of an entire non-linear layer from its input:
+   $$x \in \mathbb{R}^{d_{\text{model}}}, \quad y = \text{MLP}(x) \in \mathbb{R}^{d_{\text{model}}}$$
+   $$f(x) = \text{TopK}\left(\text{ReLU}\left(W_{\text{enc}} x + b_{\text{enc}}\right), k\right) \in \mathbb{R}^M, \quad M \gg d_{\text{model}}$$
+   $$\hat{y} = W_{\text{dec}} f(x) + b_{\text{dec}} = b_{\text{dec}} + \sum_{i \in \text{active}} f_i(x) w_i^{\text{dec}}$$
+2. **Loss Function with JumpReLU / Top-K Sparsity:**
+   $$\mathcal{L}_{\text{transcoder}} = \mathbb{E}_{x \sim \mathcal{D}}\left[\|\text{MLP}(x) - \hat{y}(x)\|_2^2 + \lambda \sum_{i=1}^M \mathcal{H}\left(f_i(x) - \theta_i\right)\right]$$
+   where $\mathcal{H}$ denotes the Heaviside step function or $L_1$ penalty enforcing strict feature sparsity ($k \approx 32\text{--}128$ active features out of $M \approx 32\text{K}\text{--}1\text{M}$).
+3. **End-to-End Linear Circuit Tracing:** By substituting every transformer MLP block with its transcoder approximation $\hat{y} = W_{\text{dec}} f(x) + b_{\text{dec}}$, the entire deep transformer graph collapses into a purely linear, interpretable computational DAG:
+   $$h_{l+1} = h_l + \text{Attn}(h_l) + W_{\text{dec}}^{(l)} f^{(l)}(h_l + \text{Attn}(h_l)) + b_{\text{dec}}^{(l)}$$
+   This enables exact direct feature-to-feature attribution:
+   $$A(f_i^{(l)} \to f_j^{(l+1)}) = \frac{\partial f_j^{(l+1)}}{\partial h_{l+1}} \cdot w_i^{\text{dec}, (l)}$$
+   tracing precise causal circuits from input tokens to final logit decisions without being obscured by non-linear MLP neuron superposition.
+4. **Behavioral Steerability via Feature Interventions:**
+   Clamping or ablating latent feature activations $f_i(x)$ dynamically steers model reasoning pathways across downstream layers:
+   $$\hat{y}_{\text{steered}} = W_{\text{dec}} \left(f(x) + \alpha \cdot e_i\right) + b_{\text{dec}}$$
+   enabling surgical suppression of hallucination, bias, or deceptive alignment circuits with minimal collateral damage to general capabilities.
+
 
 
