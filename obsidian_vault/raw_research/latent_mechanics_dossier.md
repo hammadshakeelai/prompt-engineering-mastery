@@ -4990,6 +4990,333 @@ flowchart TD
 - **Easy Problems:** Sequential revision dominates; initial proposals are near-correct, and local iterative editing fixes errors without wasting FLOPs on diverse rollouts.
 - **Hard Problems:** Initial proposals fall into flawed reasoning basins where revision saturates; scaling search breadth via Best-of-$N$ with Process Reward Model reranking becomes essential to uncover sparse valid solution paths.
 
+---
+
+## 169. Multi-Head Latent Attention & Auxiliary-Loss-Free MoE: DeepSeek-V3 (DeepSeek-AI, 2024)
+
+### 169.1 Joint Low-Rank KV Compression (MLA)
+DeepSeek-V3 solves the explosive memory footprint of multi-head attention via **Multi-Head Latent Attention (MLA)**:
+$$\mathbf{c}_t^{KV} = W_{DKV} \mathbf{h}_t, \quad [\mathbf{k}_{t,1}^C; \dots; \mathbf{k}_{t,n_h}^C] = W_{UK} \mathbf{c}_t^{KV}, \quad [\mathbf{v}_{t,1}^C; \dots; \mathbf{v}_{t,n_h}^C] = W_{UV} \mathbf{c}_t^{KV}$$
+Keys and values are jointly compressed into a compact latent vector $\mathbf{c}_t^{KV} \in \mathbb{R}^{d_c}$ ($d_c \ll n_h d_h$) prior to caching, drastically slashing KV cache memory and decoding bandwidth while decoupling Rotary Position Embeddings (RoPE) into a separate vector $\mathbf{k}_t^R$ to preserve positional sensitivity.
+
+```mermaid
+flowchart TD
+    Hidden["Hidden State h_t"] --> Compress["Down-Projection W_DKV: Compress into Latent c_t^{KV}"]
+    Compress --> Cache["KV Cache Stores ONLY Latent Vector c_t^{KV} (Massive VRAM Drop)"]
+    Cache --> UpProjK["Up-Projection W_UK -> Key Heads k_{t,i}^C"]
+    Cache --> UpProjV["Up-Projection W_UV -> Value Heads v_{t,i}^C"]
+    Hidden --> RoPEHead["Decoupled RoPE Key Head k_t^R"]
+```
+
+### 169.2 Auxiliary-Loss-Free Load Balancing & FP8 Mixed Precision
+- **Auxiliary-Loss-Free Balancing:** Replaces traditional penalty losses that distort primary objective gradients by adding a dynamic bias term $b_i$ to expert routing logits:
+  $$g_i = \text{Top-2}\left(\text{Softmax}\left(s_i + b_i\right)\right)$$
+  Bias terms $b_i$ update based on real-time routing statistics, eliminating expert collapse without task interference.
+- **Fine-Grained FP8 Execution:** Implements tile-level FP8 mixed precision across $128 \times 128$ weight blocks and $1 \times 128$ activation tiles with FP32 accumulation, maximizing arithmetic intensity on modern clusters.
+
+---
+
+## 170. Representation Finetuning: LoReFT (Wu, Manning et al., Stanford 2024)
+
+### 170.1 Causal Subspace Intervention over Weight Updates
+Zhengxuan Wu et al. (*ReFT: Representation Finetuning for Large Language Models*, Stanford 2024 / arXiv:2404.03592) introduce **Representation Finetuning (ReFT)**, freezing all foundation model weights and intervening directly on hidden activation vectors:
+
+```mermaid
+flowchart LR
+    Token["Hidden Activation h"] --> Split["Low-Rank Linear Subspace Projection: R^T (h - b)"]
+    Split --> Rotate["Learned Subspace Rotation & Edit: W_edit"]
+    Rotate --> Reconstruct["Orthogonal Reconstruction: R W_edit R^T (h - b) + b"]
+    Reconstruct --> Output["Steered Activation h' (10x-50x Fewer Params than LoRA)"]
+```
+
+### 170.2 Low-Rank Linear Subspace ReFT (LoReFT)
+LoReFT parameterizes intervention via an orthogonal projection matrix $R \in \mathbb{R}^{d \times r}$ ($r \ll d$) and learned bias $b$:
+$$\Phi(h) = h + R \left(W_{\text{edit}} R^T (h - b) + b - R^T h\right)$$
+- **Parameter Efficiency:** Operates with **$10\times\text{--}50\times$ fewer parameters than LoRA** (often $<0.0025\%$ of total weights) while matching or outperforming standard PEFT on reasoning, instruction following, and GLUE tasks.
+
+---
+
+## 171. Recurrent Feature-Level Speculative Decoding: EAGLE-2 (Li et al., 2024)
+
+### 171.1 Drafting in Second-to-Top Feature Space
+Yuhui Li et al. (*EAGLE-2: Faster Substrate-Engine Speculative Decoding with Dynamic Draft Trees*, 2024 / arXiv:2406.16858) draft sequences at the feature representation level rather than in token vocabulary space:
+
+```mermaid
+flowchart TD
+    Backbone["Target Backbone LLM"] --> Feat["Second-to-Top Hidden State h_t"]
+    Feat --> DraftHead["Lightweight Calibrated Draft Head (Single Transformer Layer)"]
+    DraftHead --> DynamicTree["Construct Dynamic Context-Aware Draft Tree"]
+    DynamicTree --> TreeVerify["Verify Speculative Tree in Single Target Forward Pass"]
+    TreeVerify --> Speedup["3.05x - 4.26x Lossless Wall-Clock Acceleration"]
+```
+
+### 171.2 Calibrated Dynamic Tree Expansion
+- **Well-Calibrated Draft Probabilities:** Proves that draft head softmax probabilities accurately reflect true target acceptance rates.
+- **Context-Aware Tree Allocation:** Dynamically expands deeper speculative branches when predictive confidence is high and broadens or prunes branches when uncertainty spikes, accelerating inference by up to **$4.26\times$ losslessly**.
+
+---
+
+## 172. Attention-Guided Salient KV Eviction: SnapKV (Li et al., 2024)
+
+### 172.1 Exploiting Intrinsic Head Locality via Observation Windows
+Yuhong Li et al. (*SnapKV: LLM Knows What You Are Looking for Before Generation*, 2024) discover that individual attention heads focus on consistent, stable context clusters during prefill:
+
+```mermaid
+flowchart TD
+    Context["Prompt Tokens"] --> Obs["Terminal Observation Window (Last L_obs Tokens)"]
+    Obs --> Profile["Aggregate Attention Distributions per Head across Prefix"]
+    Profile --> Pool["1D Max Pooling: Identify Contiguous Salient Feature Spans"]
+    Pool --> Prune["Aggressively Prune Non-Salient KV States per Head"]
+    Prune --> Compact["Compact Salient KV Cache: Preserves Needle-in-a-Haystack Accuracy"]
+```
+
+### 172.2 1D Pooling and Feature Span Clustering
+- **Cluster Selection:** Rather than keeping isolated token positions, SnapKV applies 1D pooling to select contiguous semantic spans surrounding peak attention coordinates.
+- **Performance:** Retains near-perfect retrieval accuracy on Needle-in-a-Haystack and LongBench while discarding up to **$80\%$** of the key-value cache.
+
+---
+
+## 173. Representation Rerouting: Circuit Breakers (Zou et al., 2024)
+
+### 173.1 Internal Latent Trajectory Disruption
+Andy Zou et al. (*Improving Alignment and Robustness with Circuit Breakers*, 2024) establish that surface-level token refusals leave internal adversarial circuits fully functional. Circuit Breakers intervene directly on internal representation trajectories:
+
+```mermaid
+flowchart TD
+    Prompt["Input Query"] --> Activations["Hidden Activations h_l at Layer l"]
+    Activations --> Harmful{"Is Query Adversarial / Harmful?"}
+    Harmful -- Yes --> Reroute["Representation Rerouting (RR): Maximize Distance from Hazardous Representations"]
+    Harmful -- No --> Retain["Retain Loss: L2 Penalty Preserves Benign Representations & General Utility"]
+    Reroute & Retain --> Safe["Neutralizes Exploits in Latent Space (Jailbreaks Short-Circuited)"]
+```
+
+### 173.2 The Representation Rerouting (RR) Objective
+$$\mathcal{L}_{\text{RR}} = \cos\left(h_l(x_{\text{harmful}}), h_l^*(x_{\text{harmful}})\right) + \lambda \|h_l(x_{\text{benign}}) - h_l^0(x_{\text{benign}})\|_2^2$$
+Reroutes internal activations elicited by adversarial attacks toward orthogonal random vectors while bounding benign activation drift, neutralizing jailbreaks and token smuggling before toxic representations can materialize.
+
+---
+
+## 174. Exploiting Long-Context Priors: Many-Shot Jailbreaking (Anthropic, 2024)
+
+### 174.1 In-Context Learning Overriding RLHF Alignment
+Anthropic researchers (*Many-Shot Jailbreaking*, 2024) uncover an emergent vulnerability enabled by modern context windows ($>100\text{K}$ tokens):
+
+```mermaid
+flowchart LR
+    Dialogue["Long Prompt: Hundreds of In-Context Dialogue Demonstrations (Benign -> Questionable -> Malicious)"] --> ContextPriors["Statistical In-Context Learning Priors Accumulate"]
+    ContextPriors --> Override["In-Context Priors Systematically Outcompete Parametric Safety Weights"]
+    Override --> Compliance["Aligned Model Complies with Prohibited Target Query"]
+```
+
+### 174.2 Power-Law Scaling of Attack Success Rate (ASR)
+- **Mechanics:** Prepending dozens to hundreds of simulated Q&A demonstrations leverages the core next-token prediction objective.
+- **Power-Law Dynamics:** Attack Success Rate follows an empirical power law scaling with exemplar count, systematically suppressing safety refusals across all frontier models without requiring complex obfuscation.
+
+---
+
+## 175. Adaptive Multi-Turn Dialogue Escalation: Crescendo (Microsoft, 2024)
+
+### 175.1 Defeating Single-Turn Guardrails via Conversational Momentum
+Mark Russinovich et al. (*Great, Now Write an Article About That: The Crescendo Multi-Turn Attack*, Microsoft 2024) expose the vulnerability of single-turn safety filters:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Attacker as Adversary
+    participant Target as Aligned Frontier LLM
+    participant Filter as Turn-Level Guardrail
+
+    Attacker->>Filter: Turn 1: Completely benign, innocent inquiry
+    Filter->>Target: Clean Pass
+    Target-->>Attacker: Generates helpful background context
+    Attacker->>Filter: Turn 2: References LLM's own words, escalates slightly
+    Filter->>Target: Clean Pass (No overt violation)
+    Target-->>Attacker: Elaborates further
+    Attacker->>Target: Turn N: Capitalizes on context momentum to extract restricted target
+```
+
+### 175.2 Exploiting Conversational Consistency
+Because guardrails typically evaluate individual turns in isolation without multi-turn trajectory tracking, Crescendo incrementally guides models into prohibited territory by referencing the model’s own preceding completions, achieving high jailbreak success rates without triggering single-turn classifiers.
+
+---
+
+## 176. Real-World Benchmark Discrimination: Arena-Hard-Auto (LMSYS, 2024)
+
+### 176.1 Curating Challenging Real-World Prompts
+Tianle Li et al. (*From Crowdsourced Data to High-Quality Benchmarks: Arena-Hard*, LMSYS 2024) replace MT-Bench with a benchmark designed for frontier models:
+
+```mermaid
+flowchart TD
+    Arena["200,000+ Real-World Crowdsourced Conversations from Chatbot Arena"] --> Pipeline["BenchBuilder Pipeline: Topic Clustering + Hardness Filtering"]
+    Pipeline --> Hard500["Arena-Hard: 500 High-Complexity, High-Separability Prompts"]
+    Hard500 --> Judge["Calibrated LLM-as-a-Judge Protocol (GPT-4-Turbo with Position Swapping)"]
+    Judge --> Correlation["98.6% Win-Rate Correlation with Human Chatbot Arena Rankings"]
+```
+
+### 176.2 Judge Calibration & Separability
+- **3x Separability:** Drastically separates frontier models (GPT-4o, Claude 3.5 Sonnet, DeepSeek-V3) where traditional benchmarks suffer from ceiling saturation.
+- **Position Bias Neutralization:** Evaluates candidate completions against a fixed baseline (GPT-4-0314) with bidirectional position swapping, achieving **$98.6\%$ correlation** with live crowdsourced human rankings.
+
+---
+
+## 177. Symbolic Visual Grounding: Set-of-Mark (SoM) (Microsoft Research, 2024)
+
+### 177.1 Transforming 2D Pixels into Speakable Symbolic Markers
+Jianwei Yang et al. (*Set-of-Mark Prompting Unleashes Extraordinary Visual Grounding in GPT-4V*, 2024) bridge the gap between continuous image coordinates and symbolic language reasoning:
+
+```mermaid
+flowchart LR
+    Image["Raw Visual Image"] --> Segment["Interactive Segmenter (SAM / SEEM) Partitions Image Masks"]
+    Segment --> Overlay["Overlay Distinct Alphanumeric Marks: [1], [2], [A], [B] onto Masks"]
+    Overlay --> LMM["Vision-Language Model (GPT-4V) Receives Marked Image"]
+    LMM --> Grounded["Zero-Shot Fine-Grained Regional Grounding & Spatial Reasoning"]
+```
+
+### 177.2 Fine-Grained Spatial Disambiguation
+Overlaying explicit numeric tags directly onto segmentation masks converts spatial localization into discrete token references, enabling multimodal foundation models to execute precise sub-region disambiguation, visual counting, and GUI navigation without retraining.
+
+---
+
+## 178. Self-Improving Recursive Alignment: Meta-Rewarding Language Models (Meta, 2024)
+
+### 178.1 Overcoming Evaluator Judgment Saturation
+Tianlu Wu et al. (*Meta-Rewarding Language Models: Self-Improving Alignment with LLM-as-a-Meta-Judge*, Meta 2024) resolve judgment plateauing in self-alignment by establishing a tripartite recursive architecture:
+
+```mermaid
+flowchart TD
+    Actor["Actor: Generates Candidate Responses"] --> Judge["Judge: Evaluates & Scores Candidate Responses"]
+    Judge --> MetaJudge["Meta-Judge: Evaluates the Accuracy & Depth of Candidate Judgments"]
+    MetaJudge --> PrefData["Construct Preference Pairs Over Evaluative Judgments"]
+    PrefData --> DPO["Direct Preference Optimization Update on BOTH Evaluator & Actor Capabilities"]
+    DPO --> SelfImprove["Continuous Self-Improving Alignment Loop (Zero Human Annotations)"]
+```
+
+### 178.2 The Meta-Judge Architecture
+- **Tripartite Roles:** The model simultaneously functions as Actor (generating answers), Judge (scoring outputs), and Meta-Judge (critiquing judgments).
+- **Offline Iterative Improvement:** Fine-tuning on meta-judgment preference data steadily improves judge calibration, suppresses length bias, and prevents reward hacking across successive alignment generations without external human supervision.
+
+---
+
+## 179. Hierarchical Long-Context Drafting: TriForce (Sun et al., 2024)
+
+### 179.1 Two-Level Drafting Over 128K Token Windows
+Speculative decoding typically bottlenecks on memory-bound KV cache transfers in long contexts. Hanshi Sun et al. (*TriForce: Lossless Acceleration of Long Sequence Generation with Hierarchical Speculative Decoding*, 2024) introduce a two-level drafting hierarchy:
+
+```mermaid
+flowchart TD
+    Prompt["Long Context Prefix (up to 128k Tokens)"] --> StreamingDraft["Level 1: Streaming Draft Model (Sliding-Window Cache) -> Fast Speculative Proposal"]
+    StreamingDraft --> RetrievalDraft["Level 2: Retrieval Draft Model (Dynamic Sparse KV Cache) -> Refines & Filters Candidates"]
+    RetrievalDraft --> TargetVerify["Level 3: Full Target Model (Single Forward Pass over Full 128k KV Cache)"]
+    TargetVerify --> Result["Lossless Distributional Parity with up to 7.8x Throughput Speedup"]
+```
+
+### 179.2 Algorithmic Innovations
+- **Level 1 (Streaming Draft):** Generates candidate tokens with negligible compute using a rolling sliding-window cache.
+- **Level 2 (Retrieval Draft):** Refines proposals using the target model's own weights operating over dynamically retrieved sparse KV cache subsets.
+- **Level 3 (Target Verification):** Validates the refined draft tokens against the full 128K KV cache in a single forward pass, preserving exact target distributions while delivering up to **$7.8\times$ speedups**.
+
+---
+
+## 180. Shannon Information Prompt Pruning: Selective Context (Li et al., 2023)
+
+### 180.1 Extractive Context Compression via Token Perplexity
+Yucheng Li et al. (*Compressing Context to Enhance Inference Efficiency of Large Language Models*, EMNLP 2023 / arXiv:2310.06201) optimize prompt efficiency by measuring the Shannon self-information of lexical tokens using a lightweight base model:
+
+```mermaid
+flowchart LR
+    Prompt["Input Context x_1..x_L"] --> BaseLM["Lightweight Base LM (e.g. GPT-2)"]
+    BaseLM --> Surprisal["Compute Self-Information: I(x_t) = -log P(x_t | x_<t)"]
+    Surprisal --> Filter{"I(x_t) > Threshold tau?"}
+    Filter -- Low Entropy (Predictable Syntax) --> Discard["Prune Token (Zero Information Loss)"]
+    Filter -- High Entropy (Dense Semantics) --> Retain["Retain Token in Compressed Context"]
+    Retain --> Compressed["50% Context Pruning with Preserved QA Performance"]
+```
+
+### 180.2 Self-Information Formulation
+$$I(x_t) = -\log P(x_t \mid x_{<t})$$
+Tokens with low self-information represent redundant grammatical syntax and predictable filler. Pruning tokens below an information density threshold reduces context length by up to **$50\%$**, significantly lowering KV cache memory without degrading downstream reasoning accuracy.
+
+---
+
+## 181. Question-Aware Contrastive Compression: LongLLMLingua (Jiang et al., ACL 2024)
+
+### 181.1 Contrastive Perplexity Filtering
+Huiqiang Jiang et al. (*LongLLMLingua: Accelerating and Enhancing LLMs in Long-Context Scenarios via Prompt Compression*, ACL 2024 / arXiv:2310.06839) address the limitation of unconditional prompt pruning by computing question-aware contrastive perplexity:
+
+```mermaid
+flowchart TD
+    Doc["Context Documents"] & Query["Target Question q"] --> Contrast["Contrastive Token Scoring: P(x_t | context) vs P(x_t | context, q)"]
+    Contrast --> Score["Isolate Mutual Information Delta: Delta I = -log P(x_t|ctx) - (-log P(x_t|ctx, q))"]
+    Score --> Reorder["Document Reordering: Mitigates Lost-in-the-Middle (Ranks Salient Passages Near Boundaries)"]
+    Reorder --> Prune["Dynamic Token Pruning: 2x - 6x Compression"]
+    Prune --> HighAcc["Boosts QA Accuracy on Long Contexts while Slashing Latency"]
+```
+
+### 181.2 Contrastive Perplexity & Document Reordering
+Tokens exhibiting sharp perplexity drops when conditioned on question $q$ carry critical mutual information for resolving the query. Coupled with coarse-grained document reordering that positions highly relevant passages near context boundaries, LongLLMLingua achieves **$2\times\text{--}6\times$ compression** while improving QA accuracy.
+
+---
+
+## 182. Dynamic High-Resolution Tiling: LLaVA-NeXT AnyRes (Liu et al., 2024)
+
+### 182.1 Preserving Microscopic Visual Fidelity Without Distortion
+Haotian Liu et al. (*LLaVA-NeXT: Improved reasoning, OCR, and world knowledge*, 2024) resolve vision encoder downsampling bottlenecks via dynamic grid patch tiling:
+
+```mermaid
+flowchart TD
+    RawImage["Arbitrary Resolution Input Image"] --> AspectRatio["Dynamic Grid Selection (1x2, 2x2, 1x4, 3x3) to Minimize Distortion"]
+    AspectRatio --> LocalPatches["Split into High-Resolution Local Patches (Native ViT Resolution)"]
+    AspectRatio --> GlobalOverview["Downsample Full Image into Global Overview Thumbnail"]
+    LocalPatches & GlobalOverview --> VisionEnc["CLIP / SigLIP Vision Encoder"]
+    VisionEnc --> SpatialDelim["Inject Spatial Row Delimiter Tokens (Newline Tokens)"]
+    SpatialDelim --> LLM["Multimodal LLM Backbone: Grounds Micro Details within Macro Scene"]
+```
+
+### 182.2 Spatial Coordinate Alignment
+- **Dynamic Grids:** Selects optimal patch layouts to minimize aspect-ratio warping.
+- **Row Delimiters:** Injects newline tokens between feature patch rows, preserving spatial 2D geometry and enabling models to ground fine OCR text and small objects within global macroscopic scene coordinates.
+
+---
+
+## 183. Deep Multi-Layer Prefix Tuning: P-Tuning v2 (Liu et al., 2022)
+
+### 183.1 Continuous Steering Across All Transformer Layers
+Xiao Liu et al. (*P-Tuning v2: Prompt Tuning Can Be Comparable to Fine-tuning Universally Across Scales and Tasks*, ACL 2022 / arXiv:2110.07602) resolve the fragility of standard prompt tuning by prepending virtual prefix vectors across **every** Transformer layer:
+
+```mermaid
+flowchart LR
+    Input["Input Tokens"] --> L1["Layer 1: Prepend Virtual Prefix Vectors [P_1, K_1, V_1]"]
+    L1 --> L2["Layer 2: Prepend Virtual Prefix Vectors [P_2, K_2, V_2]"]
+    L2 --> L_N["Layer N: Prepend Virtual Prefix Vectors [P_N, K_N, V_N]"]
+    L_N --> Output["Matches Full Parameter Fine-Tuning with 0.1% - 3% Trainable Parameters"]
+```
+
+### 183.2 Layer-Distributed Prefix Guidance
+Standard prompt tuning modifies only the input embedding layer, failing on sub-10B models. P-Tuning v2 injects independent continuous prefix prompts directly into intermediate attention matrices across all layers, establishing universal parity with full fine-tuning while training only $0.1\%\text{--}3\%$ parameters.
+
+---
+
+## 184. Deterministic Grammar Compilation: Outlines (Willard & Louf, 2023)
+
+### 184.1 Character DFAs to Token-Level Transition Graphs
+Brandon Willard and Rémi Louf (*Efficient Guided Generation for Large Language Models*, 2023 / arXiv:2307.09702) resolve the latency overhead of runtime grammar parsers:
+
+```mermaid
+flowchart TD
+    Regex["Regular Expression / JSON Schema"] --> CharDFA["Compile to Character-Level DFA Automaton"]
+    CharDFA --> PreIndex["Offline Compilation: Pre-Index All Subword Tokens against DFA Transitions"]
+    PreIndex --> TokenGraph["Token-Level Transition Graph (O(1) Memory Array Lookup)"]
+    TokenGraph --> Inference["Inference Step: Retrieve Pre-Indexed Bitmask in O(1) Time"]
+    Inference --> MaskLogits["Set Invalid Token Logits to -infinity Before Softmax"]
+    MaskLogits --> Sample["Zero Runtime Parsing Latency | 100% Schema Compliance"]
+```
+
+### 184.2 Zero-Overhead Token Masking
+- **Offline Granularity Alignment:** Maps subword tokens against character-level DFA states ahead of time.
+- **$\mathcal{O}(1)$ State Lookups:** During inference, identifying valid next-token continuations reduces to an instantaneous array lookup, eliminating regular expression parsing overhead and guaranteeing valid JSON/regex emissions.
+
+
+
 
 
 
