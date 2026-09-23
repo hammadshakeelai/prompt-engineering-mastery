@@ -11163,3 +11163,101 @@ flowchart LR
 | **Reference Model** | Required ($\pi_{\text{ref}}$ in VRAM) | **Required ($\pi_{\text{ref}}$ in VRAM)** | Eliminated (Reference-Free) |
 | **Length Bias** | Severe (Expands verbosity) | Moderately Bounded | **Completely Neutralized ($\frac{1}{|y|}$ normalizer)** |
 | **AlpacaEval 2 Win Rate** | $29.8\%$ (Llama-3-8B) | **$33.4\%$ (Llama-3-8B)** | $36.2\%$ (Llama-3-8B) |
+
+---
+
+## 307. Causal Scrubbing: Formal Axiomatic Hypothesis Testing & Treeified Resample Ablation in Mechanistic Circuits (Chan et al., Redwood Research, 2023)
+
+### 307.1 The Need for Formal Rigor in Circuit Discovery
+A central goal of mechanistic interpretability is reverse-engineering neural networks into human-interpretable computational subgraphs ("circuits") that explain specific behavioral capabilities (e.g. Indirect Object Identification, Greater-Than evaluation, syntactic bracket matching).
+
+However, early circuit discovery suffered from severe methodological flaws:
+1. **Human Confirmation Bias:** Researchers manually inspect attention patterns and formulate qualitative narratives that explain some attention heads while ignoring dozens of parallel residual paths.
+2. **The Out-of-Distribution Hazard of Zero-Ablation:** Setting activations to zero ($\boldsymbol{a} \leftarrow \mathbf{0}$) or adding Gaussian noise pushes internal activations far off the trained data manifold, causing model collapse due to unnatural baseline shifts rather than true circuit disruption.
+3. **Path Interference in Residual Streams:** Because the residual stream functions as a shared communication bus where every head reads from and writes to the same vector, intervening on an activation $A$ affects both the hypothesized circuit path and dozens of unintended downstream pathways simultaneously.
+
+```mermaid
+flowchart TD
+    subgraph AdHocDiscovery["Flawed Ad-Hoc Circuit Discovery"]
+        Observe["Observe Attention Weights (Attention Map Inspection)"] --> Guess["Qualitative Narrative Hypothesis"]
+        Guess --> ZeroAblate["Zero-Ablation: a <- 0 (Pushes Activations Out of Distribution)"]
+        ZeroAblate --> Confound["Path Interference & Confounded Causality"]
+    end
+    subgraph CausalScrubbingFramework["Causal Scrubbing (Redwood Research, 2023)"]
+        AbstractGraph["1. Formal Abstract Hypothesis DAG G"] --> Treeify["2. Model Treeification (Disentangles Consumer Paths)"]
+        Treeify --> Resample["3. Condition-Preserving Resample Ablation x' ~ D|equivalence"]
+        Resample --> ExactFidelity["4. Quantitative Faithfulness Score (% Behavior Explained)"]
+    end
+```
+
+---
+
+### 307.2 The Formal Architecture of a Circuit Hypothesis
+**Causal Scrubbing** (Chan, Garriga-Alonso, Goldowsky-Dill et al., Redwood Research, 2023) establishes a formal, automated framework for testing whether a proposed mechanistic explanation is necessary and sufficient.
+
+A mechanistic hypothesis is formalized as a tuple $\mathcal{H} = (G, \mathcal{I}, m)$:
+1. **The Abstract Computational DAG $G = (V_G, E_G)$:**
+   A directed acyclic graph representing the high-level human algorithm (e.g. "Extract Subject Name $\to$ Inhibit Duplicate Tokens $\to$ Project Indirect Object").
+2. **The Interpretation Function $\mathcal{I}$:**
+   Assigns semantic meaning to each abstract node $u \in V_G$, specifying its intended output value $v_u(x)$ for any input prompt $x \sim \mathcal{D}$.
+3. **The Alignment Correspondence Mapping $m: V_G \to \mathcal{P}(V_M)$:**
+   Maps each abstract node $u \in V_G$ to a specific set of physical activations in the low-level neural network $V_M$ (attention head outputs, MLP intermediate layers, residual write streams).
+
+---
+
+### 307.3 Model Treeification (Resolving Downstream Path Confounding)
+In standard neural networks, an intermediate activation $\boldsymbol{a}_l$ is consumed by multiple subsequent layers. If $\boldsymbol{a}_l$ participates in a hypothesized circuit for downstream Head $H_1$, but acts as an unrelated feature for Head $H_2$, perturbing $\boldsymbol{a}_l$ confounds the evaluation.
+
+To resolve this, Causal Scrubbing **unrolls the network DAG into an expanded Computation Tree $\mathcal{T}$**:
+- For every unique path from an input token to the final output logit, a distinct node is instantiated in $\mathcal{T}$.
+- Interventions can now be targeted to a specific computational pathway without perturbing parallel pathways that read from the identical physical layer.
+
+```mermaid
+flowchart LR
+    subgraph DAG_Network["Standard Neural Network DAG (Shared Nodes)"]
+        InputTokens["Input x"] --> HeadA["Head L1H4"]
+        HeadA --> HeadB["Head L5H1 (Hypothesized Circuit)"]
+        HeadA --> HeadC["Head L5H8 (Unrelated Task Feature)"]
+        HeadB & HeadC --> Logits["Output Logits"]
+    end
+    subgraph TreeifiedNetwork["Treeified Computation Network T"]
+        Input1["Input x (Path 1)"] --> HeadA1["Head L1H4 (Branch 1)"] --> HeadB1["Head L5H1"] --> Logits1["Logits"]
+        Input2["Resampled x' (Path 2)"] --> HeadA2["Head L1H4 (Branch 2)"] --> HeadC1["Head L5H8"] --> Logits1
+    end
+```
+
+---
+
+### 307.4 Condition-Preserving Resample Ablation
+Instead of setting activations to zero, Causal Scrubbing evaluates invariance by **resampling inputs from the empirical data distribution**:
+
+1. **Equivalence Classes:**
+   For any node $u \in V_G$, two inputs $x, x' \in \mathcal{D}$ are conditionally equivalent if all parent variables in the abstract graph produce identical values:
+   $$x \sim_u x' \iff \text{Parents}_G(u)(x) = \text{Parents}_G(u)(x')$$
+2. **The Scrubbing Algorithm:**
+   To evaluate node $u$, Causal Scrubbing samples an alternative input $x' \sim \mathcal{D}$ such that $x \sim_u x'$. It runs the treeified branch for node $u$ on $x'$, while running the remainder of the network on the primary input $x$.
+3. **The Invariance Test:**
+   If the hypothesis is correct, swapping the activation of node $u$ with its conditionally equivalent counterpart from $x'$ **must not alter the final model prediction**:
+   $$f_{\text{scrub}}(x; x') = f(x)$$
+   Conversely, if an activation outside the hypothesized circuit is resampled randomly from $\mathcal{D}$, model performance on the target task must remain completely unaffected.
+
+---
+
+### 307.5 Quantitative Faithfulness Scoring & Empirical Validation
+
+```mermaid
+flowchart LR
+    subgraph PerformanceScoring["Causal Scrubbing Evaluation on IOI Circuit (GPT-2 Small)"]
+        Baseline["Unperturbed Model: 100% Performance (Logit Difference = 3.52)"]
+        RandomScrub["Random Activation Resampling: 0% Performance (Logit Difference = -0.41)"]
+        HypothesisScrub["Causal Scrubbed Under IOI Hypothesis: 94.8% Performance Preserved"]
+    end
+```
+
+The degree of empirical validity is quantified by the **Faithfulness Ratio**:
+$$F(\mathcal{H}) \triangleq \frac{\mathbb{E}_{x, x'} [\mathcal{L}_{\text{scrub}}(x; x')] - \mathcal{L}_{\text{random}}}{\mathcal{L}_{\text{clean}} - \mathcal{L}_{\text{random}}} \in [0, 1]$$
+
+**Empirical Findings Across Benchmark Circuits:**
+- **Indirect Object Identification (IOI in GPT-2 Small):** Evaluating the 26-head IOI circuit (Wang et al., 2023) under Causal Scrubbing preserves **$94.8\%$ of the logit difference** ($3.34$ vs $3.52$), rigorously proving that the 26 heads are mathematically sufficient to explain the behavior.
+- **Parentheses Syntax Checker:** Evaluated on synthetic Dyck-$(k)$ grammars, treeified resample ablation proved that small transformers track nesting depth via an exact balance-counting scalar induction circuit, achieving **$98.2\%$ faithfulness**.
+- **Elimination of Spurious Features:** When applied to flawed hypotheses, Causal Scrubbing instantly drives faithfulness to $<10\%$, providing an automated firewall against plausible-sounding interpretability confabulations.
