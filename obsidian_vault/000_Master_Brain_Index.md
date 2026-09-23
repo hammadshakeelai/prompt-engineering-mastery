@@ -44,6 +44,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/system_prompt_patterns.md]]
 - [[raw_research/test_time_compute.md]]
 - [[raw_research/test_time_compute_optimal_scaling.md]]
+- [[raw_research/test_time_compute_scaling_and_rlvr_monograph.md]]
 - [[raw_research/OBLITERATUS]] - (Abliteration & Orthogonal Direction Modification Toolkit)
 - [[raw_research/chatgpt_system_prompts]] - (Extracted System Prompts for ChatGPT, Claude, Apple Intelligence)
 
