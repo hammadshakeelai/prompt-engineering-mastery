@@ -9233,3 +9233,85 @@ sequenceDiagram
   - GSM8K: Increases from $34.2\%$ (SFT) to **$51.1\%$** (SPIN Iteration 3) with zero additional mathematical exemplars.
   - HumanEval: Pass@1 increases from $21.9\%$ to **$33.5\%$**.
 - **Self-Correction Dynamics:** At each iteration $t$, the opponent model $\pi_{\theta_t}$ exposes its own generative failure modes (repetitive phrases, logical skips), allowing the learner $\pi_\theta$ to dynamically unlearn them through contrastive penalization.
+
+---
+
+## 287. Edge Attribution Patching with Integrated Gradients (EAP-IG): Scalable Circuit Discovery without Gradient Saturation (Hanna et al., 2024)
+
+### 287.1 The Combinatorial Catastrophe of Exhaustive Activation Patching
+Mechanistic interpretability seeks to reverse-engineer trained transformers into human-understandable computational subgraphs called **circuits**. A circuit is a directed acyclic sub-graph $\mathcal{G}_{\text{circuit}} = (\mathcal{V}_{\text{sub}}, \mathcal{E}_{\text{sub}}) \subset \mathcal{G}_{\text{model}}$ whose components (attention heads, MLP blocks, residual streams) are causally sufficient to explain a specific model capability (e.g., indirect object identification, factual recall, Python syntax parsing).
+
+**The Activation Patching Bottleneck:**
+The gold-standard method for identifying circuit edges is **causal activation patching** (interchange intervention). Given a clean input $x_{\text{clean}}$ and a corrupted/counterfactual input $x_{\text{corrupt}}$:
+1. The model executes on $x_{\text{clean}}$, storing all intermediate activations.
+2. For every directed edge $e = (u \to v)$ between upstream component $u$ and downstream component $v$, the clean activation $h_u^{\text{clean}}$ is injected into the corrupt forward run:
+   $$\text{Effect}(u \to v) = \mathcal{L}\left( \text{Patch}(x_{\text{corrupt}}, u \to v) \right) - \mathcal{L}(x_{\text{corrupt}})$$
+3. **The Computational Wall:** In a frontier model (e.g. Llama-3 70B with 80 layers and 64 heads per layer), the total number of inter-component edges scales quadratically with depth:
+   $$|E| = O\left( L^2 H^2 + L \cdot M \right) \sim 10^6\text{--}10^8 \text{ edges}$$
+   Testing every edge individually requires millions of GPU forward passes, demanding weeks of cluster compute for a single circuit evaluation.
+
+```mermaid
+flowchart TD
+    subgraph ExhaustivePatching["Exhaustive Activation Patching (O(|E|) Passes)"]
+        Clean["Run x_clean (Store All Activations)"]
+        Corrupt["Run x_corrupt"]
+        Loop["Iterate over 10^7 Edges: Intervene (u -> v) -> Forward Pass"]
+        Loop --> Impractical["Compute Wall: Weeks of GPU Cluster Time"]
+    end
+    subgraph EAP_IG["EAP-IG: Edge Attribution Patching with Integrated Gradients"]
+        Pair["Clean & Corrupt Inputs (x_clean, x_corrupt)"]
+        Path["Linear Interpolation Path: γ(α) = h_u^corrupt + α (h_u^clean - h_u^corrupt)"]
+        Quad["Gauss-Legendre Quadrature (M = 5 Steps)"]
+        SingleBackward["M = 5 Batched Backward Passes Computes ALL 10^7 Edges Simultaneously"]
+        SingleBackward --> FastCircuit["1000x Speedup with >95% Circuit Faithfulness"]
+    end
+```
+
+---
+
+### 287.2 Base EAP & The Gradient Saturation Pathology
+To bypass the $O(|E|)$ barrier, Syed et al. (2023) introduced **Edge Attribution Patching (EAP)** by approximating the causal effect via a first-order Taylor expansion around the clean activation $h_u^{\text{clean}}$:
+$$\text{Effect}(u \to v) \approx \Delta h_u^\top \cdot \nabla_{h_u} \mathcal{L}(x_{\text{clean}}) = \left( h_u^{\text{clean}} - h_u^{\text{corrupt}} \right)^\top \frac{\partial \mathcal{L}}{\partial h_u}$$
+By utilizing automatic differentiation backpropagation, EAP evaluates all edges in a single backward pass ($O(1)$ scaling relative to edge count).
+
+**The Failure Mode: Gradient Saturation:**
+Standard EAP routinely misidentifies or entirely omits critical circuit components due to **gradient saturation**:
+1. **Activation Non-Linearities:** Activation functions (ReLU, GeLU, SwiGLU) and Softmax attention patterns exhibit non-linear saturation plateaus where local derivatives vanish ($\frac{\partial f}{\partial z} \approx 0$).
+2. **Binary Switch Features:** Many of the most important computational circuits in transformers (such as *Induction Heads* or *Refusal Detectors*) operate as sharp threshold gates. When evaluated at the clean state $x_{\text{clean}}$, the activation is deep within the saturated ceiling ($\sigma(z) \approx 1.0$), yielding a near-zero local gradient $\nabla_{h_u} \mathcal{L} \approx 0$.
+3. **False Negatives:** EAP computes an attribution score of $\approx 0$ for these pivotal heads, discarding the essential backbone of the circuit.
+
+---
+
+### 287.3 Path-Integrated EAP-IG Formulation
+**Edge Attribution Patching with Integrated Gradients (EAP-IG)** (Hanna et al., 2024) overcomes gradient saturation by integrating the gradients along the straight-line trajectory between corrupted and clean activation states:
+
+1. **Path-Integral Formulation:**
+   Define the linear interpolation path $\gamma: [0, 1] \to \mathbb{R}^d$ between corrupted activation $h_u^{\text{corrupt}}$ and clean activation $h_u^{\text{clean}}$:
+   $$\gamma(\alpha) = h_u^{\text{corrupt}} + \alpha \left( h_u^{\text{clean}} - h_u^{\text{corrupt}} \right), \quad \alpha \in [0, 1]$$
+   The exact integrated attribution for edge $(u \to v)$ is formulated as:
+   $$\Delta \mathcal{L}_{u \to v}^{\text{IG}} \triangleq \left( h_u^{\text{clean}} - h_u^{\text{corrupt}} \right)^\top \int_0^1 \frac{\partial \mathcal{L}(\gamma(\alpha))}{\partial h_u} \, d\alpha$$
+2. **Numerical Quadrature via Gauss-Legendre Rules:**
+   The continuous integral is approximated using an $M$-step Gauss-Legendre quadrature (where $M \in [5, 10]$ is empirically sufficient):
+   $$\Delta \mathcal{L}_{u \to v}^{\text{IG}} \approx \left( h_u^{\text{clean}} - h_u^{\text{corrupt}} \right)^\top \sum_{m=1}^M w_m \left. \frac{\partial \mathcal{L}}{\partial h_u} \right|_{\gamma(\alpha_m)}$$
+   where $\{\alpha_m\}_{m=1}^M$ are the quadrature roots and $\{w_m\}_{m=1}^M$ are the quadrature weights.
+3. **Axiomatic Completeness & Faithfulness:**
+   By the Fundamental Theorem of Calculus, EAP-IG satisfies the **Completeness Axiom**:
+   $$\sum_{e \in \mathcal{E}} \Delta \mathcal{L}_e^{\text{IG}} = \mathcal{L}(x_{\text{clean}}) - \mathcal{L}(x_{\text{corrupt}})$$
+   Unlike standard EAP (whose sum of attributions diverges wildly from the true loss gap), EAP-IG attributes $100\%$ of the behavioral change across the network without residual leakage.
+
+---
+
+### 287.4 Empirical Validation & Circuit Discovery Benchmarks
+```mermaid
+flowchart LR
+    subgraph Comparison["Circuit Faithfulness on IOI Task (Indirect Object Identification)"]
+        BaseEAP["Standard EAP: 54.2% Faithfulness (Misses S-Inhibition Heads due to Saturation)"]
+        Exhaustive["Exhaustive Patching: 100% Faithfulness (Requires 18 Hours Compute)"]
+        EAP_IG_Res["EAP-IG (M=5): 96.8% Faithfulness (Requires Only 42 Seconds Compute)"]
+    end
+```
+
+**Quantitative Results (Hanna et al., 2024 / IOI & Greater-Than Benchmarks):**
+- **Circuit Faithfulness:** On the canonical Indirect Object Identification (IOI) benchmark, EAP-IG achieves **$96.8\%$ circuit faithfulness** (matching the true causal circuit recovered by exhaustive manual patching), whereas standard EAP plateaus at $54.2\%$ because it fails to capture saturated S-Inhibition attention heads.
+- **Compute Efficiency:** Evaluates the entire $10^7$-edge circuit across a 70B parameter model in **$42$ seconds** on an 8xH100 node, delivering a **$>1500\times$ speedup** over exhaustive patching.
+- **Circuit Sparsity:** Prunes away **$>99.2\%$ of model components**, isolating a clean, highly interpretable sub-circuit of only $28$ attention heads that account for the complete end-to-end task capability.
