@@ -1147,38 +1147,76 @@ Let $h_l(x) \in \mathbb{R}^d$ denote the residual stream activation vector at in
 - **Superficial Safety Masking:** The existence of a single refusal direction across 13 diverse open-weight model families (LLaMA-2/3, Mistral, Qwen, Yi up to 72B parameters) proves that preference fine-tuning acts as a superficial linear gate rather than eliminating underlying dangerous capabilities.
 - **The Case for Representation Circuit Breakers:** To construct genuinely robust alignment immune to linear subspace erasure, models must employ representation circuit breakers (Zou et al., NeurIPS 2024) that actively scramble high-dimensional concept geometry rather than projecting along a single brittle refusal axis.
 
+## 45. Disaggregated Prefill-Decode Serving & Hierarchical KV Memory Pools (Mooncake & DistServe) (FAST 2025 / arXiv:2407.00079)
 
+### 45.1 The Prefill-Decode Interference Bottleneck
+Conventional LLM inference engines colocate both prompt evaluation (prefill phase) and autoregressive token generation (decode phase) on the same GPU compute instances. This colocation creates severe hardware resource interference:
+- **Prefill Characteristics:** Compute-bound, highly parallelized, saturating Tensor Core matrix multiplication units with $\mathcal{O}(L_{\text{prompt}}^2)$ FLOP density.
+- **Decode Characteristics:** Memory-bandwidth-bound, sequential, bounded strictly by High Bandwidth Memory throughput ($BW_{\text{HBM}}$) with $\mathcal{O}(1)$ arithmetic intensity per token step.
 
+When bursty, long-context prefill batches are scheduled on active decoding workers, decoding threads suffer from catastrophic pipeline preemption, causing severe time-between-tokens (TBT / inter-token latency) spikes and violating Service Level Objectives (SLOs).
 
+### 45.2 KVCache-Centric Disaggregated Architecture
+The Mooncake architecture (Zhong et al., Moonshot AI / Kimi, FAST 2025 Best Paper / arXiv:2407.00079) resolves this interference by physically decoupling the serving infrastructure into specialized prefill and decode worker pools connected by a unified, disaggregated KV cache transfer fabric:
 
+```mermaid
+flowchart LR
+    UserPrompt["Client Prompt"] --> Conductor["Conductor Scheduler (Cache-Locality Routing)"]
+    Conductor -->|"Prefill Assignment"| PPool["Prefill Pool (Compute-Bound / FP8 Tensor Cores)"]
+    PPool -->|"RDMA Async Page Streaming"| TE["Transfer Engine (RoCE / CXL Fabric)"]
+    TE -->|"Direct HBM Injection"| DPool["Decode Pool (Memory-Bandwidth Bound / PagedAttention)"]
+    DPool -->|"Tokens"| Client["Client Stream"]
+    TE <-->|"Tiered Spillover"| DRAM["Host CPU DRAM Pool"]
+    DRAM <-->|"Cold Eviction"| SSD["Distributed NVMe SSD Fabric"]
+```
 
+### 45.3 Hierarchical Three-Tier KV Memory Pooling
+Rather than discarding evicted Key-Value tensors or constraining context length to individual GPU VRAM limits, Mooncake formalizes a hierarchical memory hierarchy:
+1. **Tier 1: GPU High Bandwidth Memory (HBM):**
+   - Latency: $< 1\,\mu\text{s}$, Bandwidth: $2.0\text{--}3.35\,\text{TB/s}$ (H100/H200).
+   - Holds active, immediate decoding pages.
+2. **Tier 2: Host CPU DRAM & CXL Shared Fabric:**
+   - Latency: $100\text{--}200\,\text{ns}$ interconnect overhead, Bandwidth: $200\text{--}400\,\text{GB/s}$ via PCIe Gen5 / CXL 2.0.
+   - Serves as a high-capacity warm cache for multi-turn agentic conversations and Radix prefix sharing.
+3. **Tier 3: Distributed NVMe SSD Fabric:**
+   - Latency: $10\text{--}50\,\mu\text{s}$, Bandwidth: $50\text{--}100\,\text{GB/s}$.
+   - Houses persistent, cold historical KV pages, eliminating redundant prefill recomputation across long-running agent threads.
 
+### 45.4 Asynchronous Transfer Engine & Performance
+The Transfer Engine streams materialized KV blocks directly between heterogeneous nodes via zero-copy RDMA over Converged Ethernet (RoCEv2). The transfer latency for context length $L_{\text{ctx}}$ across $N_L$ layers with $N_H$ heads of dimension $d$ is:
+$$T_{\text{transfer}} = \frac{2 \cdot N_L \cdot N_H \cdot d \cdot L_{\text{ctx}} \cdot \text{sizeof}(\text{dtype})}{BW_{\text{RDMA}}}$$
+With $400\,\text{Gbps}$ RDMA interfaces, transferring a 128k context KV cache requires $\sim 64\,\text{ms}$, fully hidden behind prefill chunking.
+- **Empirical Scaling:** Delivers up to **525% throughput improvement** on long-context benchmarks and allows Kimi production infrastructure to process **75% more requests** under strict latency SLOs.
 
+---
 
+## 46. Representation Circuit Breakers & Geometric Manifold Disruption (Zou et al., NeurIPS 2024 / arXiv:2406.04313)
 
+### 46.1 Brittle Refusal vs. Representation Rerouting
+As proven in Section 44, safety refusal acquired through standard preference optimization (RLHF, DPO) collapses into an isolated, fragile 1D direction $\hat{\mathbf{r}}$ that can be neutralized by linear null-space projection $(I - \hat{\mathbf{r}}\hat{\mathbf{r}}^\top)$ or bypassed by adversarial token sequences.
+Andy Zou et al. (*Improving Alignment and Robustness with Circuit Breakers*, NeurIPS 2024 / arXiv:2406.04313) introduce **Representation Circuit Breakers (RCB)**, which operate on the fundamental principle that alignment must **shatter the underlying latent representation manifolds** of harmful capabilities rather than appending superficial refusal text.
 
+### 46.2 Dual-Objective Disruption Optimization
+Circuit Breakers train the model parameters $\theta$ (typically via parameter-efficient LoRA adapters on target intermediate layers $l \in L_{\text{target}}$, e.g., layers 10 and 20) using two competing loss objectives over contrastive datasets:
 
+1. **Circuit Breaker Disruption Loss ($\mathcal{L}_{\text{cb}}$) on Harmful Manifolds ($\mathcal{D}_s$):**
+   To permanently short-circuit harmful reasoning, the representation of malicious input $x \in \mathcal{D}_s$ is driven to be orthogonal or negatively correlated with its unaligned latent state $h_l^{\text{orig}}(x)$:
+   $$\mathcal{L}_{\text{cb}}(\theta) = \mathbb{E}_{x \in \mathcal{D}_s, l \in L_{\text{target}}} \left[ \text{ReLU}\left( \cos\left( h_l^\theta(x), h_l^{\text{orig}}(x) \right) \right) \right]$$
+   The $\text{ReLU}$ gate ensures that optimization halts once the cosine similarity drops to or below zero ($\le 0$), preventing pathological inverse-feature artifacts.
+   
+   Alternatively, representations are actively rerouted toward a safe, benign target anchor $h_l^{\text{target}}(x)$:
+   $$\mathcal{L}_{\text{rr}}(\theta) = \mathbb{E}_{x \in \mathcal{D}_s, l \in L_{\text{target}}} \left[ 1 - \cos\left( h_l^\theta(x), h_l^{\text{target}}(x) \right) \right]$$
 
+2. **Retain Utility Loss ($\mathcal{L}_{\text{retain}}$) on Benign Distributions ($\mathcal{D}_r$):**
+   To ensure that the model retains its standard capabilities, general knowledge, and reasoning fidelity, activations on harmless requests $x \in \mathcal{D}_r$ are strictly anchored to the original representation geometry via $L_2$ regularization:
+   $$\mathcal{L}_{\text{retain}}(\theta) = \mathbb{E}_{x \in \mathcal{D}_r, l \in L_{\text{target}}} \left[ \| h_l^\theta(x) - h_l^{\text{orig}}(x) \|_2^2 \right]$$
 
+3. **Combined Objective:**
+   $$\mathcal{L}_{\text{RCB}}(\theta) = \mathcal{L}_{\text{cb}}(\theta) + \lambda \mathcal{L}_{\text{retain}}(\theta)$$
+   where $\lambda$ balances safety robustness against benchmark utility.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+### 46.3 Mechanistic Circuit Invalidation
+Unlike standard refusal training:
+- **Attack Agnosticism:** Circuit breakers do not pattern-match against prompt surface forms. Whether attacked by GCG, AutoDAN, PAIR, or token smuggling, any prompt that traverses into harmful latent concepts triggers the internal circuit breaker, causing the intermediate representation to collapse into benign geometry.
+- **Ablation Resistance:** Because the harmful feature representations are erased across high-dimensional activation space rather than projected along a single line, orthogonal projection techniques (such as Arditi et al.'s refusal ablation) cannot restore the corrupted concept representations.
 
