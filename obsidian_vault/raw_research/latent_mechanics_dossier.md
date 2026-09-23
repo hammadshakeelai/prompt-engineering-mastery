@@ -8035,3 +8035,211 @@ flowchart LR
    Features with large $\|\Delta W_{\text{dec}, i}\|$ isolate the exact representation additions made during RLHF. Intervening on a single refusal crosscoder latent cleanly suppresses model refusal without inducing catastrophic forgetfulness or ungrammatical gibberish.
 3. **Dictionary Compression:**
    By capturing shared features across $L = 32$ layers, crosscoders achieve equivalent explained variance ($>90\%$) with **$45\%$ fewer total latent parameters** than 32 independently trained layer-wise SAEs.
+
+---
+
+## 271. Multi-Token Prediction (MTP): Parallel Future Token Supervision & Speculative Acceleration
+
+### 271.1 The Theoretical Limits of Next-Token Prediction
+Autoregressive causal language models are traditionally trained via maximum likelihood estimation over the single next token:
+$$\mathcal{L}_{\text{NTP}}(\theta) = -\frac{1}{T} \sum_{t=1}^T \log P_\theta(x_t \mid x_{<t})$$
+While this formulation is universal, it enforces an asymmetric inductive bias:
+1. **Local Greediness:** The model is penalized identically for predicting an incorrect function name whether it leads to correct multi-line algorithmic logic or immediate syntactic collapse. It incentivizes the network to allocate substantial parameter bandwidth to local lexical transitions rather than long-horizon causal planning.
+2. **Teacher Forcing Inefficiency:** In standard pre-training, each forward pass calculates loss only on the immediate successor token, requiring $O(T)$ sequential training steps to propagate information across $T$ tokens.
+3. **Inference Latency Decoupling:** Standard next-token trained backbones require an external, independently trained small model (or speculative head) to enable speculative decoding, which often suffers from distribution shift and reduced acceptance rates.
+
+```mermaid
+flowchart TD
+    subgraph NTP["Standard Next-Token Prediction (1-Step Horizon)"]
+        H0["Hidden Representation h_t"] --> Out1["Predict x_{t+1}"]
+    end
+    subgraph MTP["Multi-Token Prediction Architecture (D=2 Future Cascade)"]
+        H0_M["Hidden Representation h_t^{(0)}"] --> Head1["Shared Unembed Head -> x_{t+1}"]
+        H0_M & Emb1["Embedding of x_{t+1}"] --> Block1["MTP Layer 1 -> h_t^{(1)}"]
+        Block1 --> Head2["Shared Unembed Head -> x_{t+2}"]
+        Block1 & Emb2["Embedding of x_{t+2}"] --> Block2["MTP Layer 2 -> h_t^{(2)}"]
+        Block2 --> Head3["Shared Unembed Head -> x_{t+3}"]
+    end
+```
+
+---
+
+### 271.2 DeepSeek-V3 Sequential MTP Architecture
+DeepSeek-V3 formalizes a recursive, modular Multi-Token Prediction architecture where $D$ independent future tokens are predicted by cascading $D$ sequential MTP blocks:
+
+1. **Main Trunk Representation:**
+   Let the main transformer backbone produce the final layer representation $h_t^{(0)} \in \mathbb{R}^d$ for token $t$. The first future token $x_{t+1}$ is predicted by the standard unembedding matrix $W_U \in \mathbb{R}^{V \times d}$:
+   $$P^{(1)}(x_{t+1} \mid x_{\le t}) = \text{Softmax}\left( W_U \, \text{RMSNorm}\left(h_t^{(0)}\right) \right)$$
+2. **Recursive MTP Module Cascade:**
+   For each future prediction depth $k \in \{1, \dots, D\}$ (where $D=1$ or $D=2$ in production models):
+   - The input to the $k$-th MTP block concatenates the previous prediction hidden state $h_t^{(k-1)}$ and the ground-truth token embedding $\text{Emb}(x_{t+k})$:
+   $$\tilde{h}_t^{(k)} = \left[ \text{RMSNorm}\left(h_t^{(k-1)}\right) \; ; \; \text{RMSNorm}\left(W_E(x_{t+k})\right) \right] \in \mathbb{R}^{2d}$$
+   - This concatenated vector is projected back to dimension $d$ and passed through a dedicated Transformer block (consisting of self-attention and FFN):
+   $$h_t^{(k)} = \text{MTP\_Block}_k\left( W_{\text{proj}}^{(k)} \tilde{h}_t^{(k)} \right) \in \mathbb{R}^d$$
+   - The token $x_{t+k+1}$ is predicted using the **same shared unembedding matrix $W_U$**:
+   $$P^{(k+1)}(x_{t+k+1} \mid x_{\le t}) = \text{Softmax}\left( W_U \, \text{RMSNorm}\left(h_t^{(k)}\right) \right)$$
+3. **Composite Multi-Token Loss Formulation:**
+   The training objective sums the negative log-likelihood across all prediction depths:
+   $$\mathcal{L}_{\text{MTP}} = \mathcal{L}_{\text{NTP}} + \sum_{k=1}^D \frac{\lambda_k}{T - k} \sum_{t=1}^{T - k} -\log P^{(k+1)}\left(x_{t+k+1} \mid x_{\le t}\right)$$
+   where $\lambda_k \in (0, 1]$ is a depth discount factor (e.g. $\lambda_1 = 0.3, \lambda_2 = 0.1$).
+
+---
+
+### 271.3 Inference Speculative Decoding & Benchmarks
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Main as Main Trunk (h_t^0)
+    participant MTP1 as MTP Module 1 (h_t^1)
+    participant MTP2 as MTP Module 2 (h_t^2)
+    participant Spec as Speculative Verification Unit
+
+    Main->>Spec: Propose Token x_{t+1} (Argmax P^1)
+    Spec->>MTP1: Feed x_{t+1} + h_t^0
+    MTP1->>Spec: Propose Token x_{t+2} (Argmax P^2)
+    Spec->>MTP2: Feed x_{t+2} + h_t^1
+    MTP2->>Spec: Propose Token x_{t+3} (Argmax P^3)
+    Note over Spec: Speculative Candidate Sequence: (x_{t+1}, x_{t+2}, x_{t+3})
+    Spec->>Main: Batched 1-Pass Verification
+```
+
+**Quantitative Empirical Impact:**
+- **Code & Math Reasoning:** Pre-training with $D=1$ MTP increases HumanEval pass@1 by $+6.4\%$ and GSM8K by $+4.8\%$ on matched compute budgets, as the representations are forced to plan abstract syntax trees ahead of time.
+- **Integrated Speculative Decoding:** Because MTP modules are trained in-situ with the main trunk, draft acceptance rate reaches **$82\text{--}89\%$**, achieving a **$1.8\times\text{--}2.1\times$ wall-clock inference speedup** with zero additional draft model deployment overhead.
+
+---
+
+## 272. Dual-State Attention Routing: Selective Linear Recurrence Hybrid Models
+
+### 272.1 The Quadratic Context vs Linear Memory Tradeoff
+Self-attention in Transformer architectures computes an all-pairs dot-product matrix $A = \text{Softmax}(Q K^\top / \sqrt{d})$, yielding optimal global associative retrieval but imposing quadratic compute complexity $O(N^2)$ and linear KV cache expansion $O(N)$ per active request:
+$$\text{Memory}_{\text{KV}} = 2 \times N_{\text{layers}} \times N_{\text{heads}} \times d_{\text{head}} \times T \times \text{sizeof(float16)}$$
+For long context windows ($128\text{K}\text{--}1\text{M}$ tokens), KV cache memory overwhelms GPU HBM, capping concurrency.
+
+Linear attention and State-Space Models (SSMs, such as Mamba-2 and RWKV-6) resolve this by compressing history into a fixed-size recurrent state matrix $S_t \in \mathbb{R}^{d \times d}$:
+$$S_t = A_t S_{t-1} + B_t x_t, \quad y_t = C_t S_t$$
+yielding $O(1)$ memory complexity and $O(N)$ inference complexity. However, because $S_t$ has fixed capacity, pure SSMs suffer from **information loss and recall degradation** on non-linear multi-hop reasoning, complex code generation, and multi-document retrieval tasks.
+
+```mermaid
+flowchart LR
+    subgraph PureSSM["Pure SSM (Mamba-2)"]
+        X1["Input x"] --> Rec1["Recurrent State S_t (Fixed Size)"]
+        Rec1 --> Out1["Loss of Fine Associative Recall on 100K+ Context"]
+    end
+    subgraph PureAttn["Pure Attention (Transformer)"]
+        X2["Input x"] --> KV["Full Key-Value History Matrix (Unbounded Growth)"]
+        KV --> Out2["Exact Recall but VRAM Out-of-Memory"]
+    end
+    subgraph DualState["Dual-State Hybrid (Jamba / StripedHyena)"]
+        X3["Input x"] --> RecL["k Linear SSM Layers (Constant Memory)"]
+        RecL --> AttnL["1 Attention Layer (Global Anchor Retrieval)"]
+        AttnL --> RecL2["k Linear SSM Layers"]
+        RecL2 --> Out3["Exact Associative Recall + 85% VRAM Reduction"]
+    end
+```
+
+---
+
+### 272.2 Dual-State Routing Architecture & Layer Topology
+Dual-State Hybrid models (e.g. AI21 Jamba, StripedHyena) organize transformer layers and linear recurrent blocks in a repeating topological ratio $R = (k_{\text{SSM}} : 1_{\text{Attn}})$:
+
+1. **Mamba-2 State-Space Block (Continuous Linear Compression):**
+   In the non-attention layers, representations are processed through State Space Duality (SSD) blocks:
+   $$h_t = \text{SSM\_Layer}(x_t) = C_t \left( \sum_{s=1}^t \left( \prod_{j=s+1}^t A_j \right) B_s x_s \right)$$
+   This maintains a hidden state $S \in \mathbb{R}^{P \times D}$ that updates in $O(1)$ time per token, consuming zero KV cache memory.
+2. **Periodic Attention Anchor Layer (Associative Retrieval Anchor):**
+   Every $k$-th layer (e.g. $k=8$), a standard Multi-Head / Grouped-Query Attention block is evaluated:
+   $$y_t = \text{Attention}\left(Q_t, K_{\le t}, V_{\le t}\right) W_O$$
+   This anchor layer explicitly reads the full historical Key-Value cache, preventing the recurrent state from drifting or forgetting critical upstream facts.
+3. **MoE Routing Integration:**
+   Hybrid architectures often interleave sparse Mixture-of-Experts inside both the SSM and Attention blocks:
+   $$x_{l+1} = x_l + \text{MoE}\left( \text{DualStateBlock}(x_l) \right)$$
+   enabling massive capacity scaling (e.g., 52B total parameters with only 12B active parameters per token).
+
+---
+
+### 272.3 Memory Footprint & Throughput Benchmarks
+```mermaid
+flowchart TD
+    subgraph CacheFootprint["KV Cache Comparison at 128K Context (FP16)"]
+        L3["Standard Llama-3 70B (32 Layers MHA/GQA): ~16 GB per stream"]
+        Jamba["Dual-State Hybrid (4 Attention Layers): ~2 GB per stream (87.5% Savings)"]
+    end
+```
+
+**Quantitative Serving Metrics:**
+- **KV Cache VRAM Footprint:** For an 8-layer attention / 24-layer SSM hybrid model at $128\text{K}$ context, KV cache drops from **$16.4\text{ GB}$ down to $2.05\text{ GB}$ per concurrent user**.
+- **Serving Concurrency:** Enables an **$8\times$ increase in maximum concurrent request batch size** on identical 80GB H100 hardware.
+- **Retrieval Fidelity:** Scores **$100\%$ on Needle-In-A-Haystack** across the entire $256\text{K}$ token horizon, matching dense Transformers and decisively outperforming pure SSMs ($<68\%$ recall beyond $32\text{K}$).
+
+---
+
+## 273. Representation Engineering: Difference-of-Means Vector Steering & Activation Additions
+
+### 273.1 Mechanics of Internal Representation Engineering (RepE)
+Standard model steering relies on natural language prompting (in-context instructions, few-shot examples) or parameter updates (SFT, LoRA, DPO). Representation Engineering (RepE, Zou et al., 2023) operates directly on the model's internal latent space, viewing neural activations as the direct physical substrate of cognitive states (e.g., honesty, sycophancy, power-seeking, toxicity, or safety guardrails).
+
+Let $\mathcal{M}$ be an autoregressive model, and let $h_t^{(l)} \in \mathbb{R}^d$ be the residual stream hidden state at layer $l$ and sequence position $t$. A targeted concept $\mathcal{C}$ is formalized as a linear direction $v_{\mathcal{C}} \in \mathbb{R}^d$ in activation space.
+
+```mermaid
+flowchart TD
+    subgraph ContrastCollection["1. Contrastive Data Collection"]
+        P_pos["Positive Prompts (Elicit Concept C)"] --> RunPos["Forward Pass Model"]
+        P_neg["Negative Prompts (Elicit Counter-Concept ¬C)"] --> RunNeg["Forward Pass Model"]
+    end
+    subgraph VectorComputation["2. Difference-of-Means Extraction"]
+        RunPos --> ActsPos["Positive Activations {x_i^+} at Layer l"]
+        RunNeg --> ActsNeg["Negative Activations {x_i^-} at Layer l"]
+        ActsPos & ActsNeg --> CalcMean["v_C = E[x^+] - E[x^-]"]
+        CalcMean --> UnitNorm["Unit Steering Vector: v̂_C = v_C / ||v_C||"]
+    end
+    subgraph RuntimeInference["3. Runtime Activation Addition"]
+        PromptUser["Arbitrary User Prompt"] --> ModelFwd["Layer l Residual Stream: h_t^(l)"]
+        UnitNorm & Strength["Steering Multiplier α"] --> VectorMult["α · v̂_C"]
+        ModelFwd & VectorMult --> Injection["Modified State: h̃_t^(l) = h_t^(l) + α · v̂_C"]
+        Injection --> Downstream["Forward Pass Continues Unchanged"]
+    end
+```
+
+---
+
+### 273.2 The Mathematical Formulation of Difference-of-Means (DoM)
+1. **Contrastive Prompt Pair Mining:**
+   We construct a dataset of $N$ balanced contrastive prompt pairs:
+   $$\mathcal{D}_{\text{contrast}} = \left\{ (p_i^+, p_i^-) \right\}_{i=1}^N$$
+   where $p_i^+$ instructs the model to exhibit concept $\mathcal{C}$ (e.g. *"Answer the following question truthfully without any bias:"*), and $p_i^-$ instructs the inverse (e.g. *"Answer the following question deceitfully with false claims:"*).
+2. **Activation Extraction at Pivot Tokens:**
+   For each prompt pair, activations are recorded at the terminal prompt token position $T_{\text{prompt}}$ across intermediate layer $l$:
+   $$x_i^+ = h_{T_{\text{prompt}}}^{(l)}(p_i^+), \quad x_i^- = h_{T_{\text{prompt}}}^{(l)}(p_i^-)$$
+3. **Difference-of-Means Vector Estimation:**
+   The raw steering vector $v_{\mathcal{C}}$ is the difference between the empirical expectations of the positive and negative distributions:
+   $$v_{\mathcal{C}} = \mu^+ - \mu^- = \frac{1}{N} \sum_{i=1}^N x_i^+ - \frac{1}{N} \sum_{i=1}^N x_i^-$$
+   The normalized steering direction is:
+   $$\hat{v}_{\mathcal{C}} = \frac{v_{\mathcal{C}}}{\left\| v_{\mathcal{C}} \right\|_2}$$
+4. **Runtime Activation Addition Intervention:**
+   During arbitrary generation at test time, the model executes a normal forward pass. At the selected intervention layers $L_{\text{target}} \subset \{1, \dots, L_{\text{total}}\}$, the residual stream vector is dynamically modified before layer normalization and attention/FFN blocks:
+   $$\tilde{h}_t^{(l)} = h_t^{(l)} + \alpha \cdot \hat{v}_{\mathcal{C}}$$
+   where $\alpha \in \mathbb{R}$ controls the steering magnitude:
+   - $\alpha > 0$: Amplifies the expression of concept $\mathcal{C}$.
+   - $\alpha = 0$: Standard unperturbed generation.
+   - $\alpha < 0$: Actively suppresses or inverts concept $\mathcal{C}$.
+
+---
+
+### 273.3 Surgical Control, Subspace Geometry & Failure Modes
+```mermaid
+flowchart LR
+    subgraph Geometry["Activation Subspace Orthogonality"]
+        V_steer["Steering Vector v̂_C"] ---|"cos θ ≈ 0 (Orthogonal)"| V_syntax["Syntactic / Grammar Subspace"]
+        V_steer ---|"cos θ ≈ 0.85 (Aligned)"| V_truth["TruthfulQA Latent Direction"]
+    end
+```
+
+**Empirical Properties & Steering Characteristics:**
+1. **Truthfulness Steering (TruthfulQA):**
+   Injecting $\hat{v}_{\text{truth}}$ with $\alpha = +1.5$ at middle layers (layers 14–18 in a 32-layer model) increases TruthfulQA accuracy from **$44.2\%$ to $78.6\%$** without requiring a single fine-tuning step.
+2. **Sycophancy Suppression:**
+   Injecting $-\hat{v}_{\text{sycophancy}}$ reduces user agreement bias by **$>82\%$** in politically charged and subjective evaluation benchmarks.
+3. **Phase Transition & Over-Steering:**
+   - If $\alpha > \alpha_{\text{critical}}$ (typically $\alpha > 3.0$), the injected vector dominates the residual stream norm, causing token entropy collapse, repetitive looping, and ungrammatical token emission.
+   - Surgical effectiveness is maximized when injection is restricted to middle-depth layers ($l \in [0.4 L, 0.7 L]$), preserving lower-level sensory feature parsing and upper-level vocabulary unembedding projection fidelity.
