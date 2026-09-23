@@ -12284,3 +12284,105 @@ sequenceDiagram
 
 **Engineering Integration:**
 Token healing is now standard in production engines (**Guidance**, **vLLM**, **SGLang**). It resolves an architectural flaw inherent to subword tokenizers, ensuring that model generation matches the natural distribution of the training pretraining dataset regardless of where user input ends.
+
+---
+
+## 318. Kahneman-Tversky Optimization (KTO): Unpaired Preference Alignment via Prospect Theory & Loss Aversion (Ethayarajh et al., Stanford & Contextual AI, ICML 2024)
+
+### 318.1 The Paired Preference Bottleneck in Direct Preference Optimization
+Direct Preference Optimization (DPO; Rafailov et al., 2023) revolutionized LLM alignment by eliminating the PPO reward model. However, DPO enforces a strict data structural constraint:
+
+1. **The Paired Data Requirement:**
+   DPO requires paired trajectories $(x, y_w, y_l)$ where two full completions are generated for the identical prompt $x$ and comparatively ranked.
+2. **The Real-World Signal Mismatch:**
+   In real-world deployment (search engines, code assistants, chat interfaces), human feedback is almost exclusively **unpaired and binary**:
+   - A user accepts or rejects a code completion ($y \in \{\text{desirable}, \text{undesirable}\}$).
+   - A user clicks "copy" or "thumbs down".
+   Synthesizing artificial pairs from unpaired feedback introduces extreme selection bias, discards massive amounts of non-overlapping feedback data, and scales quadratically in annotation costs.
+
+```mermaid
+flowchart TD
+    subgraph DPO_Constraint["Classical DPO Bottleneck (Paired Data Required)"]
+        Query["Query x"] --> GenW["Generation y_w"] & GenL["Generation y_l"]
+        GenW & GenL --> PairwiseLoss["Pairwise Bradley-Terry Comparison: L_DPO(y_w, y_l)"]
+        Note1["Cannot Directly Learn from Single Thumbs-Up / Thumbs-Down Signals"]
+    end
+    subgraph KTO_ProspectTheory["KTO: Kahneman-Tversky Optimization (Unpaired Direct Alignment)"]
+        UnpairedSample["Unpaired Signal: (x, y) with Label ∈ {Desirable, Undesirable}"]
+        UnpairedSample --> ImplicitReward["Implicit Reward: r_θ(x, y) = β log(π_θ / π_ref)"]
+        ImplicitReward --> RefPoint["KL Reference Point: z_ref = E[r_θ(x', y')]"]
+        RefPoint --> LossAversion["Asymmetric Prospect Weighting: λ_undesirable > λ_desirable"]
+        LossAversion --> UnpairedGradient["Direct Gradient Step on Individual Generations"]
+    end
+```
+
+---
+
+### 318.2 Grounding Alignment in Behavioral Economics: Prospect Theory
+**Kahneman-Tversky Optimization (KTO)** (Ethayarajh, Xu, Mu, Jurafsky, & Kiela, Stanford & Contextual AI, ICML 2024) reformulates language model alignment not around the Bradley-Terry ranking model, but around **Daniel Kahneman and Amos Tversky's Prospect Theory (1979)**.
+
+#### A. The Asymmetry of Human Utility (Loss Aversion)
+Human decision-making does not maximize absolute expected utility; humans evaluate outcomes relative to a subjective neutral **reference point $z_{\text{ref}}$**:
+- **Loss Aversion:** A loss of subjective utility $\Delta U$ induces significantly more psychological dissatisfaction than an equivalent gain $+\Delta U$ produces pleasure.
+- The human value function $v(z)$ is S-shaped: concave for gains ($z > z_{\text{ref}}$) and convex and steeper for losses ($z < z_{\text{ref}}$).
+
+#### B. The KTO Implicit Value Function
+For a prompt-response pair $(x, y)$, define the implicit reward:
+$$r_\theta(x, y) = \beta \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)}$$
+The subjective reference point $z_{\text{ref}}$ is defined as the expected implicit reward under the reference distribution:
+$$z_{\text{ref}} = \mathbb{E}_{x' \sim \mathcal{D}, \; y' \sim \pi_{\text{ref}}(\cdot \mid x')} \left[ \beta \log \frac{\pi_\theta(y' \mid x')}{\pi_{\text{ref}}(y' \mid x')} \right] \approx \beta \, \mathbb{D}_{\text{KL}}(\pi_\theta \,||\, \pi_{\text{ref}})$$
+
+The value function $v_{\text{KTO}}(x, y)$ applies asymmetric scaling based on whether the completion is desirable ($y \in \mathcal{Y}_{\text{desirable}}$) or undesirable ($y \in \mathcal{Y}_{\text{undesirable}}$):
+
+$$v_{\text{KTO}}(x, y) = \begin{cases} 1 - \sigma\left( \lambda_D \left( r_\theta(x, y) - z_{\text{ref}} \right) \right) & \text{if } y \text{ is desirable} \\ 1 - \sigma\left( \lambda_U \left( z_{\text{ref}} - r_\theta(x, y) \right) \right) & \text{if } y \text{ is undesirable} \end{cases}$$
+
+where $\sigma(z) = \frac{1}{1 + e^{-z}}$, and loss aversion requires setting $\lambda_U > \lambda_D$ (typically $\lambda_D = 1.0, \; \lambda_U \in [1.33, 1.50]$).
+
+---
+
+### 318.3 The Global KTO Loss Function
+The policy parameters $\theta$ are trained by minimizing the weighted Kahneman-Tversky loss:
+
+$$\mathcal{L}_{\text{KTO}}(\theta) = \mathbb{E}_{(x, y) \sim \mathcal{D}} \left[ w(y) \left( 1 - \sigma\left( \lambda_y \left( \beta \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)} - z_{\text{ref}} \right) \right) \right) \right]$$
+
+where:
+$$\lambda_y = \begin{cases} \lambda_D & \text{if } y \in \mathcal{Y}_{\text{desirable}} \\ -\lambda_U & \text{if } y \in \mathcal{Y}_{\text{undesirable}} \end{cases}$$
+and weight factors $w(y)$ balance dataset asymmetry between thumbs-up and thumbs-down volumes:
+$$w(y) = \begin{cases} \frac{1}{|\mathcal{Y}_{\text{desirable}}|} & \text{if desirable} \\ \frac{1}{|\mathcal{Y}_{\text{undesirable}}|} & \text{if undesirable} \end{cases}$$
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Dataset as Binary Interaction Log (x, y, Label)
+    participant Model as Active Policy π_θ
+    participant Ref as Reference Model π_ref
+    participant KTO as KTO Loss Engine
+    participant Weights as Parameter Update ∇_θ
+
+    Dataset->>Model: Forward(x, y) -> log π_θ(y|x)
+    Dataset->>Ref: Forward(x, y) -> log π_ref(y|x)
+    Model->>KTO: Implicit Reward r_θ = β log(π_θ / π_ref)
+    KTO->>KTO: Compare against reference point z_ref
+    alt Label is Desirable
+        KTO->>KTO: Apply Gain Scaling λ_D (Concave Saturation)
+    else Label is Undesirable
+        KTO->>KTO: Apply Loss Aversion λ_U > λ_D (Steep Penalty)
+    end
+    KTO->>Weights: Backpropagate Unpaired Gradient
+```
+
+---
+
+### 318.4 Empirical Benchmarks Across Direct Alignment Algorithms
+
+| Dimension | Direct Preference Optimization (DPO) | Identity Preference Optimization (IPO) | Kahneman-Tversky Optimization (KTO) |
+| :--- | :--- | :--- | :--- |
+| **Data Format Required** | **Strict Pairs $(x, y_w, y_l)$** | Strict Pairs $(x, y_w, y_l)$ | **Unpaired Binary $(x, y, \pm 1)$** |
+| **Theoretical Foundation** | Bradley-Terry Log-Odds | Quadratic Regularization | **Prospect Theory & Loss Aversion** |
+| **Tolerance to Data Asymmetry** | Zero (Pairing mandatory) | Zero | **Extreme (Handles 90% Up / 10% Down)** |
+| **AlpacaEval 2.0 Win Rate (7B)**| $17.8\%$ | $16.4\%$ | **$18.6\%$ (Matches or Exceeds DPO)** |
+| **GSM8k Mathematical Accuracy** | $54.2\%$ | $52.1\%$ | **$57.8\%$ (Better Preservation of Reasoning)** |
+| **Annotation Cost Efficiency** | Baseline $1.0\times$ | Baseline $1.0\times$ | **$2.5\times$ to $4.0\times$ Cheaper to Curate** |
+
+**Theoretical Conclusion:**
+KTO establishes that human alignment does not fundamentally require relative ranking. By grounding policy updates in human behavioral economics (loss aversion relative to an implicit reference point), models can be aligned directly from real-world telemetry and binary feedback signals without the computational and logistic overhead of generating pairwise preference counterfactuals.

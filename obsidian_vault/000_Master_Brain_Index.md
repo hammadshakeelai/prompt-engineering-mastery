@@ -229,6 +229,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/kivi_2bit_asymmetric_kv_quantization.md|Kivi 2Bit Asymmetric Kv Quantization]]
 - [[raw_research/snippets/kivi_and_think_kv_compression.md|Kivi And Think Kv Compression]]
 - [[raw_research/snippets/knowledge_distillation.md|Knowledge Distillation]]
+- [[raw_research/snippets/kto_kahneman_tversky_optimization.md|Kto Kahneman Tversky Optimization]]
 - [[raw_research/snippets/kto_prospect_theory.md|Kto Prospect Theory]]
 - [[raw_research/snippets/kto_prospect_theory_alignment.md|Kto Prospect Theory Alignment]]
 - [[raw_research/snippets/kv_cache_flash_attention.md|Kv Cache Flash Attention]]
