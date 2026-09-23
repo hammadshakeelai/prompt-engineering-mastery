@@ -2747,11 +2747,153 @@ Token Healing (Scott Lundberg, *Guidance*, Microsoft 2023; codified in *SGLang*,
 3. **Constrained Logit Masking:**
    On the forward pass for step $K$, logits $z \in \mathbb{R}^{|\mathcal{V}|}$ are masked prior to softmax:
    $$\tilde{z}_v = \begin{cases} z_v & \text{if } v \in \mathcal{V}_{\text{healed}} \\ -\infty & \text{otherwise} \end{cases}$$
-4. **Resampling:**
-   The model samples $t_K^* \sim \operatorname{Softmax}(\tilde{z})$. The newly sampled token $t_K^*$ simultaneously accounts for the trailing string $s_K$ and optimal continuation tokens (e.g., selecting `"://"` instead of forcing `":"` + `"/"`).
-
-### 81.3 KV Cache Synchronization & System Impact
-In optimized inference engines (SGLang RadixAttention, Guidance, vLLM):
-- **Zero-Latency Cache Reuse:** Because $T_{1:K-1}$ is identical to the prompt prefix, its Key-Value states are retrieved directly from the prefix KV cache. Only step $K$ is computed with the masked logit vector.
 - **Perplexity & Stability:** Token healing eliminates unnatural perplexity spikes at prompt boundaries (reducing token-level cross-entropy loss by **$1.8\text{--}3.5$ nats** on trailing punctuation and code brackets) and prevents JSON/regex constrained decoders from failing on subword boundary mismatches.
+
+---
+
+## 82. Contextual Calibration & Surface Form Competition in Few-Shot In-Context Learning (Zhao et al., ICML 2021; Holtzman et al., EMNLP 2021)
+
+### 82.1 Systematic Biases in In-Context Learning & Surface Form Competition
+In-Context Learning (ICL) allows pretrained language models to perform tasks from few-shot demonstrations without parameter updates. However, few-shot predictions suffer from severe instability: altering demonstration order, formatting, or labels causes performance to fluctuate wildly (e.g., from $50\%$ to $90\%$ accuracy on identical datasets).
+
+Zihao Zhao, Eric Wallace, Shi Feng, Dan Klein, and Sameer Singh (*Calibrate Before Use: Improving Few-Shot Performance of Language Models*, ICML 2021 / arXiv:2102.09690) demonstrate that this variance is governed by three systematic model biases:
+1. **Majority Label Bias:** Models disproportionately predict classes that appear most frequently in demonstrations.
+2. **Recency Bias:** Models disproportionately predict the label associated with the final demonstration in the prompt context.
+3. **Common Token Bias:** Pretrained models possess strong unconditional priors toward common vocabulary words (e.g., `"book"` vs. `"manuscript"`), independent of the prompt context.
+
+Coupled with this, Ari Holtzman et al. (*Surface Form Competition: Why the Highest Probability Answer Isn't Always Right*, EMNLP 2021 / arXiv:2104.08315) reveal **Surface Form Competition**: the probability mass of a single semantic concept is fragmented across multiple valid lexical tokens (e.g., `"computer"`, `"PC"`, `"laptop"`). If a concept has many surface forms, individual tokens receive smaller probabilities and lose to simpler single-form concepts despite higher semantic relevance.
+
+```mermaid
+flowchart TD
+    PromptWithContentFree["Few-Shot Prompt + Content-Free Input: 'Input: N/A Output:'"] --> ModelPrior["Pretrained Model Forward Pass"]
+    ModelPrior --> RawBiasVector["Extract Content-Free Probabilities: p_cf"]
+    
+    TestPrompt["Few-Shot Prompt + Real Test Input x"] --> ModelTest["Pretrained Model Forward Pass"]
+    ModelTest --> RawTestVector["Extract Uncalibrated Probabilities: p(x)"]
+    
+    RawBiasVector --> CalibrationTransform["Affine Inversion: W = diag(p_cf)^(-1), b = 0"]
+    RawTestVector --> CalibrationTransform
+    
+    CalibrationTransform --> CalibratedDistribution["Calibrated Probabilities: q = Softmax(W * p(x) + b)"]
+    CalibratedDistribution --> AccuratePrediction["Stable, Variance-Reduced Classification (Variance -82%)"]
+```
+
+### 82.2 Mathematical Formulation of Contextual Calibration
+Let $\mathcal{C} = \{(x_1, y_1), \dots, (x_k, y_k)\}$ denote $k$ few-shot demonstrations and $x$ denote the test input. Let label set be $\mathcal{Y} = \{c_1, \dots, c_C\}$. The raw model assigns class probability:
+$$\hat{p}_j = P(y = c_j \mid \mathcal{C}, x) = \frac{\exp(W_j h(x))}{\sum_{m=1}^C \exp(W_m h(x))}$$
+
+To measure the model's intrinsic class prior independent of input $x$, Contextual Calibration queries the model with **content-free inputs** $x_{\text{cf}} \in \{\text{"N/A"}, \text{""}, \text{"[MASK]"}\}$:
+$$\hat{p}_{\text{cf}} = P(y \mid \mathcal{C}, x_{\text{cf}}) \in \mathbb{R}^C$$
+Ideally, a fair model should assign uniform probability $\hat{p}_{\text{cf}} = \left[\frac{1}{C}, \dots, \frac{1}{C}\right]$. In practice, $\hat{p}_{\text{cf}}$ exhibits extreme skew (e.g., $95\%$ probability assigned to a single class).
+
+Contextual Calibration rectifies this by fitting an affine transformation $(W, b)$ on the prediction vector:
+$$q(y \mid \mathcal{C}, x) = \operatorname{Softmax}\left( W \hat{p}(x) + b \right)$$
+where $W$ is constrained to a diagonal matrix and $b$ to a zero vector:
+$$W = \operatorname{diag}\left( \hat{p}_{\text{cf}} \right)^{-1}, \quad b = \mathbf{0}$$
+Element-wise, the unnormalized calibrated score for class $j$ is:
+$$\tilde{q}_j = \frac{\hat{p}_j(x)}{\hat{p}_{\text{cf}, j}}$$
+Normalizing across classes yields:
+$$q_j(y \mid \mathcal{C}, x) = \frac{\hat{p}_j(x) / \hat{p}_{\text{cf}, j}}{\sum_{m=1}^C \hat{p}_m(x) / \hat{p}_{\text{cf}, m}}$$
+
+- **Domain-Conditional Normalization:** When combined with Holtzman et al.'s surface form correction, probabilities are normalized by marginal unconditional language likelihood:
+  $$P_{\text{calibrated}}(y \mid x) = \frac{P(y \mid \text{Prompt}, x)}{P(y \mid \text{Domain Context})}$$
+
+### 82.3 Empirical Performance Gains
+- **Accuracy Lift:** Evaluated across SST-2, AG News, TREC, and Subj, contextual calibration produces **up to $+30.0\%$ absolute accuracy gains** on few-shot tasks.
+- **Variance Reduction:** Slashes prompt permutation variance across different demonstration orders from $\sigma = 18.4\%$ to $\sigma = 3.2\%$, making few-shot pipelines production-grade and immune to example ordering.
+
+---
+
+## 83. Speculative Tree-Attention Verification with Multi-Decoding Heads (Medusa, Cai et al., ICML 2024)
+
+### 83.1 Draft-Model-Free Speculative Decoding
+Traditional speculative decoding requires maintaining two distinct models in memory: a small draft model and a large target model. This architecture suffers from:
+1. **Memory Bandwidth & Hardware Contention:** Storing two models strains GPU memory and necessitates managing separate KV caches.
+2. **Distribution Mismatch:** The draft model's output distribution often diverges from the target model, driving down the token acceptance rate $\alpha$.
+
+Tianle Cai, Yuhong Li, Zhengyang Geng, Hongwu Peng, Jason D. Lee, Deming Chen, and Tri Dao (*Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads*, ICML 2024 / arXiv:2401.10774) eliminate the secondary draft model by adding $K$ lightweight decoding heads directly to the target model's final hidden states.
+
+```mermaid
+flowchart TD
+    InputToken["Input Sequence x_1:t"] --> Backbone["Frozen Target Transformer Backbone"]
+    Backbone --> HiddenState["Final Layer Hidden State h_t"]
+    
+    HiddenState --> Head0["Original LM Head: Emits token x_(t+1)"]
+    HiddenState --> Head1["Medusa Head 1: Predicts token x_(t+2)"]
+    HiddenState --> Head2["Medusa Head 2: Predicts token x_(t+3)"]
+    HiddenState --> Head3["Medusa Head 3: Predicts token x_(t+4)"]
+    
+    Head1 --> TreeGen["Tree Construction: Cartesian Expansion of Top-k Candidates"]
+    Head2 --> TreeGen
+    Head3 --> TreeGen
+    
+    TreeGen --> SpecTree["Candidate Speculation Tree (N_tree paths)"]
+    SpecTree --> TreeAttention["Single Target Forward Pass with 2D Tree-Attention Mask"]
+    TreeAttention --> AcceptLongest["Rejection / Greedy Verification: Accept Longest Valid Prefix"]
+    AcceptLongest --> FastOutput["Accelerated Output (2.2x - 3.6x Speedup, Zero Degradation)"]
+```
+
+### 83.2 Architecture & Residual Prediction Heads
+Each Medusa head $k \in \{1, \dots, K\}$ is a single-layer feedforward network with residual connection predicting token $x_{t+k+1}$ conditioned on hidden state $h_t$:
+$$h_t^{(k)} = h_t + \operatorname{SiLU}\left( W_{k, 1} h_t \right)$$
+$$P\left(x_{t+k+1} \mid x_{\le t}\right) = \operatorname{Softmax}\left( W_U h_t^{(k)} \right)$$
+where $W_U$ is the shared target language model unembedding weight matrix.
+- **Medusa-1:** Trains only $\{W_{k, 1}\}_{k=1}^K$ while keeping the base LLM weights frozen. Parameter footprint is negligible ($<1\%$ of base model).
+- **Medusa-2:** Fine-tunes both the backbone and the heads jointly with self-distillation, achieving higher acceptance rates.
+
+### 83.3 2D Tree-Attention Verification Kernel
+Instead of checking a single linear candidate chain, Medusa constructs a candidate tree $\mathcal{T}$ by taking the top-$s_k$ tokens from head $k$:
+$$N_{\text{candidates}} = \prod_{k=1}^K s_k$$
+To verify all candidates simultaneously in a single forward pass without causal leakage across branches, Medusa defines a custom 2D Tree-Attention mask $M \in \{0, 1\}^{N_{\text{tree}} \times N_{\text{tree}}}$:
+$$M_{i, j} = \begin{cases} 1 & \text{if node } j \text{ is an ancestor of node } i \text{ in tree } \mathcal{T} \\ 0 & \text{otherwise} \end{cases}$$
+The target model verifies all candidate branches concurrently using this mask. The engine identifies the longest path in $\mathcal{T}$ that matches the target model's greedy or top-$p$ predictions and accepts the entire sub-sequence.
+
+- **Empirical Results:** Across Vicuna-7B/13B/33B and Zephyr-7B on MT-Bench and GSM8K, Medusa achieves **$2.2\times\text{--}3.6\times$ wall-clock speedup** with mathematical distribution preservation (lossless in greedy decoding, $\epsilon$-bounded under stochastic sampling).
+
+---
+
+## 84. $\Psi$-Preference Optimization & Regularized Squared-Loss Alignment (IPO, Azar et al., Google DeepMind 2024)
+
+### 84.1 The Over-Fitting Pathology of Direct Preference Optimization
+Direct Preference Optimization (DPO, Rafailov et al., 2023) bypassed explicit reward modeling by expressing Bradley-Terry preference loss directly in terms of policy probabilities:
+$$\mathcal{L}_{\text{DPO}}(\theta) = -\mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}} \left[ \log \sigma \left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right) \right]$$
+
+Mohammad Gheshlaghi Azar, Mark Rowland, Bilal Piot, Daniel Guo, Daniele Calandriello, Michal Valko, and Rémi Munos (*A General Theoretical Paradigm to Understand Learning from Human Preferences*, Google DeepMind / AISTATS 2024 / arXiv:2310.12036) uncover a critical flaw in DPO:
+- **Gradient Vanishing vs. Unbounded Log-Ratio Growth:** Let $u = \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)}$. The gradient of DPO loss is proportional to $\sigma(-u) = \frac{1}{1 + e^u}$.
+- As $u \to \infty$, the loss gradient drops to $0$. However, in any real dataset containing label noise or ambiguous preference pairs, DPO minimizes loss by pushing $u \to +\infty$ on separable pairs.
+- This drives $\pi_\theta$ arbitrarily far from reference policy $\pi_{\text{ref}}$, exploding KL divergence $D_{\text{KL}}(\pi_\theta \parallel \pi_{\text{ref}})$, destroying generative diversity, and causing severe degradation on tasks outside the narrow preference distribution.
+
+```mermaid
+flowchart LR
+    Dataset["Preference Pair (x, y_w, y_l)"] --> LogRatio["Compute Log-Ratio Difference: delta_h(x, y_w, y_l)"]
+    
+    subgraph DPO_Pathology["Standard DPO (Sigmoid Loss)"]
+        LogRatio --> SigmoidLoss["Loss: -log sigma(beta * delta_h)"]
+        SigmoidLoss --> UnboundedDrive["Drives delta_h -> +infinity"]
+        UnboundedDrive --> ModeCollapse["Exploding KL Divergence & Over-fitting"]
+    end
+    
+    subgraph IPO_Regulated["Identity Preference Optimization (IPO)"]
+        LogRatio --> SquaredLoss["Squared Loss: (delta_h - 1 / (2*tau))^2"]
+        SquaredLoss --> ExactMargin["Controls delta_h to Target Margin: 1 / (2*tau)"]
+        ExactMargin --> BoundedKL["Optimal KL Regularization & Preserved Diversity"]
+    end
+```
+
+### 84.2 The General $\Psi$PO Paradigm
+Azar et al. formulate **$\Psi$-Preference Optimization ($\Psi$PO)**, unifying preference alignment through an arbitrary non-decreasing function $\Psi: [-1, 1] \to \mathbb{R}$:
+$$\max_{\pi} \mathbb{E}_{x \sim \mathcal{D}, y, y' \sim \pi} \left[ \Psi\left( P(y \succ y' \mid x) - \frac{1}{2} \right) \right] - \tau D_{\text{KL}}(\pi \parallel \pi_{\text{ref}})$$
+- DPO corresponds to selecting $\Psi(t) = \log \frac{1 + 2t}{1 - 2t}$ under the rigid assumption of a deterministic Bradley-Terry model.
+
+### 84.3 Identity Preference Optimization (IPO) Objective
+Setting $\Psi(t) = t$ (the identity function) directly minimizes preference gap without assuming a parametric Bradley-Terry surrogate. This yields **Identity Preference Optimization (IPO)**:
+$$\mathcal{L}_{\text{IPO}}(\theta) = \mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}} \left[ \left( \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} - \frac{1}{2\tau} \right)^2 \right]$$
+where $\tau > 0$ is the regularization hyperparameter controlling the strength of the KL anchor.
+
+### 84.4 Properties & Practical Advantages
+1. **Target Margin Enforcement:** Rather than greedily pushing winning probabilities to $1$ and losing probabilities to $0$, IPO enforces an exact target margin:
+   $$\log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \approx \frac{1}{2\tau}$$
+2. **Robustness to Preference Label Noise:** When a dataset contains contradictory preference labels $(y_1 \succ y_2)$ and $(y_2 \succ y_1)$, DPO diverges trying to satisfy both. IPO naturally averages conflicting gradients in $L_2$ space, settling at the mean target probability.
+3. **KL Divergence Guarantees:** IPO mathematically guarantees that the policy cannot drift unboundedly from $\pi_{\text{ref}}$, preserving base model conversational fluencies, code syntax generation, and multi-step reasoning capabilities.
+
 
