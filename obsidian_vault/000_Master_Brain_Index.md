@@ -389,6 +389,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/skeleton_of_thought.md|Skeleton Of Thought]]
 - [[raw_research/snippets/smoothquant_activation_migration.md|Smoothquant Activation Migration]]
 - [[raw_research/snippets/snapkv_and_pyramidkv.md|Snapkv And Pyramidkv]]
+- [[raw_research/snippets/snapkv_observation_window_kv_eviction.md|Snapkv Observation Window Kv Eviction]]
 - [[raw_research/snippets/speculative_decoding.md|Speculative Decoding]]
 - [[raw_research/snippets/speculative_decoding_dynamics.md|Speculative Decoding Dynamics]]
 - [[raw_research/snippets/speculative_grammar_decoding.md|Speculative Grammar Decoding]]

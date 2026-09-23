@@ -12475,3 +12475,98 @@ flowchart LR
 
 **Systems Impact:**
 CAA proves that safety alignment and behavioral conditioning can be executed dynamically at the inference layer via simple vector additions in GPU SRAM, bypassing post-training fine-tuning while enabling dynamic, user-tunable behavioral steerability.
+
+---
+
+## 320. SnapKV: Observation Window Attention Clustering for Automatic Key-Value Cache Eviction (Li et al., HKUST & Tencent, NeurIPS 2024)
+
+### 320.1 The Long-Context Memory Wall & Static Eviction Failures
+As Transformer context windows expand to $32\text{k}\text{--}128\text{k}+$ tokens, the Key-Value (KV) cache consumes the dominant portion of GPU High Bandwidth Memory (HBM). For an 8B parameter model serving a $128\text{k}$ token prompt, the uncompressed FP16 KV cache alone occupies $\approx 16 \text{ GB}$ per concurrent request, severely choking batch sizes and inference throughput.
+
+Prior KV eviction algorithms suffer from severe operational limitations:
+1. **Sliding Windows (StreamingLLM):** Retains only the initial tokens (sinks) and a local window, catastrophically discarding mid-context facts essential for multi-hop retrieval and document question answering.
+2. **Dynamic Online Eviction (H2O / Scissorhands):** Requires updating importance accumulators at *every decode step*, creating high kernel-launch overhead and stalling decoding pipelines.
+
+```mermaid
+flowchart TD
+    subgraph Prefill_Analysis["SnapKV Prefill Analysis: Observation Window Voting"]
+        Prompt["Long Prompt (e.g., 32k - 128k Tokens)"] --> Tokenizer["Token Sequence x_1 ... x_L"]
+        Tokenizer --> PrefillPass["Standard Prefill Forward Pass"]
+        PrefillPass --> ObsWindow["Observation Window W_obs (Last L_obs = 32-64 Tokens)"]
+        ObsWindow --> AttentionVotes["Sum Query Attention Weights: S_j = ∑_t Softmax(q_t k_j^T / √d)"]
+    end
+    subgraph Instant_Pruning["One-Shot Post-Prefill Eviction (Zero Decode Overhead)"]
+        AttentionVotes --> TopK["Select Top-C Important Key-Value Positions per Head"]
+        TopK --> Retain["Retained Cache = Sinks (k_sink) + Top-C Clusters + W_obs"]
+        Retain --> Evict["Permanently Evict 80-90% Unimportant KV Tensors from HBM"]
+        Evict --> FastDecode["Accelerated Decode (3.6x Throughput, 16% Original Memory)"]
+    end
+```
+
+---
+
+### 320.2 The Core Mechanistic Finding: Head-Specific Attention Consistency
+**SnapKV** (Li, Huang, Lv, et al., HKUST & Tencent, NeurIPS 2024) uncovers a profound mechanistic invariant in generative LLMs:
+> *During generation, an attention head's queries consistently focus on the same historical key positions that were already heavily attended to by the final tokens of the input prompt.*
+
+Because the final tokens of the prompt summarize the question, intent, and contextual syntax, their attention patterns serve as an **empirical oracle** for which past tokens are necessary for generation.
+
+#### Mathematical Formulation of Observation Voting
+Let the prompt length be $L$, and define the **Observation Window** as the final $L_{\text{obs}}$ tokens of the prompt:
+$$\mathcal{W}_{\text{obs}} = \{ L - L_{\text{obs}} + 1, \; \dots, \; L \}, \quad L_{\text{obs}} \in [32, 64]$$
+
+For each attention head $h$ in layer $l$, the cumulative importance score $S_{h, j}$ for any prior key token $j \in \{ 1, \dots, L - L_{\text{obs}} \}$ is defined as the pooled attention mass assigned by the queries within $\mathcal{W}_{\text{obs}}$:
+
+$$S_{h, j} = \sum_{t \in \mathcal{W}_{\text{obs}}} \text{Softmax}\left( \frac{q_{h, t} k_{h, j}^T}{\sqrt{d_k}} \right)$$
+
+To ensure spatial robustness against subword tokenizer jitter, SnapKV applies 1D max-pooling with kernel size $w$:
+$$\tilde{S}_{h, j} = \max_{m \in [-w/2, \, w/2]} S_{h, j+m}$$
+
+#### Top-K Cache Compression
+For each head $h$, SnapKV identifies the optimal index set $\mathcal{I}_h^\star$ of size $C$:
+$$\mathcal{I}_h^\star = \arg\max_{\substack{\mathcal{I} \subset \{1, \dots, L - L_{\text{obs}}\} \\ |\mathcal{I}| = C}} \sum_{j \in \mathcal{I}} \tilde{S}_{h, j}$$
+
+The final compressed KV cache $\mathcal{K}_h^{\text{compressed}}$ retained in GPU HBM is the union of three disjoint subsets:
+$$\mathcal{K}_h^{\text{compressed}} = \mathcal{K}_h\left[ \underbrace{\{1, \dots, k_{\text{sink}}\}}_{\text{Initial Attention Sinks}} \; \cup \; \underbrace{\mathcal{I}_h^\star}_{\text{Top-C Clustered Features}} \; \cup \; \underbrace{\mathcal{W}_{\text{obs}}}_{\text{Recent Observation Window}} \right]$$
+
+All remaining tokens are permanently evicted in a single operation immediately following the prefill pass.
+
+---
+
+### 320.3 Systems Efficiency & Zero-Overhead Decode
+Because the pruning operation is executed **once** at the boundary between prefill and decode:
+1. **Zero Runtime Computation During Decode:** Decoding proceeds using standard FlashAttention kernels over a drastically shorter sequence length ($C_{\text{total}} = k_{\text{sink}} + C + L_{\text{obs}} \ll L$).
+2. **Hardware Compatibility:** SnapKV requires no custom decode kernels, no learned gating networks, and no parameter fine-tuning.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Engine as Serving Runtime (vLLM / HuggingFace)
+    participant Model as Transformer Prefill Pass
+    participant Snap as SnapKV Compression Engine
+    participant Memory as GPU HBM Cache Manager
+
+    Engine->>Model: Execute Prefill over 64k Tokens
+    Model-->>Snap: Emit Full KV Cache + Attention Matrix of W_obs
+    Snap->>Snap: Pool Attention Weights per Head across W_obs
+    Snap->>Snap: Select Top-C Indices per Head (C = 2048)
+    Snap->>Memory: In-Place Slice: Retain Sinks + Top-C + W_obs
+    Memory->>Memory: Free 85% of HBM Allocated to KV Tensors
+    Memory-->>Engine: Hand Off Compressed Cache for Generation
+    Engine->>Model: Fast Decode at 3.6x Throughput with Full Accuracy
+```
+
+---
+
+### 320.4 Empirical Benchmarks Across Long-Context Tasks (Li et al., 2024)
+
+| Benchmark / Model | Full KV Cache (100% Memory) | StreamingLLM (Sliding Window) | H2O (Dynamic Eviction) | SnapKV (C = 2048 Tokens) |
+| :--- | :--- | :--- | :--- | :--- |
+| **KV Cache Compression Ratio** | $1.0\times$ ($0\%$ Saved) | $16.0\times$ ($93.7\%$ Saved) | $5.0\times$ ($80\%$ Saved) | **$6.25\times$ to $10.0\times$ ($84\text{--}90\%$ Saved)** |
+| **Needle In A Haystack (NIAH 64k)**| $99.8\%$ Accuracy | $22.4\%$ (Catastrophic Loss) | $88.5\%$ | **$99.2\%$ (Near-Lossless Retrieval)** |
+| **LongBench Average (Llama-3-8B)**| $46.8$ Score | $28.3$ Score | $41.2$ Score | **$46.4$ Score ($99.1\%$ Retention)** |
+| **Decode Step Latency** | $28.4 \text{ ms}$ | $4.2 \text{ ms}$ | $14.6 \text{ ms}$ (Scoring Lag) | **$5.1 \text{ ms}$ ($5.5\times$ Speedup)** |
+| **Max Batch Size on Single A100**| $2$ Concurrent Streams | $32$ Concurrent Streams | $10$ Concurrent Streams | **$24$ Concurrent Streams ($12\times$ Gain)** |
+
+**Theoretical Conclusion:**
+SnapKV demonstrates that long-context attention in LLMs is intrinsically sparse and clustered. Attention heads possess predetermined "receptive fields" that can be identified via one-shot voting during prefill, reducing long-context serving costs by nearly an order of magnitude without compromising retrieval fidelity.
