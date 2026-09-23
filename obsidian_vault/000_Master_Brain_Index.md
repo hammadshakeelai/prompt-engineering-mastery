@@ -316,6 +316,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/pyramidkv_adaptive_compression.md|Pyramidkv Adaptive Compression]]
 - [[raw_research/snippets/pyramidkv_hierarchical_attention_funnel.md|Pyramidkv Hierarchical Attention Funnel]]
 - [[raw_research/snippets/quarot_spinquant_hadamard_quantization.md|Quarot Spinquant Hadamard Quantization]]
+- [[raw_research/snippets/quest_query_aware_kv_cache_selection.md|Quest Query Aware Kv Cache Selection]]
 - [[raw_research/snippets/quest_query_aware_kv_cache_sparsity.md|Quest Query Aware Kv Cache Sparsity]]
 - [[raw_research/snippets/quiet_star_latent_reasoning.md|Quiet Star Latent Reasoning]]
 - [[raw_research/snippets/raft_ra_dit.md|Raft Ra Dit]]

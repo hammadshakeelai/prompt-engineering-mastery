@@ -10041,3 +10041,99 @@ Although MLPs and LayerNorm induce soft directional preferences, empirical inter
 | **Transformer MLP Blocks** | **Broken** (Elementwise $\sigma$) | **Strictly Privileged** | Coordinate-aligned internal neurons |
 | **RMSNorm / LayerNorm** | **Softly Broken** (Channel $\gamma$) | **Soft Coordinate Bias** | Anisotropic coordinate scaling |
 | **Residual Stream Overall** | **Functionally Superposed** | **Non-Privileged Frame** | Overcomplete non-orthogonal directions ($M \gg d$) |
+
+---
+
+## 296. Quest: Query-Aware Dynamic KV Cache Selection & Min-Max Bounding (Tang et al., ICML 2024)
+
+### 296.1 The Memory-Bound Bottleneck in Long-Context Autoregressive Generation
+In autoregressive transformer inference, token generation is memory-bandwidth bound rather than compute bound. For context length $L$, batch size $B$, layers $N$, and hidden dimension $d$, the Key-Value (KV) cache grows linearly as:
+$$\text{Memory}_{\text{KV}} = 2 \times 2 \times B \times N \times L \times d \quad \text{bytes (FP16)}$$
+At $L = 128\text{k}$ tokens on a 70B parameter model, the KV cache alone demands $>160\,\text{GB}$ of High Bandwidth Memory (HBM). During the decoding phase of each generated token, the GPU must stream this entire multi-gigabyte cache from HBM into on-chip SRAM to compute the single vector-matrix attention product:
+$$\mathbf{a} = \text{softmax}\left( \frac{\mathbf{q} \mathbf{K}^T}{\sqrt{d}} \right) \mathbf{V}$$
+yielding an arithmetic intensity $\ll 1\,\text{FLOP/byte}$.
+
+Static eviction policies (e.g. H2O, StreamingLLM, SnapKV) compress the cache by retaining fixed initial "sink" tokens and historically high-attention tokens. However, in complex multi-step reasoning, retrieval, and code editing, **token importance is dynamic and query-dependent**: a token ignored during step $t$ may become mission-critical at step $t+500$ when the query shifts.
+
+```mermaid
+flowchart TD
+    subgraph StaticEviction["Static Eviction Failure (H2O / SnapKV)"]
+        CacheOld["128k KV Cache in HBM"] --> Prune["Static Top-K Pruning Based on Past Attention"]
+        Prune --> Discard["Permanently Evicts Low-Scoring Pages"]
+        Discard --> QueryShift["Query Shifts: Model Requires Evicted Tokens -> Irreversible Hallucination"]
+    end
+    subgraph QuestDynamic["Quest: Dynamic Query-Aware Page Selection (ICML 2024)"]
+        CacheAll["Full KV Cache Preserved in HBM at Page Granularity (P=16)"]
+        Metadata["Lightweight Metadata: Min-Key & Max-Key Bounding Vectors"]
+        Query["Current Query Vector q_t"] --> Stage1["Stage 1: Inner Product Upper-Bound Estimation (SRAM)"]
+        Metadata --> Stage1
+        Stage1 --> TopK["Select Top-K Critical Pages (e.g., 15% of Cache)"]
+        TopK --> Stage2["Stage 2: FlashDecoding over Gathered Pages Only"]
+        Stage2 --> Exact["High-Fidelity Attention Output with 7.03x Speedup"]
+    end
+```
+
+---
+
+### 296.2 The Quest Min-Max Bounding Theorem
+**Quest** (Tang et al., Stanford & UC Berkeley, ICML 2024) eliminates memory-bandwidth saturation by dynamically selecting the Top-$K$ most critical KV pages for each decoding query $\mathbf{q} \in \mathbb{R}^d$ without transferring the full cache across the memory bus.
+
+Let the context tokens be partitioned into pages $\mathcal{P}_1, \mathcal{P}_2, \dots, \mathcal{P}_M$ of size $B$ (typically $B=16$ or $32$). 
+
+1. **Offline Metadata Storage:**
+   During prefill, for each page $p \in \{1, \dots, M\}$ and head dimension channel $c \in \{1, \dots, d\}$, Quest records the coordinate-wise infimum and supremum vectors:
+   $$\mathbf{k}_{\min, c}^{(p)} = \min_{t \in \mathcal{P}_p} \mathbf{K}_{t, c}, \qquad \mathbf{k}_{\max, c}^{(p)} = \max_{t \in \mathcal{P}_p} \mathbf{K}_{t, c}$$
+   Because these vectors are stored once per page ($2 \times d$ scalars per page of $B$ tokens), metadata footprint is negligible:
+   $$\text{Overhead} = \frac{2d}{B \cdot d} = \frac{2}{B} = 12.5\% \quad (\text{for } B=16)$$
+   which can be quantized to INT8 with zero loss, reducing overhead to $<3\%$.
+
+2. **Theoretical Upper-Bound Derivation:**
+   For any arbitrary query vector $\mathbf{q} \in \mathbb{R}^d$ and any token $t \in \mathcal{P}_p$, the raw attention logit $z_t = \mathbf{q} \cdot \mathbf{K}_t = \sum_{c=1}^d q_c K_{t, c}$ is strictly bounded from above:
+   $$z_t = \sum_{c=1}^d q_c K_{t, c} \le \sum_{c=1}^d \max\left( q_c \mathbf{k}_{\min, c}^{(p)}, \; q_c \mathbf{k}_{\max, c}^{(p)} \right) \triangleq S_{\text{est}}^{(p)}$$
+   *Proof:* For each coordinate $c$, if $q_c \ge 0$, then $q_c K_{t, c} \le q_c \mathbf{k}_{\max, c}^{(p)}$. If $q_c < 0$, then $q_c K_{t, c} \le q_c \mathbf{k}_{\min, c}^{(p)}$. Summing over all channels $c \in \{1, \dots, d\}$ guarantees $z_t \le S_{\text{est}}^{(p)}$ for every token $t \in \mathcal{P}_p$.
+
+---
+
+### 296.3 Two-Stage Execution Pipeline
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Core as GPU Tensor Core (SRAM)
+    participant HBM as GPU HBM (High Bandwidth Memory)
+    participant Out as Output Projection
+
+    Note over HBM: 128k Tokens Partitioned into M Pages
+    HBM->>Core: Load Lightweight Metadata [k_min, k_max] for all M Pages
+    Core->>Core: Compute Criticality Bound: S_est^(p) = Σ max(q_c k_min, q_c k_max)
+    Core->>Core: Top-K ArgSort: Identify K Highest-Scoring Pages
+    HBM->>Core: Stream ONLY the Selected K Pages (85% Bandwidth Saved!)
+    Core->>Core: Exact FlashAttention over Selected K Pages
+    Core->>Out: Emitted Context Activation (Zero Perplexity Drift)
+```
+
+1. **Stage 1: Criticality Estimation (Lightweight Gather):**
+   - At each decoding step, the GPU streams only the compact $[\mathbf{k}_{\min}^{(p)}, \mathbf{k}_{\max}^{(p)}]$ vectors into SRAM.
+   - Computes the estimated upper bounds $S_{\text{est}}^{(p)}$ in parallel across all pages via vector-fused CUDA kernels.
+   - Executes an on-chip Top-$K$ radix sort to identify the critical page index set $\mathcal{I}_K = \text{TopK}(\{S_{\text{est}}^{(p)}\}_{p=1}^M)$.
+2. **Stage 2: Sparse Self-Attention (Exact Computation):**
+   - Transmits **only** the $K$ identified pages ($\approx 10\text{--}20\%$ of total context) from HBM to SRAM.
+   - Executes standard FlashDecoding / FlashAttention over the gathered sparse tensor $\mathbf{K}_{\mathcal{I}_K}, \mathbf{V}_{\mathcal{I}_K}$.
+   - Unselected pages remain in HBM, consuming zero memory bus bandwidth during the step.
+
+---
+
+### 296.4 Empirical Benchmarks & Systems Scaling
+
+```mermaid
+flowchart LR
+    subgraph SpeedupComparison["Decoding Attention Latency (Llama-3-8B @ 64k Context)"]
+        DenseFlash["Full Dense FlashAttention: 41.2 ms / step"]
+        H2O_Prune["H2O Static Eviction: 18.4 ms (Accuracy Drops on Multi-Hop)"]
+        QuestSparse["Quest Dynamic Top-K: 5.8 ms / step (7.03x Speedup, >99% Accuracy)"]
+    end
+```
+
+**Quantitative Results (LongBench, RULER, PG19):**
+- **Inference Speedup:** Delivers **$2.23\times$ to $7.03\times$ end-to-end self-attention speedup** on NVIDIA A100 / H100 GPUs across $32\text{k}\text{--}128\text{k}$ token contexts.
+- **Accuracy Retention:** Retains **$>99\%$ of dense model performance** on RULER needle-in-a-haystack and multi-hop question answering with only **$11.8\%$** of KV pages loaded per step.
+- **Zero Retraining Required:** Operates strictly at inference time as a drop-in CUDA kernel replacement for vLLM and TensorRT-LLM without requiring model fine-tuning or distillation.
