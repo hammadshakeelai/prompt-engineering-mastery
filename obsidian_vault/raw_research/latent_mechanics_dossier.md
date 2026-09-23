@@ -5392,23 +5392,1472 @@ flowchart TD
    - **Linear Superposition:** Multiple orthogonal behavioral vectors (e.g., $+ \alpha_1 v_{\text{honesty}} + \alpha_2 v_{\text{humor}} - \alpha_3 v_{\text{sycophancy}}$) can be composed concurrently in the residual stream without mutual interference.
 
 
+---
 
+## 188. Mamba-2: Structured State Space Duality (SSD)
 
+### 188.1 SSD Architectural Topology
+```mermaid
+flowchart LR
+    subgraph SSD["Structured State Space Duality"]
+        X["Input X"] --> SSM["Selective SSM<br/>h_t = a_t h_{t-1} + B_t x_t"]
+        SSM --> |"Equivalent"| ATT["Structured Attention<br/>Y = (M circ CB^T) X"]
+        ATT --> BLOCK["Block Decomposition"]
+        BLOCK --> INTRA["Intra-chunk: MatMul on Tensor Cores"]
+        BLOCK --> INTER["Inter-chunk: Linear Recurrence"]
+    end
+    subgraph MH["Multi-Head SSM"]
+        MHA2["MHA-style"] --> GQA2["GQA-style"]
+        GQA2 --> MQA2["MQA-style"]
+    end
+    SSD --> MH
+```
 
+### 188.2 Mathematical Formulation of SSD
+1. **Linear Recurrence - Quadratic Attention Duality:** The SSD framework (Dao and Gu, 2024) establishes exact equivalence between selective SSM recurrence and structured masked attention through 1-semiseparable matrices:
+   $$h_t = a_t h_{t-1} + B_t x_t, \quad y_t = C_t h_t$$
+   $$Y = (M \circ (C B^\top)) X, \quad M_{ij} = \prod_{k=j+1}^{i} a_k$$
+   identifying queries with $C$, keys with $B$, and values with $X$.
+2. **Block Decomposition:** Sequences are chunked into blocks of length $Q$: intra-chunk interactions leverage GPU Tensor Core matrix multiplications, while inter-chunk states propagate via linear recurrence, yielding 2 to 8x throughput over Mamba-1.
+3. **Multi-Head SSM:** Mamba-2 introduces multi-head SSM structures (MHA/GQA/MQA parallels), scaling hidden state dimension $N$ from 16 to 64-256 without parameter bloat while matching Transformer++ baselines on 300B-token evaluations.
 
+---
 
+## 189. Griffin: Real-Gated Linear Recurrent Unit (RG-LRU)
 
+### 189.1 Griffin Hybrid Architecture
+```mermaid
+flowchart TB
+    subgraph Griffin["Griffin Architecture"]
+        IN["Input x_t"] --> GATEL["Input Gate i_t"]
+        IN --> RECG["Recurrence Gate r_t"]
+        RECG --> DECAYG["Decay a_t = exp(-c softplus Lambda circ r_t)"]
+        GATEL --> UPDG["h_t = a_t circ h_{t-1} + sqrt 1-a_t^2 circ i_t circ x_t"]
+        DECAYG --> UPDG
+    end
+    subgraph HybridG["Alternating Blocks"]
+        RGL["RG-LRU Block"] --> SWAL["Local Sliding Window Attention"]
+        SWAL --> RGL2["RG-LRU Block"]
+    end
+```
 
+### 189.2 RG-LRU Mathematical Mechanics
+1. **Data-Dependent Gating:** Griffin (De et al., 2024, Google DeepMind) replaces complex-valued states with real-valued diagonal recurrences and data-dependent gating:
+   $$i_t = \sigma(W_x x_t + b_x), \quad r_t = \sigma(W_r x_t + b_r)$$
+   $$a_t = \exp(-c \cdot \text{softplus}(\Lambda) \odot r_t)$$
+   $$h_t = a_t \odot h_{t-1} + \sqrt{1 - a_t^2} \odot (i_t \odot x_t)$$
+2. **Training Efficiency:** Gates depend exclusively on current input $x_t$ (not past states), enabling parallel associative scans matching Transformer training hardware efficiency.
+3. **Hawk Variant:** Pure-recurrence counterpart alternating RG-LRU with MLPs, outperforming Mamba. At 14B parameters, Griffin matches LLaMA-2 on downstream benchmarks with superior token efficiency.
 
+---
 
+## 190. Kaplan Neural Scaling Laws
 
+### 190.1 Power-Law Scaling Topology
+```mermaid
+flowchart LR
+    subgraph Kaplan["Kaplan et al. 2020"]
+        NK["Model Size N"] --> LOSSK["Test Loss L"]
+        DK["Dataset Tokens D"] --> LOSSK
+        CK["Compute Budget C"] --> LOSSK
+    end
+    LOSSK --> DECOMPK["L N D = L_inf + N_c over N ^alpha + D_c over D ^alpha"]
+    DECOMPK --> ALLOCK["Compute Allocation: N ~ C^0.73, D ~ C^0.27"]
+    ALLOCK --> CHINK["Corrected by Chinchilla"]
+```
 
+### 190.2 Scaling Law Formulation
+1. **Power-Law Relationships:** Kaplan et al. (2020) established that autoregressive transformer test loss follows empirical power-law scaling against model size, dataset tokens, and compute budget, largely independent of architectural hyperparameters.
+2. **Loss Decomposition:** Total cross-entropy decomposes into reducible and irreducible components:
+   $$L(N, D) = L_\infty + \left(\frac{N_c}{N}\right)^{\alpha_N} + \left(\frac{D_c}{D}\right)^{\alpha_D}$$
+3. **Compute-Optimal Allocation:** Original analysis suggested $N \sim C^{0.73}$, $D \sim C^{0.27}$, advocating training massive undertrained architectures, later corrected by Hoffmann et al. due to fixed cosine LR schedule bias.
 
+---
 
+## 191. Chinchilla Compute-Optimal Scaling
 
+### 191.1 Chinchilla Correction Framework
+```mermaid
+flowchart TB
+    subgraph ChinchillaS["Hoffmann et al. 2022"]
+        A1C["Approach 1: Vary N at fixed C"] --> OPTC["Optimal: N proportional to C^0.5"]
+        A2C["Approach 2: Parabolic isoFLOP profiles"] --> OPTC
+        A3C["Approach 3: Parametric L N D fit 400+ runs"] --> OPTC
+    end
+    OPTC --> RATIOC["~20 tokens per parameter"]
+    RATIOC --> IMPC["GPT-3 and Gopher substantially undertrained"]
+```
 
+### 191.2 Compute-Optimal Derivation
+1. **Three Estimation Approaches:** Hoffmann et al. (2022) derived compute-optimal allocation via: (1) varying model size at fixed compute budgets, (2) fitting parabolic isoFLOP profiles, (3) parametric loss fitting across 400+ runs:
+   $$L(N, D) = E + \frac{A}{N^\alpha} + \frac{B}{D^\beta}$$
+2. **Equal Scaling Correction:** $N \propto C^{0.5}$, $D \propto C^{0.5}$, establishing approximately 20 tokens per parameter.
+3. **Downstream Impact:** Modern open-weight models (LLaMA) deliberately overtrain past the Chinchilla frontier to minimize inference costs.
 
+---
 
+## 192. Gemma 2: Logit Soft-Capping and Knowledge Distillation
+
+### 192.1 Gemma 2 Architectural Innovations
+```mermaid
+flowchart LR
+    subgraph G2A["Gemma 2 Architecture"]
+        SCG["Logit Soft-Capping"] --> ATTG["Attention cap=50"]
+        SCG --> FINALG["Final Layer cap=30"]
+        ALTG["Alternating Attention"] --> SWAG["SWA 4096 tokens"]
+        ALTG --> GLOBG["Global 8192 tokens"]
+    end
+    subgraph TrainG["Training"]
+        KDG["Knowledge Distillation from larger teacher"] --> MERGEG["WARP + checkpoint averaging"]
+    end
+```
+
+### 192.2 Soft-Capping and Distillation Mechanics
+1. **Logit Soft-Capping:** Constrains logits via $\text{cap} \cdot \tanh(\text{logits} / \text{cap})$ in attention layers (cap=50.0) and final projection (cap=30.0), preventing numerical instability.
+2. **Alternating Attention:** Every-other-layer alternation between 4096-token local sliding window and 8192-token global attention, reducing KV-cache memory while preserving full-context modeling.
+3. **Knowledge Distillation:** 2B and 9B variants trained via teacher probability distributions. Gemma 2 27B achieves 75.2% MMLU, rivaling models twice its size.
+
+---
+
+## 193. Llama 3.1 405B: Dense Frontier Training Recipe
+
+### 193.1 Training Pipeline Topology
+```mermaid
+flowchart TB
+    subgraph DataL["Data Pipeline 15.6T Tokens"]
+        DEDUPL["Multi-stage Dedup"] --> FILTERL["Heuristic + Model Filtering"]
+        FILTERL --> UPWL["Code and Math Upweighting"]
+        UPWL --> ANNL["Late-stage Annealing"]
+    end
+    subgraph ArchL["Architecture 405B Dense"]
+        GQAL["GQA: 8 KV heads"] --> L126L["126 Layers"]
+        L126L --> CTXL["128K Context"]
+    end
+    subgraph AlignL["Alignment Loop"]
+        SFTL["SFT"] --> RSL["Rejection Sampling"]
+        RSL --> DPOL["DPO"]
+        DPOL --> TOOLL["Tool Use Training"]
+    end
+    DataL --> ArchL --> AlignL
+```
+
+### 193.2 Training Methodology
+1. **Scaling Decision:** Dubey et al. (2024) selected 405B dense parameters as compute-optimal for 3.8e25 FLOPs, rejecting sparse MoE architectures.
+2. **Data Curation:** 15.6T tokens with aggressive multi-stage deduplication, heuristic/model-based filtering, code/math upweighting, and late-stage annealing.
+3. **Iterative Alignment:** SFT, Rejection Sampling, and DPO with explicit tool-use training and 8-language multilingual support. Rivals GPT-4 and Claude 3.5 Sonnet on MMLU, GSM8K, HumanEval.
+
+---
+
+## 194. Qwen2 Mixture-of-Experts Architecture
+
+### 194.1 Qwen2 MoE Routing Topology
+```mermaid
+flowchart LR
+    subgraph Q2M["Qwen2-57B-A14B"]
+        TOKQ["Input Token"] --> GATEQ["Gating Router"]
+        GATEQ --> |"Top-8"| ROUTEDQ["64 Routed Experts"]
+        GATEQ --> SHAREDQ["8 Shared Experts always active"]
+        ROUTEDQ --> COMBQ["Expert Combination"]
+        SHAREDQ --> COMBQ
+    end
+    subgraph CTXQ["Long Context"]
+        YARNQ["YaRN RoPE"] --> DCAQ["Dual-Chunk Attention"]
+        DCAQ --> C128Q["128K Context"]
+    end
+```
+
+### 194.2 Expert Routing Mechanics
+1. **Fine-Grained Routing:** 57B total / 14B active parameters. 64 fine-grained routed experts + 8 permanently active shared experts retaining common representations.
+2. **Dual-Chunk Attention (DCA):** Partitions sequences into intra- and inter-chunk receptive fields to preserve long-range coherence up to 128K tokens.
+3. **Benchmark Performance:** Matches dense baselines like Qwen1.5-32B and Yi-1.5-34B on MMLU, mathematics, and coding at 14B-parameter inference cost.
+
+---
+
+## 195. Nemotron-4 340B: Synthetic Data and Multi-Attribute Rewards
+
+### 195.1 Nemotron Training Pipeline
+```mermaid
+flowchart TB
+    subgraph PipeN["Iterative Weak-to-Strong Distillation"]
+        GENN["Generator: synthetic data"] --> SCOREN["Reward Model scoring"]
+        SCOREN --> FILTN["Filter and Rank"]
+        FILTN --> TRAINN["Train stronger generator"]
+        TRAINN --> GENN
+    end
+    subgraph RMN["Nemotron-4-340B-Reward"]
+        HSN["HelpSteer2: 10K pairs"] --> DIMSN["5 Dimensions"]
+    end
+```
+
+### 195.2 Multi-Attribute Alignment
+1. **Synthetic Data Pipeline:** Over 98% of Instruct model post-training data is synthetically generated via iterative weak-to-strong distillation (NVIDIA, 2024).
+2. **Multi-Attribute Reward:** HelpSteer2-trained reward model scores across 5 dimensions: helpfulness, correctness, coherence, complexity, verbosity.
+3. **SteerLM Integration:** Granular reward signals support SteerLM multi-attribute conditioning alongside RPO and DPO for fully steerable, open alignment.
+
+---
+
+## 196. Scaling Monosemanticity: SAEs on Claude 3 Sonnet
+
+### 196.1 Feature Discovery at Scale
+```mermaid
+flowchart LR
+    subgraph SAES["Sparse Autoencoder 34M Features"]
+        RESS["Residual Stream Claude 3 Sonnet"] --> ENCS["Encoder: Sparse Latents"]
+        ENCS --> DECS["Decoder: Reconstruction"]
+    end
+    subgraph FeatS["Discovered Feature Types"]
+        CONS["Concrete Entities"]
+        CODES["Software Engineering"]
+        SAFES["Safety-Critical"]
+    end
+    SAES --> FeatS
+    subgraph SteerS["Causal Feature Clamping"]
+        CLAMPS["Pin or Amplify Activations"] --> BEHAVS["Precise Behavioral Steering"]
+    end
+    FeatS --> SteerS
+```
+
+### 196.2 Dictionary Learning at Production Scale
+1. **Scale:** Templeton et al. (2024, Anthropic) extracted up to 34 million monosemantic latent features from Claude 3 Sonnet middle-layer residual stream, resolving polysemantic superposition at production scale.
+2. **Feature Geometry:** Structured semantic clustering with conceptual similarity, hierarchical relationships, and analogies aligning along geometric vectors across languages and modalities.
+3. **Causal Feature Clamping:** Pinning latent feature activations during inference precisely steers outputs, providing mechanistic foundation for safety auditing and behavioral control.
+
+---
+
+## 197. Grokking: Delayed Generalization and Phase Transitions
+
+### 197.1 Grokking Phase Transition Topology
+```mermaid
+flowchart LR
+    subgraph PhasesG["Training Phases"]
+        P1G["Phase 1: Memorization"] --> P2G["Phase 2: Latent Circuit Formation"]
+        P2G --> P3G["Phase 3: Generalization Jump"]
+    end
+    subgraph MechG["Mechanistic Explanation"]
+        EMBG["Token Embeddings to Fourier Frequencies"]
+        TRIGG["Attention and MLP: Trigonometric Identities"]
+        WDG["Weight Decay eliminates memorization"]
+    end
+    PhasesG --> MechG
+```
+
+### 197.2 Mechanistic Analysis of Grokking
+1. **Phenomenon:** Power et al. (2022) discovered delayed generalization: validation accuracy transitions from chance to near-perfect long after training loss converges near zero.
+2. **Fourier Circuit:** Nanda et al. (2023) showed models construct algorithmic circuits using Discrete Fourier Transforms for modular arithmetic.
+3. **Weight Decay as Driver:** L2 regularization eliminates high-norm memorization solutions, pulling gradient descent into compact generalizing basins, triggering sudden validation jumps.
+
+---
+
+## 198. Superposition Hypothesis: Feature Geometry in Neural Networks
+
+### 198.1 Superposition and Phase Transitions
+```mermaid
+flowchart TB
+    subgraph SuperH["Superposition Hypothesis Elhage et al. 2022"]
+        CAPH["d dimensions"] --> FEATH["Encode much more than d features"]
+        FEATH --> INTH["Cross-feature Interference"]
+        INTH --> RELUH["ReLU Suppresses Noise"]
+    end
+    subgraph GeomH["Feature Geometry"]
+        ORTHOH["Orthogonal Basis low sparsity"] --> POLYH["Polytope Structures high sparsity"]
+        POLYH --> ANTIH["Antipodal Pairs"]
+        POLYH --> TRIH["Triangles and Pentagons"]
+        POLYH --> SIMPH["Simplices"]
+    end
+    SuperH --> GeomH
+```
+
+### 198.2 Theoretical Foundation
+1. **Compressed Sensing Analogy:** Networks encode more features than dimensions by exploiting sparsity, analogous to Johnson-Lindenstrauss projections accommodating exponentially many nearly orthogonal directions.
+2. **Phase Transitions:** Toy autoencoder models show discrete phase transitions as sparsity increases, shifting from orthogonal bases to dense non-orthogonal polytope configurations.
+3. **Implication:** Polysemantic neurons are arbitrary linear combinations, not fundamental units, mandating dictionary learning via sparse autoencoders for mechanistic interpretability.
+
+---
+
+## 199. Induction Heads: The ICL Circuit
+
+### 199.1 Induction Head Circuit Topology
+```mermaid
+flowchart LR
+    subgraph CircuitI["Two-Layer Induction Circuit"]
+        L1I["Layer 1: Previous-Token Head"] --> RSI["Residual Stream"]
+        RSI --> L2I["Layer 2: Induction Head"]
+        L2I --> PREDI["Prediction: AB...A then B"]
+    end
+    subgraph TrainI["Training Dynamics"]
+        PHASEI["Sharp Phase Transition"] --> BUMPI["Training Loss Bump"]
+        BUMPI --> ICLI["Sudden ICL Capacity Surge"]
+    end
+    subgraph DeepI["Deeper Models"]
+        COPYI["Exact Copying"] --> FUZZYI["Fuzzy Matching"]
+        FUZZYI --> ANALOGI["Abstract Analogical Completion"]
+    end
+    CircuitI --> TrainI --> DeepI
+```
+
+### 199.2 Mechanistic ICL Engine
+1. **Compositional Circuit:** Olsson et al. (2022, Anthropic) discovered the two-layer induction circuit: Layer-1 previous-token head writes repr(A) at position B, enabling Layer-2 induction head to predict recurrence.
+2. **Phase Transition:** Induction heads emerge abruptly during training, coinciding with macroscopic loss bumps and sudden ICL capacity surge.
+3. **Fuzzy Matching:** In deeper models, induction heads perform semantic translation beyond literal copying, enabling abstract analogical pattern completion as the primary engine for few-shot adaptation.
+
+---
+
+## 200. RWKV-6: Data-Dependent Linear Recurrence (Eagle & Finch)
+
+### 200.1 RWKV-6 Architecture Topology
+```mermaid
+flowchart LR
+    subgraph Input["Token Influx"]
+        X["Input x_t"] --> DDLERP["Dynamic Linear Interpolation (ddlerp)"]
+    end
+    subgraph WKV["WKV-6 Operator"]
+        DDLERP --> ADAPT["Data-Dependent Decay w_t & Low-Rank Keys/Values"]
+        ADAPT --> MATRIX["Multi-Headed Matrix-Valued State S_t"]
+        MATRIX --> ACCUM["Outer-Product Associative Memory<br/>S_t = diag(w_t) S_{t-1} + k_t^T v_t"]
+    end
+    subgraph Out["Inference Mode"]
+        ACCUM --> O1["Constant O(1) Memory Footprint & O(T) Time"]
+    end
+```
+
+### 200.2 Mathematical Mechanics of RWKV-6
+1. **Data-Dependent Linear Interpolation (`ddlerp`):** Unlike RWKV-4/5 with static or purely channel-specific time decay, Finch (RWKV-6) computes dynamic interpolation weights conditioned directly on current and prior token inputs:
+   $$\mu_t = x_t + \text{lora}(x_t - x_{t-1})$$
+   $$w_t = \exp\left(-\exp\left(W_{\text{decay}} \cdot \mu_t + b_w\right)\right)$$
+2. **Matrix-Valued Associative Recurrence:** The hidden state $S_t \in \mathbb{R}^{d_k \times d_v}$ is updated as a continuous outer product, overcoming scalar state bottlenecks:
+   $$S_t = \text{diag}(w_t) S_{t-1} + k_t^\top v_t$$
+   $$y_t = q_t S_t$$
+3. **Complexity & Benchmarks:** RWKV-6 maintains strict $O(1)$ inference memory overhead and $O(T)$ linear runtime complexity while training in parallel associative scans on GPUs. Finch (1.6B/3.1B) achieves parity with LLaMA and Pythia baselines on MMLU, Lambada, and long-context Bamboo benchmarks.
+
+---
+
+## 201. Mixture-of-Depths (MoD): Conditional Computation via Token Routing
+
+### 201.1 MoD Dynamic Routing Topology
+```mermaid
+flowchart TD
+    subgraph Block["Transformer Layer with MoD Capacity k"]
+        IN["Token Embeddings X = [x_1, ..., x_T]"] --> ROUTER["Linear Router: s = W_r x_t"]
+        ROUTER --> TOPK["Top-k Selection: k = C · T (e.g., C = 0.5)"]
+        TOPK --> |"Selected k Tokens"| COMPUTE["Attention + MLP Operations"]
+        TOPK --> |"Bypassed (T - k) Tokens"| RESIDUAL["Residual Path (Skip Compute)"]
+        COMPUTE --> MERGE["Merged Tensor (Static Hardware Shape)"]
+        RESIDUAL --> MERGE
+    end
+```
+
+### 201.2 Mathematical Formulation of MoD
+1. **Static Capacity Allocation:** Raposo et al. (2024, Google DeepMind) enforce hardware-friendly static tensor shapes by defining a fixed per-block token capacity $k = \lfloor C \cdot T \rfloor$ where $C \in (0, 1]$ is the capacity factor (typically $0.5$):
+   $$R(x_t) = w_r^\top x_t$$
+   $$\mathcal{T}_{\text{active}} = \text{Top-k}\left(\{R(x_t)\}_{t=1}^T, k\right)$$
+2. **Gradient Estimation through Non-Differentiable Top-k:** To backpropagate through non-differentiable sorting, routing probabilities are multiplied as scalar gates or trained via Straight-Through Estimators (STE):
+   $$y_t = \begin{cases} x_t + R(x_t) \cdot f_{\text{layer}}(x_t) & \text{if } t \in \mathcal{T}_{\text{active}} \\ x_t & \text{otherwise} \end{cases}$$
+3. **Compute Reduction:** MoD cuts total forward-pass FLOPs by up to 50% while maintaining iso-FLOP and iso-performance parity with dense Transformer baselines across downstream NLP evaluations.
+
+---
+
+## 202. Gemini 1.5 Flash: Online Distillation for Long-Context MoE
+
+### 202.1 Online Distillation Pipeline
+```mermaid
+flowchart LR
+    subgraph Teacher["Teacher: Gemini 1.5 Pro"]
+        TP["Pre-trained Frontier MoE<br/>Multimodal 1M+ Context"] --> PROBS["Logits & Hidden States P_teacher"]
+    end
+    subgraph Student["Student: Gemini 1.5 Flash"]
+        INPUT["Multimodal Stream (Text/Audio/Video)"] --> FLASH["Sparse MoE Student"]
+        FLASH --> SLOG["Student Logits P_student"]
+    end
+    subgraph Loss["Distillation Objective"]
+        PROBS --> KLD["L_distill = D_KL(P_teacher || P_student)"]
+        SLOG --> KLD
+        KLD --> BACK["Online Gradient Update to Student"]
+    end
+```
+
+### 202.2 Mechanics of Long-Context Distillation
+1. **Online Co-Training:** Gemini 1.5 Flash is trained via concurrent online distillation from Gemini 1.5 Pro. Rather than distilling post-hoc on a static corpus, the student is supervised continuously during pre-training against the teacher's probability distributions and intermediate hidden representations:
+   $$\mathcal{L}_{\text{total}} = (1 - \alpha) \mathcal{L}_{\text{CE}}(y, P_S) + \alpha D_{\text{KL}}(P_T \parallel P_S) + \beta \sum_l \|h_l^T - W_{\text{proj}} h_l^S\|_2^2$$
+2. **Context Scaling:** Preserves a full 1,000,000-token context window with native multimodal comprehension (video, audio, code).
+3. **Empirical Benchmarks:** Achieves ~84% MMLU and 35% on SWE-bench, outperforming comparable lightweight models (e.g., GPT-4o-mini) on long-context retrieval and code repair while slashing latency by 3×.
+
+---
+
+## 203. Sparse Upcycling: Dense-to-MoE Parameter Reuse
+
+### 203.1 Sparse Upcycling Weight Transformation
+```mermaid
+flowchart TB
+    subgraph Dense["Pre-trained Dense Transformer"]
+        D_MLP["Dense MLP Layer W_in, W_out"]
+    end
+    subgraph Upcycle["Upcycling Initialization"]
+        D_MLP --> |"Copy Weights Identically"| E1["Expert 1: W_in, W_out"]
+        D_MLP --> |"Copy Weights Identically"| E2["Expert 2: W_in, W_out"]
+        D_MLP --> |"Copy Weights Identically"| EN["Expert E: W_in, W_out"]
+        RANDOM["Random Init"] --> ROUTER["Router Gating W_gate"]
+    end
+    subgraph Train["Continual Training"]
+        E1 & E2 & EN & ROUTER --> SYMBREAK["Symmetry Breaking via Routing Noise"]
+        SYMBREAK --> DIVERGE["Specialized Expert Subnetworks"]
+    end
+```
+
+### 203.2 Mathematical Mechanics of Upcycling
+1. **Weight Cloning Protocol:** Komatsuzaki et al. (2023) bypass de novo MoE pre-training costs by duplicating pre-trained dense feed-forward networks across $E$ newly created experts:
+   $$W_{\text{gate}}^{(e)} \leftarrow W_{\text{dense}}, \quad \forall e \in \{1, \dots, E\}$$
+   $$W_{\text{router}} \sim \mathcal{N}\left(0, \frac{\epsilon}{d}\right)$$
+2. **Symmetry Breaking:** Initial random perturbations in the router gating mechanism distribute tokens non-uniformly, allowing distinct gradient updates to rapidly differentiate expert specialization:
+   $$g(x) = \text{Softmax}\left(\text{Top-k}\left(W_{\text{router}} x + \epsilon_{\text{noise}}, k\right)\right)$$
+3. **Compute Efficiency:** Upcycling delivers higher downstream zero-shot accuracy and lower perplexity using roughly 50% of the compute budget required to train an MoE from scratch.
+
+---
+
+## 204. Constitutional AI & RLAIF: Scalable Alignment via Principles
+
+### 204.1 Constitutional AI Dual-Phase Topology
+```mermaid
+flowchart TD
+    subgraph SL["Phase 1: Supervised Critique & Revision"]
+        PROMPT["Red-Team Adversarial Prompt"] --> HARMFUL["Harmful Draft Response"]
+        HARMFUL --> CRITIQUE["Critique Prompt + Constitutional Principles"]
+        CRITIQUE --> REVISED["Revised Harmless Response"]
+        REVISED --> SFT_DATA["Fine-tune Model via SFT"]
+    end
+    subgraph RLAIF["Phase 2: RL from AI Feedback"]
+        SFT_DATA --> PAIRS["Generate Response Pairs (y_1, y_2)"]
+        PAIRS --> AI_JUDGE["AI Feedback Evaluator (Constitutional Prompt)"]
+        AI_JUDGE --> PREF_RM["Preference Reward Model r_θ(x, y)"]
+        PREF_RM --> PPO_AL["RL Optimization (PPO / DPO)"]
+    end
+```
+
+### 204.2 Mathematical Formalization of RLAIF
+1. **Self-Critique & Revision Loop:** Given constitutional principles $\mathcal{C} = \{c_1, c_2, \dots, c_m\}$ and red-team prompt $x$:
+   $$y_0 \sim \pi_{\text{base}}(\cdot \mid x)$$
+   $$r_1 \sim \pi_{\text{base}}(\cdot \mid x, y_0, \text{"Critique according to principle: "} c_j)$$
+   $$y_1 \sim \pi_{\text{base}}(\cdot \mid x, y_0, r_1, \text{"Revise to remove harm while remaining helpful"})$$
+2. **AI Preference Labeling:** A feedback policy $\pi_{\text{judge}}$ scores response pairs $(y_w, y_l)$ under prompt $x$ against constitution $\mathcal{C}$:
+   $$P_{\text{RLAIF}}(y_w \succ y_l \mid x) = \sigma\left(r_\theta(x, y_w) - r_\theta(x, y_l)\right)$$
+3. **Alignment Tax Suppression:** Eliminates crowdworker trauma while shifting the helpfulness–harmlessness Pareto frontier outward, reducing evasive blanket refusals on benign ambiguous queries.
+
+---
+
+## 205. RAFT: Retrieval-Augmented Fine-Tuning
+
+### 205.1 RAFT Training Structure
+```mermaid
+flowchart LR
+    subgraph Dataset["RAFT Data Formulation"]
+        Q["Question q"] --> ORACLE["Oracle Document D*"]
+        Q --> DISTRACT["Distractor Documents {D_1, ..., D_k}"]
+        ORACLE & DISTRACT --> COMPOSE["Context Pool C = Shuffle(D*, D_1, ..., D_k)"]
+    end
+    subgraph Supervised["Reasoning Generation"]
+        COMPOSE --> EXTRACT["Extract Verbatim Excerpts D*"]
+        EXTRACT --> COT["Chain-of-Thought Formulation"]
+        COT --> ANS["Final Answer y*"]
+    end
+    subgraph Dropping["Oracle Dropout P_drop = 0.2"]
+        ORACLE -.-> |"20% instances omit D*"| INTERNAL["Force Internal Knowledge Recall"]
+    end
+```
+
+### 205.2 Mathematical Formulation of RAFT
+1. **Context Formulation:** Zhang et al. (2024) train models for domain-specific open-book examinations by mixing relevant oracle documents $D^*$ with $K-1$ irrelevant distractor documents $\{D_k\}_{k=1}^{K-1}$:
+   $$\mathcal{L}_{\text{RAFT}} = -\sum_{i=1}^N \log P_\theta\left(y_i^* \mid q, D^*, D_1, \dots, D_{K-1}, y_{<i}^*\right)$$
+2. **Chain-of-Thought Citation Constraint:** The target sequence is explicitly structured to quote verbatim passages from $D^*$ prior to deducing the answer:
+   $$y^* = \left[\text{"## Direct Evidence: "}, \text{quote}(D^*), \text{"## Reasoning: "}, \text{CoT}, \text{"## Answer: "}, a\right]$$
+3. **Distractor Resistance:** RAFT models learn to ignore high-ranking retrieval distractors and withstand retriever hallucinations, outperforming naive RAG and standard domain SFT by over 15% on PubMed and HotpotQA.
+
+---
+
+## 206. Mixture-of-LoRA-Experts (MoLE & LoraHub)
+
+### 206.1 Modular Adapter Routing Topology
+```mermaid
+flowchart TD
+    subgraph Ensembles["Specialized LoRA Pool"]
+        L1["LoRA 1 (Code): ΔW_1 = B_1 A_1"]
+        L2["LoRA 2 (Math): ΔW_2 = B_2 A_2"]
+        LE["LoRA E (Safety): ΔW_E = B_E A_E"]
+    end
+    subgraph Gating["Routing Mechanisms"]
+        TOKEN["Token Representation h_l"] --> MOLE_GATE["MoLE: Token-Level Router g(h_l)"]
+        PROMPT["Few-Shot Exemplars"] --> LORAHUB["LoraHub: CMA-ES Weight Vector w"]
+    end
+    MOLE_GATE --> COMB1["h'_l = W_0 h_l + \sum_e g_e(h_l) · ΔW_e h_l"]
+    LORAHUB --> COMB2["W_{\text{merged}} = W_0 + \sum_e w_e · ΔW_e"]
+```
+
+### 206.2 Mathematical Mechanics of Modular Adapters
+1. **Layer-Wise Token Gating (MoLE):** Wu et al. (ICLR 2024) dynamically route intermediate token representations across task-specific adapters via learned softmax gates:
+   $$g_l(x) = \text{Softmax}\left(W_g^{(l)} x\right)$$
+   $$W_{\text{eff}}^{(l)} x = W_0^{(l)} x + \sum_{e=1}^E g_{l, e}(x) \left(B_e^{(l)} A_e^{(l)} x\right)$$
+2. **Derivative-Free Composition (LoraHub):** Optimizes scalar weights $w \in \mathbb{R}^E$ over few-shot examples without backpropagation using the Covariance Matrix Adaptation Evolution Strategy (CMA-ES):
+   $$\min_w \mathcal{L}_{\text{val}}\left(W_0 + \sum_{e=1}^E w_e \Delta W_e\right)$$
+3. **Cross-Task Generalization:** Eliminates negative interference and catastrophic forgetting observed when naively averaging model weights, matching full multi-task fine-tuning with modular parameter swaps.
+
+---
+
+## 207. Rotary Position Embeddings (RoPE): Geometric Mechanics & Scaling
+
+### 207.1 RoPE Complex Plane Rotation
+```mermaid
+flowchart LR
+    subgraph Complex["2D Slice Rotation"]
+        V["[x_{2i}, x_{2i+1}]"] --> ROT["Rotation Matrix R_Θ,m"]
+        ROT --> V_ROT["[x'_{2i}, x'_{2i+1}] = R(mθ_i) · v"]
+    end
+    subgraph Property["Relative Distance Invariance"]
+        Q["Query at pos m: q_m = R_m W_q x_m"]
+        K["Key at pos n: k_n = R_n W_k x_n"]
+        Q & K --> DOT["q_m^T k_n = (W_q x_m)^T R_{n-m} (W_k x_n)"]
+    end
+```
+
+### 207.2 RoPE Formalism & Context Interpolation
+1. **Orthogonal Block-Diagonal Rotation:** Su et al. encode positional index $m$ by rotating 2-dimensional feature subspaces:
+   $$R_{\Theta, m}^d = \text{diag}\left(R_{\theta_1, m}, R_{\theta_2, m}, \dots, R_{\theta_{d/2}, m}\right)$$
+   $$R_{\theta_i, m} = \begin{pmatrix} \cos(m\theta_i) & -\sin(m\theta_i) \\ \sin(m\theta_i) & \cos(m\theta_i) \end{pmatrix}, \quad \theta_i = b^{-2(i-1)/d}$$
+2. **Relative Invariance:** The dot product preserves relative distance $(n - m)$ naturally:
+   $$\langle R_{\Theta, m}^d q, R_{\Theta, n}^d k \rangle = q^\top R_{\Theta, n-m}^d k$$
+3. **NTK-Aware Interpolation:** Rather than linear coordinate compression ($m' = m / s$), Neural Tangent Kernel (NTK) scaling modifies the base frequency $b' = b \cdot s^{d/(d-2)}$, preserving high-frequency resolution in early dimensions while stretching long wavelengths to achieve 128k+ token extrapolation.
+
+---
+
+## 208. Toolformer: Self-Supervised API Learning
+
+### 208.1 Self-Supervised Tool Calling Loop
+```mermaid
+flowchart TD
+    subgraph Mining["1. Candidate Sampling"]
+        RAW["Raw Text Sequence x"] --> SAMPLE["Prompt LLM to insert API candidates [API(c)]"]
+    end
+    subgraph Exec["2. Execution Engine"]
+        SAMPLE --> CALL["Execute API Calls via Sandbox"]
+        CALL --> RESULT["Capture Results r"]
+    end
+    subgraph Filter["3. Loss-Based Filtering"]
+        RESULT --> L_CALL["Compute L_i(API) = Loss with API output r"]
+        RAW --> L_EMPTY["Compute L_i(empty) = Loss with empty call ε"]
+        L_CALL & L_EMPTY --> CRIT["Keep iff: L_i(API) - min(L_i(ε), L_i(none)) ≥ τ"]
+    end
+    CRIT --> TRAIN["Fine-tune on Verified Executions"]
+```
+
+### 208.2 Mathematical Filtering Criterion
+1. **Contrastive Loss Metric:** Schick et al. (2023) retain candidate API call $c$ at position $i$ with returned output $r$ only if it lowers cross-entropy on subsequent tokens:
+   $$L_i(z) = -\sum_{k=i}^{|x|} w_{k-i} \log P_\theta(x_k \mid x_{<i}, z, x_{i:k-1})$$
+   $$L_i(c, r) - \min\left(L_i(\epsilon), L_i(\text{none})\right) \ge \tau$$
+2. **Autonomous Toolset:** Integrates 5 disparate APIs (Calculator, BM25 Wikipedia Search, Calendar, Machine Translator, Machine QA).
+3. **Empirical Results:** A 6.7B parameter GPT-J model fine-tuned on filtered trajectories outperformed raw 175B GPT-3 on SVAMP, ASDiv, and LAMA benchmarks.
+
+---
+
+## 209. Gorilla: Retriever-Aware Training for Syntactic API Synthesis
+
+### 209.1 Gorilla Architecture Topology
+```mermaid
+flowchart LR
+    subgraph Benchmark["APIBench Dataset"]
+        CORPUS["1,645 APIs: TorchHub, TensorHub, HuggingFace"]
+    end
+    subgraph RAT["Retriever-Aware Training (RAT)"]
+        PROMPT["User Goal"] --> RET["BM25 / Contriever Retrieval"]
+        CORPUS --> RET
+        RET --> DOCS["Live Documentation (with updates/signature changes)"]
+        DOCS & PROMPT --> GORILLA["Gorilla LLM Backbone"]
+        GORILLA --> CODE["Syntactically & Functionally Valid Invocation"]
+    end
+```
+
+### 209.2 RAT Formulation & Hallucination Mitigation
+1. **Retriever-Aware Objective:** Patil et al. (UC Berkeley, 2023) integrate doc retrieval directly into the fine-tuning loss to bind generation to real-time API specifications:
+   $$\mathcal{L}_{\text{RAT}} = -\sum_{t=1}^T \log P_\theta\left(y_t \mid x_{\text{prompt}}, \text{Retriever}(x_{\text{prompt}}), y_{<t}\right)$$
+2. **Dynamic Signature Invariance:** When API definitions or argument names change, Gorilla parses updated documentation without requiring parametric weight retraining.
+3. **Benchmark Validation:** On APIBench, Gorilla achieved an 82.5% accuracy advantage over GPT-4 and Claude 3, entirely suppressing fictitious argument hallucinations.
+
+---
+
+## 210. Self-RAG: Reflective Decision Tokens & Adaptive Retrieval
+
+### 210.1 Self-RAG Token Architecture
+```mermaid
+flowchart TD
+    subgraph Generator["Generation with Reflection Tokens"]
+        INP["Input Context x"] --> DECIDE{"[Retrieve] Token Score > Threshold?"}
+        DECIDE --> |"Yes"| FETCH["Retrieve Passages D"]
+        DECIDE --> |"No"| NORM["Continue Next-Token Prediction"]
+        FETCH --> EVAL{"[IsRel] Passage Relevance"}
+        EVAL --> |"Relevant"| DRAFT["Generate Candidate Response Segment"]
+        DRAFT --> FACT{"[IsSup] Grounded in D?"}
+        FACT --> QUAL{"[IsUse] Overall Response Utility"}
+        QUAL --> BEAM["Segment-Level Beam Search Reranking"]
+    end
+```
+
+### 210.2 Reflection Token Formulation
+1. **Special Token Vocabulary:** Asai et al. (2024) introduce four discrete critique tokens:
+   - `[Retrieve]`: $\in \{\text{yes}, \text{no}, \text{continue}\}$ — triggers retrieval.
+   - `[IsRel]`: $\in \{\text{relevant}, \text{irrelevant}\}$ — scores document utility.
+   - `[IsSup]`: $\in \{\text{fully supported}, \text{partially supported}, \text{unsupported}\}$ — factuality check.
+   - `[IsUse]`: $\in \{1, 2, 3, 4, 5\}$ — overall instruction fidelity.
+2. **Segment-Level Beam Decoding:** Candidate text segments $y_t$ are evaluated by a linear combination of token probabilities and reflection critic scores:
+   $$\text{Score}(y_t) = \sum \log P(w_k) + \sum_{R \in \{\text{Rel, Sup, Use}\}} \beta_R \log P(R \mid x, y_{<t}, y_t)$$
+3. **Controllable Inference:** By adjusting thresholds on $P(\text{[Retrieve]}=\text{yes})$, users dynamically tune retrieval frequency between zero-latency internal generation and maximal-factuality grounding.
+
+---
+
+## 211. Corrective RAG (CRAG): Decompose-Recompose & Evaluator-Triggered Search
+
+### 211.1 CRAG Action Routing Flow
+```mermaid
+flowchart TD
+    subgraph Evaluate["1. Document Confidence Evaluation"]
+        QUERY["Query q"] & DOCS["Retrieved Passages D"] --> EVAL["Lightweight Evaluator: Confidence Score γ"]
+    end
+    subgraph Route["2. Calibrated Action Triggering"]
+        EVAL --> |"γ ≥ θ_high (Correct)"| REFINE["Internal Refinement Strip Partitioning"]
+        EVAL --> |"γ ≤ θ_low (Incorrect)"| WEB["Discard D → Web Search (Google/Bing API)"]
+        EVAL --> |"θ_low < γ < θ_high (Ambiguous)"| HYBRID["Combine Internal Strips + Web Search"]
+    end
+    subgraph Recompose["3. Decompose-Recompose Pipeline"]
+        REFINE & WEB & HYBRID --> STRIPS["Sentence-Level Knowledge Strips"]
+        STRIPS --> FILTER["Heuristic Relevance Filter"]
+        FILTER --> GEN["Final Conditioned Generation"]
+    end
+```
+
+### 211.2 Knowledge Strip Refinement
+1. **Confidence Thresholding:** Yan et al. (2024) define dual thresholds $(\theta_{\text{low}}, \theta_{\text{high}})$:
+   $$\text{Action}(D) = \begin{cases} \text{Correct} & \text{if } \text{conf}(D) \ge \theta_{\text{high}} \\ \text{Incorrect} & \text{if } \text{conf}(D) \le \theta_{\text{low}} \\ \text{Ambiguous} & \text{otherwise} \end{cases}$$
+2. **Decompose-Recompose Algorithm:** Documents are split into sentence-level fine-grained knowledge strips $k_j$. Irrelevant strips are stripped via classification, preventing prompt bloat:
+   $$\mathcal{C}_{\text{refined}} = \left\{k_j \in \text{split}(D) \;\middle|\; \text{score}(k_j, q) > \tau\right\}$$
+3. **Benchmark Impact:** Outperforms vanilla RAG by up to 36.6% on PopQA and dramatically reduces confabulated biographical entity attributes.
+
+---
+
+## 212. GraphRAG: Hierarchical Leiden Community Summarization
+
+### 212.1 GraphRAG Indexing & Query Topology
+```mermaid
+flowchart TD
+    subgraph Index["Indexing Pipeline"]
+        TEXT["Raw Corpus"] --> EXTRACT["LLM Entity-Relation-Claim Extraction"]
+        EXTRACT --> GRAPH["Knowledge Graph (Nodes: Entities, Edges: Relations)"]
+        GRAPH --> LEIDEN["Leiden Hierarchical Clustering (Levels 0, 1, 2)"]
+        LEIDEN --> SUMMARIZE["LLM Pre-generates Community Summaries"]
+    end
+    subgraph Search["Dual Query Modes"]
+        Q["User Query"] --> |"Entity-Centric / Local"| LOCAL["Local Search: k-hop Entity Neighborhood"]
+        Q --> |"Global / Thematic Sensemaking"| GLOBAL["Global Search: Map-Reduce across Community Summaries"]
+    end
+```
+
+### 212.2 Global Map-Reduce Formulation
+1. **Community Detection via Leiden:** Edge et al. (Microsoft, 2024) partition the entity-graph into hierarchical modular clusters $\mathcal{C}_k^{(l)}$ optimizing graph modularity:
+   $$\mathcal{H} = \left\{\mathcal{C}_1^{(l)}, \dots, \mathcal{C}_{M_l}^{(l)}\right\}_{l=0}^L$$
+2. **Community Summaries as Pre-Computed Latents:** An LLM generates dense thematic summaries $S_k^{(l)}$ for every detected cluster at each hierarchical level $l$.
+3. **Global Query Map-Reduce:**
+   $$\text{Map: } r_k = \text{LLM}\left(\text{Prompt}, q, S_k^{(l)}\right), \quad \text{Reduce: } \hat{y} = \text{LLM}\left(\text{Aggregate}, \{r_k\}_{k=1}^{M_l}\right)$$
+   Completely resolves naive vector RAG failure on broad holistic queries ("What are the top 5 macroeconomic themes across this 10M-token corpus?").
+
+---
+
+## 213. Quiet-STaR: Internal Rationales via Token-Level REINFORCE
+
+### 213.1 Quiet-STaR Rationale Generation
+```mermaid
+flowchart LR
+    subgraph Forward["Sequential Input Stream"]
+        T1["Token x_{t-1}"] --> FORK["Fork Thought Generation"]
+    end
+    subgraph Think["Latent Deliberation"]
+        FORK --> SOT["<|startofthought|>"]
+        SOT --> ROLLOUT["Sample N Parallel Rationales: τ_1, ..., τ_N"]
+        ROLLOUT --> EOT["<|endofthought|>"]
+    end
+    subgraph Mix["Logit Mixing Head"]
+        T1 --> L_ORIG["Original Logits l_base"]
+        EOT --> L_THOUGHT["Rationale Logits l_think"]
+        L_ORIG & L_THOUGHT --> ALPHA["Learned Mixing Head: α · l_think + (1-α) · l_base"]
+        ALPHA --> PRED["Next Token x_t"]
+    end
+```
+
+### 213.2 REINFORCE Optimization of Inner Thoughts
+1. **Dual Horizon Generation:** Zelikman et al. (2024) insert parallel internal reasoning rollouts $\tau = (z_1, \dots, z_L)$ between token positions using specialized attention masks:
+   $$P(x_t \mid x_{<t}) = \sum_\tau P(x_t \mid x_{<t}, \tau) P(\tau \mid x_{<t})$$
+2. **Policy Gradient Formulation:** Thought tokens receive gradient updates via REINFORCE, where the reward is the reduction in cross-entropy loss on future sequence tokens $x_{t:t+k}$:
+   $$\mathcal{R}(\tau) = \log P_\theta(x_{t:t+k} \mid x_{<t}, \tau) - \log P_\theta(x_{t:t+k} \mid x_{<t})$$
+   $$\nabla_\theta \mathcal{J} = \mathbb{E}_{\tau}\left[\nabla_\theta \log P_\theta(\tau \mid x_{<t}) \left(\mathcal{R}(\tau) - b\right)\right]$$
+3. **Zero-Shot Reasoning Uplift:** Applied to a base Mistral-7B model with zero task fine-tuning, GSM8K accuracy surged from 5.9% to 10.9% and CommonsenseQA increased from 36.3% to 47.2%.
+
+---
+
+## 214. Infini-attention: Compressive Memory via Delta Rule
+
+### 214.1 Infini-attention Memory Fusion
+```mermaid
+flowchart TD
+    subgraph Block["Single Infini-attention Layer"]
+        QKV["Input X → Projected Q, K, V"] --> LOCAL["Local Masked Dot-Product Attention A_{dot}"]
+        QKV --> COMPRESS["Compressive Linear Memory M_{t-1}"]
+        COMPRESS --> RETRIEVE["Retrieved State A_{mem} = (σ(Q) M_{t-1}) / (σ(Q) z_{t-1})"]
+        LOCAL & RETRIEVE --> GATE["Learned Gating β: Y = β · A_{dot} + (1 - β) · A_{mem}"]
+        QKV --> DELTA["Delta Memory Update: M_t = M_{t-1} + (V - Retrieved) ⊗ σ(K)"]
+        DELTA --> COMPRESS
+    end
+```
+
+### 214.2 Delta-Rule Compressive Update
+1. **Linear Associative Memory:** Munkhdalai et al. (Google, 2024) combine causal scaled dot-product attention with a fixed-size memory matrix $M \in \mathbb{R}^{d_k \times d_v}$:
+   $$A_{\text{mem}} = \frac{\phi(Q) M_{t-1}}{\phi(Q) z_{t-1}}, \quad \phi(x) = \text{ELU}(x) + 1$$
+2. **Delta Rule Update:** Prevents capacity saturation by computing memory error residuals before updating:
+   $$M_t = M_{t-1} + \left(V - \frac{\phi(K) M_{t-1}}{\phi(K) z_{t-1}}\right)^\top \phi(K)$$
+   $$z_t = z_{t-1} + \sum_i \phi(K_i)$$
+3. **114× Memory Compression:** Achieves 100% retrieval on 1M-token passkey extraction while maintaining strictly bounded memory footprints.
+
+---
+
+## 215. Reward Overoptimization & Goodhart's Law in RLHF
+
+### 215.1 Goodhart Inverted-U Dynamics
+```mermaid
+flowchart LR
+    subgraph Metrics["Policy Optimization Trajectory"]
+        KL["KL Divergence from Base Policy: D_KL(π_θ || π_ref)"]
+        PROXY["Proxy Reward r_proxy: Monotonically Rises ∝ √D_KL"]
+        GOLD["Gold Human Preference r_gold: Inverted-U Peak"]
+    end
+    PROXY --> HACK["Reward Hacking Regime: Exploits Proxy Imperfections"]
+    GOLD --> PEAK["Optimal Frontier: D_KL ≈ D*"]
+    PEAK --> DECLINE["Performance Degradation (Over-optimization)"]
+```
+
+### 215.2 Analytical Dynamics of Over-optimization
+1. **Square-Root Scaling:** Gao et al. (2023) established that proxy reward increases linearly with $\sqrt{D_{\text{KL}}}$:
+   $$\mathbb{E}_{\pi_\theta}[r_{\text{proxy}}] - \mathbb{E}_{\pi_{\text{ref}}}[r_{\text{proxy}}] \approx \alpha \sqrt{D_{\text{KL}}(\pi_\theta \parallel \pi_{\text{ref}})}$$
+2. **Gold Reward Collapse:** Because proxy $r$ differs from true preferences $r^*$ by error $\epsilon \sim \mathcal{N}(0, \sigma^2)$, true performance degrades past an optimal KL threshold:
+   $$\mathbb{E}_{\pi_\theta}[r^*] \approx \alpha^* \sqrt{D_{\text{KL}}} - \beta D_{\text{KL}}$$
+3. **Mitigations:** Ensemble reward modeling with conservative lower bounds ($r_{\text{ens}} = \mu_r - \lambda \sigma_r$), strict KL penalty scheduling ($\beta_{\text{KL}}$), and explicit Trust Region bounds.
+
+---
+
+## 216. Process Reward Models (PRMs): Step-Level Verification & PRM800K
+
+### 216.1 PRM Step-Level Supervision Topology
+```mermaid
+flowchart TD
+    subgraph Reasoning["Candidate Solution Rollout"]
+        S1["Step 1: Parse Problem Setup"] --> S2["Step 2: Apply Algebraic Identity"]
+        S2 --> S3["Step 3: Flawed Computation (Error Injected)"]
+        S3 --> S4["Step 4: Propagated Incorrect Final Answer"]
+    end
+    subgraph ORM_vs_PRM["Evaluation Paradigms"]
+        S4 --> ORM["Outcome RM: Scalar Reward r = 0 (Sparse, Delayed)"]
+        S1 --> P1["PRM: r_1 = +1.0"]
+        S2 --> P2["PRM: r_2 = +1.0"]
+        S3 --> P3["PRM: r_3 = -1.0 (Identifies Exact Point of Failure)"]
+        S4 --> P4["PRM: r_4 = -1.0"]
+    end
+```
+
+### 216.2 Mathematical Mechanics of Step-Level PRMs
+1. **Dense Step-Level Scoring:** Lightman et al. (OpenAI, 2024) score each step $s_t$ in a chain $\tau = (s_1, \dots, s_T)$ individually:
+   $$r_{\text{PRM}}(\tau) = \prod_{t=1}^T P\left(\text{correct} \mid s_{\le t}, x\right) \quad \text{or} \quad \min_{1 \le t \le T} P\left(\text{correct} \mid s_{\le t}, x\right)$$
+2. **Active Learning Protocol (PRM800K):** Human labelers tag 800,000 steps with positive, negative, or neutral feedback, focusing annotation compute on high-uncertainty decision points where candidate trajectories diverge.
+3. **Test-Time Search Scaling:** In Best-of-N and tree search (MCTS), PRMs prevent false-positive derivations from winning reward scores, scaling mathematical problem-solving on MATH to 78.2% and dramatically outperforming Outcome Reward Models (ORMs).
+
+---
+
+## 217. Alignment Tax: Helpfulness–Harmlessness Pareto Dynamics
+
+### 217.1 Alignment Frontier Tradeoff
+```mermaid
+flowchart LR
+    subgraph Pareto["Alignment Pareto Frontier"]
+        BASE["Pre-trained Base Model<br/>Max Capability, Zero Safety"] --> BALANCED["Optimized CAI/RLHF Checkpoint<br/>Balanced Pareto Frontier"]
+        BALANCED --> OVER["Over-aligned Policy<br/>Pathological Over-refusal (High Alignment Tax)"]
+    end
+    subgraph Suite["Calibration Testing"]
+        XSTEST["XSTest: Benign Ambiguous Queries"] --> RATE["False Refusal Rate Measurement"]
+        MMLU["MMLU / GSM8K"] --> CAP["Capability Retention Delta"]
+    end
+```
+
+### 217.2 Mathematical Formalization of Alignment Degradation
+1. **Pareto Frontier Definition:** Askell et al. (Anthropic, 2021) define the alignment tax as the performance delta $\Delta \mathcal{U}$ on objective utility $\mathcal{U}_{\text{task}}$ incurred when enforcing safety constraints $\mathcal{S}(\pi) \ge 1 - \epsilon$:
+   $$\Delta_{\text{tax}} = \max_{\pi} \mathcal{U}(\pi) - \max_{\pi: \mathcal{S}(\pi) \ge 1-\epsilon} \mathcal{U}(\pi)$$
+2. **Over-Refusal Distortion:** Under naive negative reward weighting, the policy overgeneralizes safety penalties across benign prompts containing sensitive keywords (e.g., "kill a linux process", "shoot a photograph"):
+   $$P_{\text{refuse}}(x) = \sigma\left(w_s^\top h(x) - \theta\right)$$
+3. **Frontier Restoration via Constitutional Tuning:** Constitutional AI shifts the Pareto boundary outward, maintaining safety standards while suppressing capability loss across reasoning and coding benchmarks.
+
+---
+
+## 218. Odds Ratio Preference Optimization (ORPO): Monolithic SFT-Alignment
+
+### 218.1 ORPO Single-Stage Training Flow
+```mermaid
+flowchart TD
+    subgraph ORPO_Loss["Unified Loss Objective: L_{ORPO} = L_{SFT} + λ · L_{OR}"]
+        X["Instruction x"] --> MODEL["Active Policy π_θ"]
+        MODEL --> Y_W["Chosen Response y_w"]
+        MODEL --> Y_L["Rejected Response y_l"]
+        Y_W --> SFT["L_{SFT} = -log π_θ(y_w | x)"]
+        Y_W & Y_L --> ODDS["Compute Odds Ratio: odds(y_w) / odds(y_l)"]
+        ODDS --> OR_PENALTY["L_{OR} = -log σ(log(odds_w / odds_l))"]
+        SFT & OR_PENALTY --> TOTAL["Backpropagate into π_θ (Zero Reference Model)"]
+    end
+```
+
+### 218.2 Mathematical Formulation of ORPO
+1. **Generative Odds Definition:** Hong et al. (2024) formulate token sequence odds without reference models:
+   $$\text{odds}_\theta(y \mid x) = \frac{P_\theta(y \mid x)}{1 - P_\theta(y \mid x)}$$
+2. **Log-Odds Ratio Loss:**
+   $$\mathcal{L}_{\text{OR}} = -\mathbb{E}_{(x, y_w, y_l)}\left[\log \sigma\left(\log \frac{\text{odds}_\theta(y_w \mid x)}{\text{odds}_\theta(y_l \mid x)}\right)\right]$$
+   $$\mathcal{L}_{\text{ORPO}} = \mathcal{L}_{\text{SFT}}(y_w) + \lambda \mathcal{L}_{\text{OR}}$$
+3. **Memory & Performance Gains:** Eliminates the frozen reference model entirely, cutting VRAM by ~50% during preference tuning while achieving 12.2% AlpacaEval 2.0 win rates on Mistral-7B.
+
+---
+
+## 219. Identity Preference Optimization (IPO): Regularization without Bradley-Terry
+
+### 219.1 IPO Non-Parametric Objective
+```mermaid
+flowchart LR
+    subgraph DPO_Fail["Standard DPO Failure Mode"]
+        BT["Bradley-Terry Assumption: P(y_w ≻ y_l) = σ(r_w - r_l)"] --> UNBOUNDED["Unbounded Implicit Rewards r_θ → ∞ on Deterministic Data"]
+        UNBOUNDED --> OVERFIT["Rapid Degradation & Early Stopping Required"]
+    end
+    subgraph IPO_Fix["IPO Formulation (Azar et al. 2024)"]
+        MSE["Squared Error Target Margin: (log(π_w/π_l) - 1/(2τ))^2"] --> REGULAR["Strict Quadratic Regularization Controls KL Divergence"]
+    end
+```
+
+### 219.2 Mathematical Formulation of IPO
+1. **$\Psi$-Preference Optimization Framework:** Azar et al. (AISTATS 2024) generalize preference optimization by setting $\Psi(q) = q$ (the identity function), avoiding sigmoid saturation:
+   $$\mathcal{L}_{\text{IPO}}(\theta) = -\mathbb{E}_{(x, y_w, y_l)}\left[\log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} - \frac{\tau^{-1}}{2}\right]^2$$
+2. **Asymptotic Convergence:** Unlike DPO whose loss can drop to zero while weights diverge to infinity, IPO's quadratic penalty actively anchors the policy near the target margin $\frac{1}{2\tau}$.
+3. **Empirical Stability:** Prevents policy collapse on Anthropic-HH and TL;DR datasets, demonstrating monotonic learning without requiring heuristic early stopping.
+
+---
+
+## 220. Contrastive Preference Optimization (CPO): Likelihood-Regularized Alignment
+
+### 220.1 CPO Architecture Topology
+```mermaid
+flowchart TD
+    subgraph Unified["CPO Single-Model Architecture"]
+        PROMPT["Instruction x"] --> NET["Trainable Policy π_θ (No Reference Network)"]
+        NET --> W["Chosen y_w"] & L["Rejected y_l"]
+        W & L --> CONTRAST["Contrastive Objective: -log σ(β log(π_θ(y_w)/π_θ(y_l)))"]
+        W --> BC["Behavior Cloning Regularizer: -log π_θ(y_w)"]
+        CONTRAST & BC --> LOSS["L_CPO = L_prefer + α · L_NLL"]
+    end
+```
+
+### 220.2 Mathematical Mechanics of CPO
+1. **Reference-Free Formulation:** Xu et al. (2024) derive CPO as an upper bound on DPO, penalizing rejected outputs while maintaining behavior cloning (BC) on chosen demonstrations:
+   $$\mathcal{L}_{\text{CPO}}(\theta) = -\mathbb{E}_{(x, y_w, y_l)}\left[\log \sigma\left(\beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_\theta(y_l \mid x)}\right)\right] - \alpha \mathbb{E}_{(x, y_w)}\left[\log \pi_\theta(y_w \mid x)\right]$$
+2. **VRAM Conservation:** Eliminates the reference model forward pass, freeing memory for larger batch sizes and sequence lengths during multi-turn instruction alignment.
+3. **Benchmark Efficacy:** Attains ~8.0 on MT-Bench and high raw win rates on AlpacaEval 2.
+
+---
+
+## 221. Retrieval-Interleaved Generation (RIG): REPLUG, FLARE & IRCoT
+
+### 221.1 Interleaved Dynamic Retrieval Paradigms
+```mermaid
+flowchart TD
+    subgraph FLARE["Forward-Looking Active Retrieval (FLARE)"]
+        GEN1["Draft Next Sentence s_t"] --> CONF{"Token Probabilities < Confidence Threshold?"}
+        CONF --> |"Yes: Low Confidence"| RET1["Trigger Retrieval Using s_t as Query"]
+        RET1 --> REGEN["Regenerate s_t with Retrieved Context"]
+    end
+    subgraph IRCoT["Interleaved Retrieval CoT (IRCoT)"]
+        COT1["Reasoning Step k"] --> FORM["Formulate Query q_{k+1}"]
+        FORM --> RET2["Fetch Passages D_{k+1}"]
+        RET2 --> GROUND["Ground Reasoning Step k+1"]
+    end
+```
+
+### 221.2 Mathematical Formulation of Interleaved Retrieval
+1. **REPLUG Document Marginalization:** Shi et al. (2024) treat external retrieval as an ensemble plugin over $K$ documents without altering model weights:
+   $$P(y_t \mid x, y_{<t}) = \sum_{k=1}^K P(D_k \mid x) \cdot P_{\text{LM}}(y_t \mid x, D_k, y_{<t})$$
+2. **FLARE Active Confidence Triggers:** Retrieves when minimum token probability falls below confidence threshold $\tau$:
+   $$\min_{w \in s_t} P_{\text{LM}}(w \mid x, y_{<t}, w_{<i}) < \tau \implies \text{Invoke Retrieval}$$
+3. **Multi-Hop Performance:** IRCoT boosts multi-hop question answering on HotpotQA and 2WikiMultiHopQA by 10–20 exact match points over static RAG.
+
+---
+
+## 222. LoRA+: Asymmetric Adapter Learning Rates via Infinite-Width Dynamics
+
+### 222.1 LoRA+ Gradient Imbalance Resolution
+```mermaid
+flowchart LR
+    subgraph Vanilla["Vanilla LoRA: η_A = η_B"]
+        X["Input x"] --> A["Matrix A: η_A = 1e-4"]
+        A --> B["Matrix B: η_B = 1e-4"]
+        B --> IMBALANCE["Suboptimal Feature Learning: Gradient Scaling Disparity"]
+    end
+    subgraph Plus["LoRA+: Asymmetric Learning Rates"]
+        X2["Input x"] --> A2["Matrix A: η_A = η"]
+        A2 --> B2["Matrix B: η_B = λ · η (λ ≈ 16)"]
+        B2 --> OPTIMAL["Balanced Gradient Flow & 2× Faster Convergence"]
+    end
+```
+
+### 222.2 Mathematical Proof of Asymmetry
+1. **Infinite-Width Scaling Analysis:** Hayou et al. (2024) analyze low-rank adaptation as hidden dimension $d \to \infty$. Under standard initialization ($A \sim \mathcal{N}(0, 1/r)$, $B = 0$):
+   $$\Delta W = \frac{\alpha}{r} B A$$
+   Updates to matrix $B$ propagate at order $O(1)$, whereas updates to matrix $A$ scale at order $O(1/d)$. Equal learning rates ($\eta_A = \eta_B$) starve matrix $B$ of sufficient gradient mass.
+2. **Optimal Ratio Criterion:** Setting the ratio $\lambda = \frac{\eta_B}{\eta_A} \approx 16$:
+   $$\eta_B = \lambda \cdot \eta_A, \quad \lambda = O(d)$$
+3. **Empirical Acceleration:** Delivers up to 2× speedup in training convergence with a 1–2% accuracy boost across GLUE and instruction-tuning suites at zero extra parameter cost.
+
+---
+
+## 223. DoRA: Weight-Decomposed Low-Rank Adaptation
+
+### 223.1 Magnitude-Direction Decoupling
+```mermaid
+flowchart TD
+    subgraph Pretrained["Pre-trained Weight W_0"]
+        W0["W_0 ∈ R^{d × k}"] --> DECOMP["Decompose into Magnitude m and Direction V"]
+        DECOMP --> MAG["Magnitude m = ||W_0||_c"]
+        DECOMP --> DIR["Direction V = W_0 / ||W_0||_c"]
+    end
+    subgraph Update["DoRA Hybrid Update"]
+        MAG --> LEARN_M["Learnable Vector m (Initialized to ||W_0||_c)"]
+        DIR --> LORA["Directional LoRA: V + \frac{α}{r} B A"]
+        LEARN_M & LORA --> COMB["W = m ⊙ \frac{V + ΔV}{||V + ΔV||_c}"]
+    end
+```
+
+### 223.2 Mathematical Formulation of DoRA
+1. **Weight Decomposition:** Liu et al. (2024) decompose weight matrices into column-wise magnitude vectors $m \in \mathbb{R}^{1 \times k}$ and directional matrices $V \in \mathbb{R}^{d \times k}$:
+   $$W = m \odot \frac{V}{\|V\|_c} = m \odot \frac{W_0 + \Delta V}{\|W_0 + \Delta V\|_c}$$
+2. **Directional LoRA Adaptation:** Directional perturbation $\Delta V$ is parameterized via standard low-rank matrices:
+   $$\Delta V = \frac{\alpha}{r} B A$$
+3. **Full Fine-Tuning Correlation:** LoRA forces coupled, proportional updates between magnitude and direction. DoRA uncouples them, matching full fine-tuning weight perturbation patterns and outperforming LoRA across commonsense reasoning and vision-language benchmarks without inference latency overhead (weights merge cleanly into $W$).
+
+---
+
+## 224. SliceGPT: Structured Pruning via Computational Invariance & PCA
+
+### 224.1 Computational Invariance Slicing Topology
+```mermaid
+flowchart LR
+    subgraph Invariant["Orthogonal Transformation"]
+        X["Residual Activations"] --> Q["Orthogonal Rotation Q (Q^T Q = I)"]
+        Q --> CONC["Concentrate Variance into Leading Dimensions via PCA"]
+    end
+    subgraph Slicing["Physical Dimensional Slicing"]
+        CONC --> SLICE["Delete Least Informative Columns / Rows"]
+        SLICE --> DENSE_SMALL["Strictly Smaller Dense Weight Matrices"]
+    end
+    subgraph Speedup["Hardware Advantage"]
+        DENSE_SMALL --> RAW["Direct GEMM Speedup on Commodity GPUs (Zero Custom Sparse Kernels)"]
+    end
+```
+
+### 224.2 Mathematical Mechanics of SliceGPT
+1. **Orthogonal Invariance:** Ashkboos et al. (2024) exploit transformation invariance across RMSNorm/LayerNorm blocks:
+   $$W_{\text{proj}}' = Q^\top W_{\text{proj}}, \quad W_{\text{in}}' = W_{\text{in}} Q$$
+   where $Q \in \mathbb{R}^{d \times d}$ is an orthogonal matrix ($Q^\top Q = I$).
+2. **PCA Slicing:** Principal Component Analysis over calibration representations identifies minor feature axes. The trailing $(d - k)$ coordinates are permanently eliminated:
+   $$W_{\text{sliced}} = W'_{[1:k, 1:k]} \in \mathbb{R}^{k \times k}$$
+3. **Structured Speedups:** Achieves 25–30% parameter reduction and proportional KV-cache memory savings while maintaining zero-shot baseline accuracy on commodity hardware without custom sparse CUDA kernels.
+
+---
+
+## 225. SparseGPT: One-Shot Unstructured & N:M Second-Order Pruning
+
+### 225.1 Optimal Brain Surgeon Pruning Loop
+```mermaid
+flowchart TD
+    subgraph Calibration["Calibration Pass"]
+        X["Activation Covariance X X^T"] --> H["Hessian Inverse H^{-1} = (2 X X^T + λ I)^{-1}"]
+    end
+    subgraph Column["Batched Column Pruning"]
+        H --> CHOL["Cholesky Factorization H^{-1} = L L^T"]
+        CHOL --> PRUNE["Zero Out Column Weights W_{:, j}"]
+        PRUNE --> ERROR["Compensate Remaining Columns: W_{:, j+1:d} -= δ_j · H^{-1}_{j, j+1:d}"]
+    end
+    ERROR --> COMPACT["50-60% Sparse Model in ~4 Hours (Zero Retraining)"]
+```
+
+### 225.2 Mathematical Formulation of SparseGPT
+1. **Layer-Wise OBS Objective:** Frantar & Alistarh (2023) solve the constrained reconstruction error:
+   $$\min_{\widehat{W}} \|W X - \widehat{W} X\|_2^2 \quad \text{s.t.} \quad \|\widehat{W}\|_0 \le (1 - s) \|W\|_0$$
+2. **Row-Wise Parameter Compensation:** Pruning weight $w_q$ triggers second-order updates to unpruned parameters:
+   $$\Delta w = -\frac{w_q}{[H^{-1}]_{qq}} H^{-1}_{:, q}, \quad \text{where } H = 2 X X^\top + \lambda I$$
+3. **Scalability:** Prunes 175-billion-parameter models (OPT-175B, BLOOM-176B) to 50–60% sparsity or 2:4 semi-structured patterns in ~4 hours on a single GPU without task retraining.
+
+---
+
+## 226. Wanda: Pruning via Weight-Activation Norm Products
+
+### 226.1 Wanda Magnitude-Activation Scoring
+```mermaid
+flowchart LR
+    subgraph Scoring["Weight Importance Evaluation"]
+        W["Weight Matrix W_{ij}"] --> MULT["S_{ij} = |W_{ij}| · ||X_j||_2"]
+        X["Input Feature Norm ||X_j||_2"] --> MULT
+    end
+    subgraph Prune["Row-Wise Channel Pruning"]
+        MULT --> SORT["Sort Scores per Row"]
+        SORT --> REMOVE["Mask Smallest 50% Weights"]
+    end
+    subgraph Output["Output Model"]
+        REMOVE --> SPARSITY["Zero Retraining, Zero Inversion (1,000× Faster than SparseGPT)"]
+    end
+```
+
+### 226.2 Mathematical Formulation of Wanda
+1. **Norm-Weighted Scoring:** Sun et al. (ICLR 2024) eliminate expensive Hessian matrix inversions by computing importance from weight magnitude and input $L_2$ activation norms:
+   $$S_{ij} = |W_{ij}| \cdot \|X_j\|_2 = |W_{ij}| \cdot \sqrt{\sum_{k=1}^N X_{kj}^2}$$
+2. **Row-Wise Thresholding:** Pruning decisions are evaluated independently per output channel (row-wise), preserving relative balance across activation dimensions:
+   $$\widehat{W}_{ij} = \begin{cases} W_{ij} & \text{if } S_{ij} \ge \text{Percentile}\left(S_{i, :}, s\right) \\ 0 & \text{otherwise} \end{cases}$$
+3. **Efficiency:** Prunes LLaMA-65B in seconds on a single GPU, matching SparseGPT perplexity within 0.1–0.2 points.
+
+---
+
+## 227. GPTQ: Hessian-Compensated Post-Training Quantization
+
+### 227.1 Lazy Batched Quantization Topology
+```mermaid
+flowchart TD
+    subgraph Formulation["Inverse Hessian Calibration"]
+        X["Activations X"] --> H["H = 2 X X^T"]
+        H --> INV["H^{-1} Cholesky Decomposition"]
+    end
+    subgraph Batched["Block-Wise Lazy Updates"]
+        INV --> QUANT["Quantize Block B = 128 Columns: q(W_B)"]
+        QUANT --> ERROR["Quantization Error E = W_B - q(W_B)"]
+        ERROR --> LAZY["Lazy Batched Update: W_{trailing} -= E · H^{-1}_{B, trailing}"]
+    end
+```
+
+### 227.2 Mathematical Formalization of GPTQ
+1. **Optimal Brain Quantizer (OBQ) Formulation:** Frantar et al. (2023) formulate post-training quantization via quadratic Taylor expansion:
+   $$q(w_q) = \text{quantize}(w_q)$$
+   $$\Delta w = -\frac{w_q - q(w_q)}{[H^{-1}]_{qq}} H^{-1}_{:, q}$$
+2. **Lazy Batched Matrix Operations:** To overcome $O(d^3)$ sequential complexity, updates are accumulated across blocks of columns ($B = 128$) and applied via high-throughput BLAS matrix multiplications.
+3. **Inference Benchmarks:** Enables 3-bit and 4-bit execution for 175B-parameter models in under 4 hours, matching full-precision perplexity with specialized low-bit GEMV/GEMM CUDA kernels.
+
+---
+
+## 228. AWQ: Activation-Aware Weight Quantization
+
+### 228.1 Salient Channel Protection Topology
+```mermaid
+flowchart LR
+    subgraph Identify["1. Identify Salient Channels"]
+        ACT["Average Activation Magnitude s_X = E[|X|]"] --> TOP["Select Top 1% Channels (High Activation Mass)"]
+    end
+    subgraph Scale["2. Equivalent Mathematical Scaling"]
+        TOP --> CALC_S["Find Per-Channel Scale Factor s"]
+        CALC_S --> SCALE_W["W' = W · diag(s) (Expand Weight Range → Cut Quant Error)"]
+        CALC_S --> SCALE_X["X' = diag(s)^{-1} · X (Contract Input Scale)"]
+    end
+    subgraph Quant["3. Standard 4-bit Rounding"]
+        SCALE_W --> ROUND["Quantize W' to INT4 (Preserves Precision on Salient Coordinates)"]
+    end
+```
+
+### 228.2 Mathematical Formulation of AWQ
+1. **Per-Channel Rescaling Invariance:** Lin et al. (2024) exploit linear transformation invariance:
+   $$Y = W X = \left(W \cdot \text{diag}(s)\right) \cdot \left(\text{diag}(s)^{-1} \cdot X\right) = W' X'$$
+2. **Optimal Scale Search:** Scale vector $s \in \mathbb{R}^k$ minimizes quantized output error over calibration data:
+   $$\min_s \left\|W X - \text{quantize}(W \cdot \text{diag}(s)) \cdot \text{diag}(s)^{-1} X\right\|_2^2$$
+   $$s = s_X^\gamma, \quad \gamma = \arg\min_\gamma \mathcal{L}(\gamma), \quad \gamma \in [0, 1]$$
+3. **TinyChat Hardware Kernels:** Fused W4A16 GEMV/GEMM kernels yield 3.2×–4.0× throughput gains over FP16 baselines without requiring non-uniform mixed-precision storage.
+
+---
+
+## 229. Production Prompt Caching: Prefix Breakpoints & TTL KV Reuse
+
+### 229.1 Provider Cache Execution Mechanics
+```mermaid
+flowchart TD
+    subgraph Struct["Prompt Architecture Hierarchy"]
+        SYS["System Prompt & Tool Schemas (Static)"] --> CACHE_PT1["[Cache Breakpoint 1]"]
+        CACHE_PT1 --> CORPUS["Retrieved Corpus / Document Context (Static per Session)"]
+        CORPUS --> CACHE_PT2["[Cache Breakpoint 2]"]
+        CACHE_PT2 --> USER["User Dynamic Turn Query (Volatile Tail)"]
+    end
+    subgraph CacheEngine["KV Cache Storage & Eviction"]
+        CACHE_PT2 --> LOOKUP{"Cache Hit in Server Memory?"}
+        LOOKUP --> |"Hit (90% Cost Reduction)"| REUSE["Reuse Precomputed K, V Tensors (Zero Prefill FLOPs)"]
+        LOOKUP --> |"Miss"| COMPUTE["Prefill Forward Pass + Store with TTL Expiration Window"]
+    end
+```
+
+### 229.2 Production Deployment Strategies
+1. **Prefix Invariance Rule:** Cache lookups verify deterministic cryptographic hashes of prefix tokens. Any modification to early tokens invalidates all subsequent cached states.
+2. **Provider Implementations:**
+   - **Anthropic Claude:** Explicit `cache_control: {"type": "ephemeral"}` blocks (up to 4 per request, minimum 1,024–2,048 token thresholds, 5-minute sliding TTL).
+   - **Google Gemini:** Explicit `CachedContent` objects with designated TTL expirations and hourly storage charges alongside automatic prefix caching.
+   - **OpenAI:** Automatic prefix matching (minimum 1,024 tokens) without manual API declarations.
+3. **Economic Impact:** Slashes time-to-first-token (TTFT) latency by up to 85% and input token pricing by 50–90%.
+
+---
+
+## 230. Speculative Decoding Foundations: Acceptance-Rejection Sampling
+
+### 230.1 Draft-Verification Execution Flow
+```mermaid
+flowchart LR
+    subgraph Draft["Step 1: Autoregressive Drafting"]
+        DRAFT_M["Draft Model M_q (Small, Fast)"] --> TOKS["Generate γ Speculative Tokens: x_{1}, ..., x_{γ}"]
+    end
+    subgraph Verify["Step 2: Parallel Verification"]
+        TOKS --> TARGET_M["Target Model M_p (Large, Authoritative)"]
+        TARGET_M --> FORWARD["Single Parallel Forward Pass: Compute p(x_i | x_{<i})"]
+    end
+    subgraph Accept["Step 3: Exact Acceptance-Rejection"]
+        FORWARD --> TEST{"Random r < min(1, p(x)/q(x))?"}
+        TEST --> |"Accept"| EMIT["Emit Token x_i"]
+        TEST --> |"Reject"| RESAMPLE["Sample from Residual: max(0, p(x) - q(x)) & Stop Draft"]
+    end
+```
+
+### 230.2 Mathematical Proof of Exact Distribution Invariance
+1. **Modified Rejection Sampling:** Leviathan et al. (2023) and Chen et al. (2023) accept speculative token $x$ proposed by draft distribution $q(x)$ with probability:
+   $$\alpha(x) = \min\left(1, \frac{p(x)}{q(x)}\right)$$
+2. **Residual Recovery Distribution:** If rejected, a replacement token is drawn from the adjusted residual distribution:
+   $$p_{\text{resample}}(x) = \frac{\max(0, p(x) - q(x))}{1 - \sum_y \min(p(y), q(y))}$$
+3. **Exact Target Equivalence:** The marginal generation probability matches target distribution $p(x)$ identically:
+   $$P_{\text{gen}}(x) = q(x) \min\left(1, \frac{p(x)}{q(x)}\right) + \left(1 - \sum_y \min(p(y), q(y))\right) p_{\text{resample}}(x) \equiv p(x)$$
+4. **Expected Speedup:** With empirical acceptance rate $\alpha$, the expected accepted tokens per iteration scale as $\frac{1 - \alpha^{\gamma+1}}{1 - \alpha}$, delivering 2×–3× wall-clock latency gains with mathematical fidelity guarantees.
+
+---
+
+## 231. Distilling Step-by-Step: Multi-Task Label-Rationale Transfer
+
+### 231.1 Multi-Task Rationale Distillation
+```mermaid
+flowchart TD
+    subgraph Teacher["Teacher LLM (PaLM 540B / GPT-4)"]
+        PROMPT["Few-Shot CoT Prompt + Input x"] --> EXTRACT["Output: Ground-Truth Label y + Explanation Rationale r"]
+    end
+    subgraph Student["Student Model (T5 770M / 220M)"]
+        INPUT_X["Input x"] --> STUDENT_NET["Compact Transformer Student"]
+        STUDENT_NET --> TASK1["Task Head 1: Predict Label y_pred"]
+        STUDENT_NET --> TASK2["Task Head 2: Generate Rationale r_pred"]
+    end
+    subgraph Loss["Weighted Multi-Task Objective"]
+        EXTRACT --> LOSS_CALC["L = L_label(y, y_pred) + λ · L_rationale(r, r_pred)"]
+        LOSS_CALC --> GRAD["Backpropagate into Student"]
+    end
+```
+
+### 231.2 Mathematical Formulation of Step-by-Step Distillation
+1. **Multi-Task Objective:** Hsieh et al. (2023) train compact student models on joint prediction of labels $y$ and teacher rationales $r$:
+   $$\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{label}} + \lambda \mathcal{L}_{\text{rationale}}$$
+   $$\mathcal{L}_{\text{label}} = -\sum_{t=1}^{|y|} \log P_\theta(y_t \mid x, y_{<t}), \quad \mathcal{L}_{\text{rationale}} = -\sum_{t=1}^{|r|} \log P_\theta(r_t \mid x, r_{<t})$$
+2. **Data Efficiency:** Enables student models to surpass full-scale teachers with 50% to 80% less training data compared to standard fine-tuning or classical response distillation.
+3. **Benchmark Parity:** A 770M T5 model fine-tuned with rationales outperforms a 540B PaLM teacher model on e-SNLI and ANLI reasoning tasks.
+
+---
+
+## 232. FP8 Mixed-Precision Training: E4M3 vs E5M2 Mechanics
+
+### 232.1 Dual FP8 Precision Topology
+```mermaid
+flowchart TB
+    subgraph Formats["Hopper H100 FP8 Data Formats"]
+        E4M3["E4M3: 1 Sign, 4 Exponent, 3 Mantissa (Max: 448)<br/>→ Higher Precision: Forward Activations & Weights"]
+        E5M2["E5M2: 1 Sign, 5 Exponent, 2 Mantissa (Max: 57344)<br/>→ Wider Dynamic Range: Backward Pass Gradients"]
+    end
+    subgraph GEMM["Tensor Core GEMM Execution"]
+        E4M3 & E5M2 --> ENGINE["NVIDIA Transformer Engine"]
+        ENGINE --> SCALE["Delayed AMAX Scaling: S = MaxFP8 / max(|X|_{t-N:t})"]
+        SCALE --> H100["Native FP8 Tensor Core Execution (2× Throughput over FP16)"]
+    end
+```
+
+### 232.2 Delayed Scaling & Numerical Stability
+1. **Dynamic Scaling Factor:** Micikevicius et al. (2022) prevent underflow/overflow in narrow 8-bit dynamic ranges using per-tensor scale factors $S$:
+   $$x_{\text{fp8}} = \text{clip}\left(\left\lfloor S \cdot x \right\rceil, -V_{\max}, V_{\max}\right)$$
+2. **Delayed AMAX Tracking:** To eliminate costly intra-layer synchronization, scaling factors are updated using the historical absolute maximum over prior iterations:
+   $$S_{t+1} = \frac{\text{Margin} \cdot V_{\max}}{\max_{i \in [t-N, t]} \text{amax}(X_i)}$$
+3. **Training & Inference Efficiency:** Halves memory footprints and doubles compute FLOPS on NVIDIA H100 architectures while matching BF16 loss curves across multi-trillion token pre-training runs.
+
+---
+
+## 233. Prefix-Tuning: Continuous Virtual Keys & Values Adaptation
+
+### 233.1 Prefix-Tuning Layer-Wise Injection Topology
+```mermaid
+flowchart LR
+    subgraph Layers["Every Transformer Attention Layer l"]
+        INP["Layer Input h_l"] --> ATT["Attention Mechanism"]
+        P_K["Trainable Key Prefix P_K ∈ R^{P × d_k}"] --> ATT
+        P_V["Trainable Value Prefix P_V ∈ R^{P × d_v}"] --> ATT
+        K["Base Projected Keys K = W_k h_l (Frozen)"] --> ATT
+        V["Base Projected Values V = W_v h_l (Frozen)"] --> ATT
+        ATT --> OUT["Attention Output h'_l"]
+    end
+```
+
+### 233.2 Mathematical Formulation of Prefix-Tuning
+1. **Virtual Key-Value Prepending:** Li & Liang (2021) keep the base transformer backbone frozen, optimizing task-specific virtual prefix vectors prepended to keys and values across all $L$ layers:
+   $$K_{\text{prefixed}} = [P_K^{(l)}; K^{(l)}], \quad V_{\text{prefixed}} = [P_V^{(l)}; V^{(l)}]$$
+   $$\text{Attn}(Q, K_{\text{prefixed}}, V_{\text{prefixed}}) = \text{Softmax}\left(\frac{Q K_{\text{prefixed}}^\top}{\sqrt{d_k}}\right) V_{\text{prefixed}}$$
+2. **Reparameterization via MLP:** To stabilize optimization, prefixes are initially parameterized through a multilayer perceptron $P = \text{MLP}(E)$, which is discarded post-training so only raw prefix tensors are retained.
+3. **Multi-Tenant Serving:** Tunes only ~0.1% of parameters, enabling low-cost dynamic switching between diverse tasks across batched requests without swapping backbone weights.
+
+---
+
+## 234. Prompt Tuning: Soft Embedding Scale Convergence & Multi-Tenant Serving
+
+### 234.1 Prompt Tuning Parameter Scaling
+```mermaid
+flowchart TD
+    subgraph Architecture["Prompt Tuning Architecture (Lester et al. 2021)"]
+        PROMPT_TOK["Virtual Soft Prompts P ∈ R^{p × d} (Learnable)"] --> CAT["Concatenate [P; E(X)]"]
+        TOKEN_EMB["Input Token Embeddings E(X) (Frozen)"] --> CAT
+        CAT --> FROZEN_LLM["Completely Frozen Transformer Backbone (0.01% Tuned)"]
+        FROZEN_LLM --> OUT["Downstream Task Prediction"]
+    end
+    subgraph ScalingLaw["Scaling Convergence"]
+        SMALL["Small Models (<1B): Prompt Tuning < Model Tuning"] --> BIG["Large Models (10B+): Prompt Tuning ≡ Full Model Tuning"]
+    end
+```
+
+### 234.2 Mathematical Formalization & Ensembling
+1. **Differentiable Input Conditioning:** Optimizes continuous virtual token embeddings $P \in \mathbb{R}^{p \times d_e}$ prepended directly to word embeddings:
+   $$\tilde{X} = [P_1, \dots, P_p, e(x_1), \dots, e(x_T)]$$
+   $$\mathcal{L}(P) = -\sum_{t=1}^T \log P_\theta(y_t \mid P, x, y_{<t})$$
+2. **Scale Invariance:** As model parameter count scales past 10B (e.g., T5-XXL), soft prompt tuning matches full model parameter tuning across diverse NLU benchmarks.
+3. **Prompt Ensembling:** Combining predictions from multiple independently trained soft prompts on the same frozen model yields robust performance under out-of-domain distribution shifts.
+
+---
+
+## 235. QLoRA: NormalFloat4, Double Quantization & Paged Optimizers
+
+### 235.1 QLoRA Memory Architecture
+```mermaid
+flowchart TD
+    subgraph NF4["1. NormalFloat4 (NF4) Quantization"]
+        WEIGHTS["Pre-trained Weights W (Normally Distributed)"] --> QUANTILES["Quantile-Based Quantization: Zero Information Loss"]
+        QUANTILES --> INT4["4-bit NF4 Tensors"]
+    end
+    subgraph DQ["2. Double Quantization (DQ)"]
+        C1["First-Stage Quantization Constants c_1"] --> FP8["Quantize c_1 to 8-bit FP8 constants c_2"]
+        FP8 --> SAVE["Saves 0.37 bits/parameter (3GB on 65B Model)"]
+    end
+    subgraph PAGE["3. Paged Optimizers"]
+        CUDA_UNIFIED["CUDA Unified Memory"] --> PAGING["Page Optimizer States between GPU and CPU during VRAM Spikes"]
+    end
+    INT4 & SAVE & PAGING --> TRAIN["Full 16-bit LoRA Adapters Trained on 4-bit Base (Guanaco 65B on 48GB GPU)"]
+```
+
+### 235.2 Mathematical Mechanics of QLoRA
+1. **NormalFloat (NF4) Data Type:** Dettmers et al. (2023) exploit the empirical normal distribution $W \sim \mathcal{N}(0, \sigma^2)$ of pre-trained parameters, constructing an optimal quantile grid $q_i$:
+   $$q_i = \frac{1}{2} \left(Q_X\left(\frac{i}{2^k}\right) + Q_X\left(\frac{i+1}{2^k}\right)\right)$$
+2. **Double Quantization:** Quantizes quantization constants $c_1$ using 8-bit integers with block size 256, reducing memory footprint from $32/64 = 0.5$ bits/param to $8/64 + 32/(64 \cdot 256) \approx 0.127$ bits/param.
+3. **Lossless Parameter Efficiency:** Gradients backpropagate through 4-bit NF4 weights into 16-bit LoRA adapters without precision degradation, enabling fine-tuning of 65B-parameter models on a single 48GB GPU.
+
+---
+
+## 236. Grouped-Query Attention (GQA): Structural KV Cache Compression
+
+### 236.1 GQA Architectural Spectrum
+```mermaid
+flowchart LR
+    subgraph MHA["Multi-Head Attention (MHA)"]
+        Q1["Q Heads: H"] --- K1["K Heads: H"]
+        K1 --- V1["V Heads: H"]
+    end
+    subgraph GQA["Grouped-Query Attention (GQA)"]
+        Q2["Q Heads: H"] --> G1["Group 1"] & G2["Group G"]
+        G1 --- K2["K Heads: G (e.g., 8)"]
+        G2 --- V2["V Heads: G (e.g., 8)"]
+    end
+    subgraph MQA["Multi-Query Attention (MQA)"]
+        Q3["Q Heads: H"] --- K3["K Head: 1"]
+        K3 --- V3["V Head: 1"]
+    end
+```
+
+### 236.2 Mathematical Formulation & Uptraining
+1. **Head Partitioning:** Ainslie et al. (2023) partition $H$ query heads into $G$ groups, with each group sharing a single key-value projection head ($1 < G < H$):
+   $$\text{group}(i) = \left\lfloor \frac{i \cdot G}{H} \right\rfloor$$
+   $$\text{head}_i = \text{Softmax}\left(\frac{Q_i K_{\text{group}(i)}^\top}{\sqrt{d_k}}\right) V_{\text{group}(i)}$$
+2. **Mean-Pooled Uptraining:** Converts pre-trained MHA checkpoints into GQA by mean-pooling original key-value projection matrices across groups:
+   $$W_K^{\text{GQA}, g} = \frac{G}{H} \sum_{j \in \text{group}(g)} W_K^{\text{MHA}, j}$$
+   Uptraining on ~5% of pre-training tokens fully recovers MHA accuracy.
+3. **Inference Latency Reduction:** Compresses KV-cache memory by a factor of $H/G$ (typically 4×–8×), mitigating bandwidth memory walls during high-throughput autoregressive decoding across Llama 2 (70B), Llama 3, and Mistral.
+
+---
+
+## 237. Best-of-N (BoN) Sampling: Analytical KL Divergence Bounds & Scaling
+
+### 237.1 Best-of-N Inference Topology
+```mermaid
+flowchart TD
+    subgraph Generate["1. Parallel Candidate Generation"]
+        PROMPT["Prompt x"] --> BATCH["Sample N Trajectories: y_1, ..., y_N ~ π_base(· | x)"]
+    end
+    subgraph Score["2. Verification & Selection"]
+        BATCH --> RM["Reward Model / Verifier r(x, y)"]
+        RM --> TOP["Select y* = argmax_{i} r(x, y_i)"]
+    end
+    subgraph Theory["3. Theoretical Guarantees"]
+        TOP --> KL_BOUND["Strict KL Bound: D_KL(π_BoN || π_base) ≤ log(N) - (N - 1)/N"]
+    end
+```
+
+### 237.2 Mathematical Formalization of BoN
+1. **Induced Policy Formulation:** Best-of-N sampling selects the highest scoring response according to verifier $r(x, y)$:
+   $$P_{\text{BoN}}(y \mid x) = N \cdot P_{\text{base}}(y \mid x) \cdot \left(\int_{-\infty}^{r(x, y)} p_r(s \mid x) \, ds\right)^{N-1}$$
+2. **Logarithmic KL Divergence Bound:**
+   $$D_{\text{KL}}\left(\pi_{\text{BoN}} \parallel \pi_{\text{base}}\right) \le \log(N) - \frac{N - 1}{N} < \log(N)$$
+3. **Test-Time Compute Frontier:** Provides a parameter-free method to convert inference FLOPs directly into accuracy gains, establishing an empirical Pareto frontier that rivals RLHF up to the Goodhart limit.
+
+---
+
+## 238. Attention Sinks & StreamingLLM: Window Eviction Mechanics
+
+### 238.1 Attention Sink Phenomenon
+```mermaid
+flowchart TD
+    subgraph Softmax["Softmax Normalization Constraint"]
+        SUM["\sum_j exp(q_i^T k_j) = 1"] --> SURPLUS["Unnecessary Attention Mass Dumped onto Initial Tokens"]
+    end
+    subgraph Eviction["StreamingLLM Hybrid KV Cache Eviction"]
+        CACHE["KV Cache Buffer"] --> SINK["Attention Sink: First k Tokens (k = 4) [Preserved Permanently]"]
+        CACHE --> ROLLING["Rolling Local Cache: Last W Tokens [Sliding Window]"]
+        DISCARD["Intermediate Tokens [Safely Evicted with Zero Perplexity Spike]"]
+    end
+```
+
+### 238.2 Mathematical Mechanics of StreamingLLM
+1. **Attention Sink Discovery:** Xiao et al. (2024) demonstrated that autoregressive models allocate massive attention weights to the first tokens ($t \le 4$) regardless of semantic relevance, purely to satisfy softmax normalization.
+2. **Hybrid Cache Eviction Policy:** Evicts intermediate tokens while preserving sink tokens and a local context window:
+   $$\mathcal{M}_t = \{1, 2, \dots, k\} \cup \{t - W + 1, \dots, t\}$$
+3. **Infinite Streaming Generation:** Maintains stable, non-exploding perplexity across sequences exceeding 4,000,000 tokens on LLaMA-2, MPT, and Falcon without requiring fine-tuning, achieving up to 22.2× inference speedups over recomputation.
+
+---
+
+## 239. Tree of Thoughts (ToT): Deliberate Tree Search over Thought Units
+
+### 239.1 ToT Deliberate Search Topology
+```mermaid
+flowchart TD
+    subgraph Root["Problem State s_0"]
+        S0["Root State: Problem Description"]
+    end
+    subgraph Branch["Candidate Thought Expansion"]
+        S0 --> T1["Thought Step 1A"] & T2["Thought Step 1B"] & T3["Thought Step 1C"]
+    end
+    subgraph Evaluate["Self-Evaluation Heuristic V(s)"]
+        T1 --> V1["V(s) = Sure (+1)"]
+        T2 --> V2["V(s) = Impossible (-1) [Pruned]"]
+        T3 --> V3["V(s) = Maybe (0)"]
+    end
+    subgraph Search["Exploration Algorithms"]
+        V1 --> BFS["Breadth-First Search (BFS) / Depth-First Search (DFS)"]
+        V3 --> BFS
+        BFS --> BACK["Backtracking on Dead Ends"]
+    end
+```
+
+### 239.2 Mathematical Formulation of ToT
+1. **Thought Generation & Evaluation:** Yao et al. (2024) formulate reasoning as search over states $s = [x, z_{1 \dots i}]$:
+   $$z^{(j)} \sim \pi_\theta(\cdot \mid s), \quad j \in \{1, \dots, k\}$$
+   $$V(s) = \mathbb{E}\left[\text{Value}(s) \mid \text{Self-Evaluation Prompt}\right]$$
+2. **Systematic Search Algorithms:** Uses BFS for multi-alternative horizon planning or DFS for deep constraint satisfaction with backtracking.
+3. **Problem-Solving Leap:** On the Game of 24 benchmark, ToT elevated GPT-4 success rates from 4% (standard Chain-of-Thought) to 74% via lookahead search and heuristic branch pruning.
+
+---
+
+## 240. Skeleton-of-Thought (SoT): Structural Outline & Parallel Decoding
+
+### 240.1 SoT Two-Phase Parallel Execution
+```mermaid
+flowchart TD
+    subgraph Phase1["Phase 1: Skeleton Generation"]
+        PROMPT["User Query x"] --> SKEL_PROMPT["Skeleton Formulation Prompt"]
+        SKEL_PROMPT --> OUTLINE["Outline Skeleton: [Point 1, Point 2, ..., Point B]"]
+    end
+    subgraph Phase2["Phase 2: Concurrent Batched Expansion"]
+        OUTLINE --> B1["Worker 1: Expand Point 1"]
+        OUTLINE --> B2["Worker 2: Expand Point 2"]
+        OUTLINE --> BN["Worker B: Expand Point B"]
+    end
+    subgraph Phase3["Phase 3: Final Synthesis"]
+        B1 & B2 & BN --> CONCAT["Concatenate into Coherent Final Response"]
+    end
+```
+
+### 240.2 Mathematical Latency Mechanics
+1. **Parallel Speedup Formulation:** Ning et al. (2024) decompose generation into skeleton length $T_{\text{skel}}$ and parallel expansion length $T_{\text{point}}$:
+   $$\text{Speedup} = \frac{T_{\text{sequential}}}{T_{\text{skel}} + \max_{b} T_{\text{point}}^{(b)}} \approx \frac{\sum_b T_b}{T_{\text{skel}} + \max_b T_b}$$
+2. **Selective Routing (SoT-R):** To prevent logical degradation on inherently serial tasks (e.g., mathematical deduction), a router classifier sends decomposable topics to SoT and linear tasks to sequential decoding:
+   $$\mathcal{R}(x) = \sigma(w_r^\top e(x)) \implies \begin{cases} \text{Execute SoT} & \text{if } \mathcal{R}(x) \ge 0.5 \\ \text{Sequential CoT} & \text{otherwise} \end{cases}$$
+3. **Empirical Acceleration:** Delivers up to 2.39× wall-clock decoding speedups across 12 modern LLMs with zero model fine-tuning.
+
+---
+
+## 241. Semantic Routing: Vector-Based Intent Dispatch for Multi-Agent Architectures
+
+### 241.1 Vector Dispatch Topology
+```mermaid
+flowchart TD
+    subgraph Ingress["Query Embedding"]
+        QUERY["User Ingress Query x"] --> EMB["Bi-Encoder Embedding: e(x) = Enc(x)"]
+    end
+    subgraph Routes["Cosine Route Exemplar Matcher"]
+        EMB --> MATCH["Compute Similarity: sim(e(x), r_i) = (e(x) · r_i) / (||e|| ||r_i||)"]
+        MATCH --> CHECK{"max_i sim(e, r_i) ≥ Threshold τ_i?"}
+    end
+    subgraph Dispatch["Dynamic Dispatch"]
+        CHECK --> |"Pass"| AGENT["Specialized Domain Agent / Tool Schema"]
+        CHECK --> |"Fail"| FALLBACK["General Frontier LLM / Clarification Pipeline"]
+    end
+```
+
+### 241.2 Mathematical Mechanics of Semantic Routing
+1. **Vector-Space Intent Partitioning:** Precomputes centroid embeddings for canonical route exemplars $\{r_{i, j}\}_{j=1}^{M_i}$:
+   $$\bar{r}_i = \frac{1}{M_i} \sum_{j=1}^{M_i} \frac{\text{Enc}(r_{i, j})}{\|\text{Enc}(r_{i, j})\|_2}$$
+   $$\text{Route}^*(x) = \arg\max_i \left(\frac{\text{Enc}(x)^\top \bar{r}_i}{\|\text{Enc}(x)\|_2}\right)$$
+2. **Dynamic Confidence Fallback:** Queries falling below similarity threshold $\tau_i$ automatically trigger safe fallback paths, preventing prompt misdirection.
+3. **Sub-Millisecond Latency:** Bypasses slow generative routing passes, dispatching queries to specialized agents in under 2 milliseconds.
+
+---
+
+## 242. Graph of Thoughts (GoT) & Step-Back Prompting: Non-Linear Reasoning Topologies
+
+### 242.1 GoT Arbitrary DAG & Step-Back Abstraction Flow
+```mermaid
+flowchart TD
+    subgraph GoT["Graph of Thoughts (GoT) Topology"]
+        GEN_T["Thought Generation: v_1, v_2"] --> AGG["Aggregation: Merge(v_1, v_2) → v_3"]
+        AGG --> REFINE["Refinement Loop: Refine(v_3) → v'_3"]
+        REFINE --> EVAL_G["Graph State Scoring"]
+    end
+    subgraph StepBack["Step-Back Prompting (Zheng et al. 2024)"]
+        QUERY_SB["Specific Question: Calculation or Detail"] --> SB_Q["Step-Back Question: Underlying Physical/Math Principle"]
+        SB_Q --> PRINCIPLE["Derived First-Principle Abstraction"]
+        PRINCIPLE & QUERY_SB --> GROUNDED["Grounded Final Deduction"]
+    end
+```
+
+### 242.2 Formal Mechanics
+1. **Arbitrary Thought Graphs (GoT):** Besta et al. (ETH Zurich, 2024) model thoughts as vertices $V$ and directed dependencies as edges $E$ in a graph $G = (V, E)$. Enables transformation operations:
+   - **Generation:** $v' \sim \mathcal{T}_{\text{gen}}(v)$
+   - **Aggregation:** $v_{\text{merged}} \sim \mathcal{T}_{\text{agg}}(v_1, \dots, v_k)$
+   - **Refinement:** $v^{(t+1)} \sim \mathcal{T}_{\text{refine}}(v^{(t)})$
+2. **Step-Back First-Principles Conditioning:** Zheng et al. (2024) prevent hallucination on complex STEM tasks by prompting models to derive abstract principles prior to specific problem resolution:
+   $$x_{\text{abstract}} \sim \pi_\theta(\cdot \mid \text{"What is the underlying general principle behind: "}, x)$$
+   $$y \sim \pi_\theta(\cdot \mid x, x_{\text{abstract}})$$
+3. **Empirical Performance:** GoT improves sorting accuracy by 62% over Tree of Thoughts while reducing costs by 31%. Step-Back Prompting boosts PaLM-2L accuracy on MMLU Physics and Chemistry by 7–11% and TimeQA by 27%.
 
 
 
