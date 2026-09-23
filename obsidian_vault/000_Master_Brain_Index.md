@@ -177,6 +177,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/frontier_research_pivot_2026_09_23_part3.md|Frontier Research Pivot 2026 09 23 Part3]]
 - [[raw_research/snippets/frontier_research_pivot_2026_09_23_part4.md|Frontier Research Pivot 2026 09 23 Part4]]
 - [[raw_research/snippets/frontier_research_pivot_2026_09_23_part5.md|Frontier Research Pivot 2026 09 23 Part5]]
+- [[raw_research/snippets/frontier_research_pivot_2026_09_23_part6.md|Frontier Research Pivot 2026 09 23 Part6]]
 - [[raw_research/snippets/function_vectors_task_geometry.md|Function Vectors Task Geometry]]
 - [[raw_research/snippets/g_eval_framework.md|G Eval Framework]]
 - [[raw_research/snippets/gated_linear_attention_transformers.md|Gated Linear Attention Transformers]]
