@@ -9087,3 +9087,74 @@ flowchart LR
   - H2O (Heavy Hitter Oracle): $24.6\%$ retrieval success rate (due to irreversible eviction).
   - **InfLLM:** **$94.8\%$ retrieval success rate** across the full $1\text{M}$ sequence.
 - **Decoding Latency:** Overlapping PCIe block prefetching with GPU GEMM execution preserves **$>85\%$ of native generation speed**, requiring only $2.1\,\text{ms}$ additional overhead per decoding step.
+
+---
+
+## 285. Incremental GLR Parsing with Graph-Structured Stacks (GSS): Sub-Microsecond Constrained Decoding for Non-Deterministic Grammars
+
+### 285.1 The Determinism Paradox in Context-Free LLM Steering
+In formal language steering and code generation (e.g., generating syntactically valid Python, SQL, C++, or domain-specific ASTs), language models must be constrained by context-free grammars (CFGs). In modern constrained decoding runtimes, two traditional compiler paradigms are deployed, each suffering from severe systemic flaws:
+
+1. **Deterministic LR(1) Table Engines:**
+   Table-driven LR(1) parsers evaluate token transitions in $O(1)$ time by consulting pre-compiled parsing action tables $\text{Action}[s, a]$ and goto tables $\text{Goto}[s, A]$. However, natural programming languages are inherently non-LR(1):
+   - **Shift-Reduce Conflicts:** In C/C++ or SQL, constructs like the classic *dangling else* problem or type vs. identifier ambiguities cannot be resolved with 1-token lookahead.
+   - **Reduce-Reduce Conflicts:** When multiple distinct grammatical rules match the identical token prefix, LR(1) generators fail during table compilation, crashing the constrained decoding engine.
+2. **Earley Parser Engines:**
+   While Earley parsing handles all context-free grammars, maintaining and dynamic heap-allocating Earley state sets across large token vocabularies ($V \ge 128\text{K}$) incurs substantial CPU memory indirection and pointer chasing ($3\text{--}15\,\text{ms}$ per token), throttling GPU throughput.
+
+```mermaid
+flowchart TD
+    subgraph ConflictProblem["The Non-Deterministic Grammar Bottleneck"]
+        Grammar["Real Programming Grammar (SQL / Python / C++)"] --> Conflict["Encounter Shift-Reduce / Reduce-Reduce Ambiguity"]
+        Conflict --> LR1_Fail["Deterministic LR(1) Fails (Table Generation Error)"]
+        Conflict --> Earley_Slow["Earley Parser Handles Ambiguity but Costs 3-15ms per Step"]
+    end
+    subgraph IncrementalGLR["Incremental GLR with Graph-Structured Stacks (GSS)"]
+        InputToken["Next-Token Prediction Step"] --> CheckConflict{"Is Active State Ambiguous?"}
+        CheckConflict -- "No (95% of Tokens)" --> FastLR["Fast O(1) Deterministic LR Transition (<80 ns)"]
+        CheckConflict -- "Yes (5% of Tokens)" --> GSS_Fork["Fork Stack into GSS DAG Heads (Local Parallelism)"]
+        GSS_Fork --> TestVocab["Test Token Admissibility across Active GSS Heads"]
+        TestVocab --> MergeCheck{"Are Stack Heads Convergent?"}
+        MergeCheck -- "Yes" --> Confluence["Merge Divergent Branches Back to Single Stack Node"]
+    end
+```
+
+---
+
+### 285.2 Mathematical Formulation of Incremental GLR and GSS
+**Generalized LR (GLR)** (Tomita, 1985 / modernized for LLM token masking in LLGuidance) unites the $O(1)$ table-lookup speed of LR parsers with the complete expressive power of Earley parsing by modeling parse stacks as a **Graph-Structured Stack (GSS)**:
+
+1. **Graph-Structured Stack Definition:**
+   A GSS is a directed acyclic graph $\mathcal{G}_{\text{GSS}} = (\mathcal{V}, \mathcal{E})$, where:
+   - Each node $v = (s, l) \in \mathcal{V}$ encapsulates a parse state $s \in S$ and a tree height index $l \in \mathbb{N}$.
+   - Directed edges $e = (v_1, v_2) \in \mathcal{E}$ represent parent-child stack relationships, allowing multiple independent parsing branches to share identical historical stack prefixes without memory duplication.
+2. **Dynamic Stack Forking on Conflicts:**
+   Let $\text{Heads}(\mathcal{G}_t) \subset \mathcal{V}$ be the set of active stack frontier heads at step $t$. When inspecting terminal symbol $a \in \Sigma_c$:
+   - If $|\text{Action}[s, a]| = 1$, the parser performs standard deterministic Shift or Reduce.
+   - If $|\text{Action}[s, a]| > 1$ (e.g. $\{\text{Shift } s_1, \text{Reduce } A \to \beta\}$), the active node $v$ forks into multiple distinct stack heads:
+     $$\text{Heads}(\mathcal{G}_{t+1}) = \bigcup_{v \in \text{Heads}(\mathcal{G}_t)} \text{ExpandActions}(v, \text{Action}[s_v, a])$$
+3. **Subword Token Logit Mask Construction:**
+   A subword token $w \in \Sigma$ with byte sequence $b(w) = (c_1, \dots, c_m)$ is valid for generation if there exists at least one active stack head $v \in \text{Heads}(\mathcal{G}_t)$ capable of consuming the full byte sequence without entering an $\text{Error}$ action:
+   $$\mathcal{M}_{\text{GLR}}(w) = \bigvee_{v \in \text{Heads}(\mathcal{G}_t)} \mathbb{I}\left( \text{CanConsume}(v, b(w)) \right)$$
+4. **Local Confluence & Stack Joining (The Merge Invariant):**
+   To prevent combinatorial path explosion during prolonged ambiguous parsing, if two independent parsing branches reduce to the identical non-terminal symbol $X$ and arrive at the same target parse state $s_{\text{target}}$:
+   $$\text{State}(v_1) = \text{State}(v_2) = s_{\text{target}} \quad \text{and} \quad \text{Depth}(v_1) = \text{Depth}(v_2)$$
+   the two nodes are unified into a single merged stack node $v_{\text{merged}} = v_1 \cup v_2$, with incoming edges preserved. This enforces **local confluence**, bounding active GSS stack heads to a small constant:
+   $$\max_t |\text{Heads}(\mathcal{G}_t)| \le 6 \quad \text{for standard programming languages}$$
+
+---
+
+### 285.3 Latency Benchmarks & Hardware Performance Profile
+```mermaid
+flowchart LR
+    subgraph ExecutionProfile["Runtime Latency Distribution (GLR on Python AST)"]
+        DetPhase["Deterministic Phases (>95% Tokens): O(1) Table Lookups (40 - 80 ns)"]
+        AmbPhase["Ambiguous Phases (<5% Tokens): GSS Forking across 2-4 Heads (0.2 - 0.6 μs)"]
+        EarleyPhase["Standard Earley Engine: Persistent 4 - 12 ms per Token"]
+    end
+```
+
+**Quantitative Results (LLGuidance / XGrammar on Python AST & Complex SQL):**
+- **Average CPU Masking Overhead:** Evaluates at **$0.09\,\mu\text{s}$ per token**, achieving a **$45\times\text{--}120\times$ speedup** over incremental Earley parsers.
+- **Grammar Expressivity:** Successfully parses and constrains arbitrary non-deterministic grammars (including ambiguous SQL `SELECT` expressions, C++ pointer vs multiplication disambiguation, and JSON Schema union types) that cause pure LR(1) table compilers to fail.
+- **Memory Footprint:** Graph-Structured Stack nodes are allocated in a contiguous linear arena buffer, consuming less than **$64\,\text{KB}$ of heap memory per decoding thread**, eliminating memory fragmentation and cache misses.

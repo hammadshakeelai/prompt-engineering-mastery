@@ -198,6 +198,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/icl_theory_ext.md|Icl Theory Ext]]
 - [[raw_research/snippets/implicit_gradient_descent_icl.md|Implicit Gradient Descent Icl]]
 - [[raw_research/snippets/incremental_earley_parser_constrained_decoding.md|Incremental Earley Parser Constrained Decoding]]
+- [[raw_research/snippets/incremental_glr_graph_structured_stack_decoding.md|Incremental Glr Graph Structured Stack Decoding]]
 - [[raw_research/snippets/induction_circuit_phase_change.md|Induction Circuit Phase Change]]
 - [[raw_research/snippets/infini_attention_compressive_memory.md|Infini Attention Compressive Memory]]
 - [[raw_research/snippets/infllm_dynamic_memory_units_kv_paging.md|Infllm Dynamic Memory Units Kv Paging]]
