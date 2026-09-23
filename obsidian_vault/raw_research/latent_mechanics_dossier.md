@@ -1391,3 +1391,77 @@ During autoregressive decoding, the active query $q_t \in \mathbb{R}^d$ is also 
    Execute MIPS across PQ codes to retrieve the top-$\kappa$ highest-affinity tokens ($< 10\%$ of context). Only the retrieved Value states $V_{\text{top}}$ are fetched from memory, slashing decoding memory bandwidth consumption by **$70\%\text{--}85\%$**.
 - **Empirical Accuracy:** Achieves a **$+4.60\%$ improvement** on InfiniteBench long-context evaluation over token-eviction baselines while sustaining constant-time attention query latency across $128\text{k}\text{--}1\text{M}$ contexts.
 
+## 52. Autonomous Reasoning Emergence & The "Aha Moment" (DeepSeek-R1-Zero & DeepSeek-R1) (Guo et al., 2025 / arXiv:2501.12948)
+
+### 52.1 Pure Reinforcement Learning from Base Models (R1-Zero)
+Prior reasoning paradigms assumed that eliciting high-quality step-by-step thinking required extensive human-curated Supervised Fine-Tuning (SFT) data to establish chain-of-thought formatting.
+DeepSeek-AI (*DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning*, arXiv:2501.12948) demonstrated that sophisticated reasoning capabilities can emerge **spontaneously from a base language model** (DeepSeek-V3-Base) trained strictly via large-scale Reinforcement Learning without preliminary SFT.
+
+```mermaid
+flowchart TD
+    Base["DeepSeek-V3-Base (Un-tuned)"] --> GRPO["Large-Scale GRPO (No Value Critic Network)"]
+    GRPO --> RewardRule["Verifiable Rewards (Math Compilers + Unit Test Verifiers)"]
+    RewardRule --> Emergence["Spontaneous Reasoning Behaviors Emerge"]
+    Emergence --> ScaleLen["Response Length Expands (700 -> 10,000+ Tokens)"]
+    Emergence --> Aha["The 'Aha Moment': Dynamic Backtracking & Self-Correction"]
+    Emergence --> Distill["Distillation to Dense Models (Qwen-2.5 1.5B - 32B)"]
+```
+
+### 52.2 Algorithmic Dynamics: GRPO with Verifiable Rules
+DeepSeek-R1-Zero optimizes the base model using **Group Relative Policy Optimization (GRPO)**, eliminating the memory and compute overhead of maintaining an auxiliary value critic network:
+1. **Sampling Group Trajectories:** For question $q$, sample a group of $G$ candidate outputs:
+   $$\mathcal{O} = \{o_1, o_2, \dots, o_G\}, \quad o_i \sim \pi_{	heta_{	ext{old}}}(\cdot \mid q)$$
+2. **Normalized Relative Advantage:**
+   Compute the advantage $\hat{A}_i$ by normalizing rewards against the group mean and standard deviation:
+   $$\hat{A}_i = rac{r_i - 	ext{mean}(\{r_1, \dots, r_G\})}{	ext{std}(\{r_1, \dots, r_G\}) + \epsilon}$$
+3. **Rule-Based Objective Function:**
+   The reward $r_i = r_{	ext{acc}} + r_{	ext{format}}$ is strictly non-neural:
+   - **Accuracy Reward ($r_{	ext{acc}}$):** Evaluates mathematical derivations via deterministic CAS compilers (SymPy) or code via isolated sandbox test execution.
+   - **Format Reward ($r_{	ext{format}}$):** Enforces enclosing reasoning traces within `<think> ... </think>` tags.
+   - No Process Reward Models (PRMs) or human preference models are utilized during R1-Zero training.
+
+### 52.3 The "Aha Moment" & Emergent Cognitive Topologies
+During large-scale RL training, two spontaneous phase transitions occur:
+1. **Autonomous Test-Time Compute Scaling:** Without any length reward incentives, the model autonomously scales its output length from $\sim 700$ tokens to over $10,000$ tokens, allocating exponential compute to difficult problems.
+2. **Emergence of Self-Correction & Verification:** The model spontaneously invents dynamic backtracking. Upon identifying contradictory intermediate states, it generates internal monologue transitions:
+   `"Wait, let me double check that..."`, `"Wait, this contradicts the previous lemma. Let me re-evaluate."`
+   It restarts derivations, explores alternative algebraic paths, and independently verifies solutions before emitting final answers.
+
+### 52.4 Full R1 Pipeline & Dense Distillation
+To resolve R1-Zero's formatting issues (language mixing, poor readability), DeepSeek-R1 introduces a multi-stage pipeline:
+- **Cold-Start SFT:** Fine-tunes V3-Base on thousands of clean, readable long-CoT exemplars.
+- **Reasoning-Oriented RL:** Large-scale GRPO with verifiable rules.
+- **Rejection Sampling & General SFT:** Synthesizes an 800k-sample dataset combining verified reasoning rollouts with human preference chat.
+- **Distillation into Small Models:** Directly fine-tunes open dense architectures (Qwen-2.5 1.5B, 7B, 14B, 32B; LLaMA-3.1 8B, 70B), demonstrating that **reasoning behavior can be distilled cleanly** into small models, enabling DeepSeek-R1-Distill-Qwen-32B to score **$72.6\%$ on AIME 2024 and $94.3\%$ on MATH-500**, surpassing proprietary frontier baselines.
+
+---
+
+## 53. In-Context Alignment Degradation & Many-Shot Jailbreak Dynamics (Anil et al., Anthropic 2024)
+
+### 53.1 Long-Context Windows as an Attack Surface
+The expansion of LLM context windows to $128\text{k}\text{--}2\text{M}+$ tokens introduces a fundamental security vulnerability: **Many-Shot Jailbreaking (MSJ)** (Cem Anil et al., Anthropic / NeurIPS 2024).
+Unlike traditional prompt injection or gradient-based token optimization (e.g., GCG) which rely on adversarial surface perturbations, MSJ exploits the model's core **In-Context Learning (ICL) engine** to systematically dismantle post-hoc safety alignment (RLHF/DPO) using hundreds of benignly structured demonstration pairs.
+
+### 53.2 Power-Law Scaling of Jailbreak Compliance
+Let $k$ denote the number of in-context demonstration shots formatted as synthetic dialogue turns where an AI assistant compliantly answers restricted queries:
+$$\mathcal{D}_{1:k} = \{(x_1, y_1), (x_2, y_2), \dots, (x_k, y_k)\}$$
+
+1. **Empirical Power-Law Relation:**
+   The probability of model compliance $P(\text{comply} \mid x_{\text{test}}, \mathcal{D}_{1:k})$ follows an empirical power-law curve with respect to demonstration count $k$:
+   $$P(\text{comply} \mid k) \propto k^\gamma, \quad \gamma > 0$$
+   Across diverse frontier closed-weight models (Claude 2/3, GPT-3.5/4, Gemini 1.0/1.5, LLaMA-2), compliance rates transition from near $0\%$ at $k \le 5$ shots to **$> 80\%\text{--}95\%$ at $k \ge 128\text{--}256$ shots**.
+
+2. **Bayesian Posterior Shift Formulation:**
+   In-context learning functions as implicit Bayesian inference over latent task variables $\theta \in \Theta$:
+   $$P(y \mid x, \mathcal{D}_{1:k}) = \int_\Theta P(y \mid x, \theta) P(\theta \mid \mathcal{D}_{1:k}) d\theta$$
+   where the posterior probability is:
+   $$P(\theta \mid \mathcal{D}_{1:k}) \propto P(\theta) \prod_{i=1}^k P(y_i \mid x_i, \theta)$$
+   Although safety fine-tuning imposes a strong prior $P(\theta)$ that suppresses harmful behavior, the accumulated likelihood $\prod_{i=1}^k P(y_i \mid x_i, \theta)$ scales exponentially with $k$, overwhelming the safety prior and shifting probability mass toward the unaligned compliance mode.
+
+### 53.3 Mechanistic Circuit Inversion
+Mechanistically, many-shot demonstrations saturate the model's **Induction Circuits** (Section 38). The repeated sequence of compliant pattern completions forces induction heads to write compliance tokens into the residual stream, overpowering the 1D refusal direction (Section 44) without altering underlying weight tensors.
+
+### 53.4 Algorithmic Mitigations
+1. **In-Context System Prompt Reinforcement:** Injecting constitutional safety constraints *after* the demonstrations (adjacent to the test query) exploits transformer recency bias, reducing compliance by $40\%\text{--}60\%$.
+2. **Supervised Many-Shot Alignment (SMSA):** Training the model on long-context sequences containing hundreds of refusal exemplars, reinforcing the refusal prior against long-context demonstration fatigue.
+
