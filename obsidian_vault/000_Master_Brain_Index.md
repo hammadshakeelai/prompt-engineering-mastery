@@ -421,6 +421,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/titans_neural_long_term_memory.md|Titans Neural Long Term Memory]]
 - [[raw_research/snippets/token_equivalence_class_partitioning_decoding.md|Token Equivalence Class Partitioning Decoding]]
 - [[raw_research/snippets/token_healing_boundary_alignment.md|Token Healing Boundary Alignment]]
+- [[raw_research/snippets/token_healing_subword_boundary_alignment.md|Token Healing Subword Boundary Alignment]]
 - [[raw_research/snippets/token_healing_subword_boundary_synchronization.md|Token Healing Subword Boundary Synchronization]]
 - [[raw_research/snippets/token_smuggling_evasion.md|Token Smuggling Evasion]]
 - [[raw_research/snippets/tool_use.md|Tool Use]]
