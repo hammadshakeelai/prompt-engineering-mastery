@@ -5362,6 +5362,36 @@ flowchart TD
    $$M_{\text{vocab}} = \text{BitwiseAnd}\left(\text{PrecomputedStateMask}(s), \text{VocabularyIndex}\right)$$
 3. **Cross-Engine Portability:** Operates natively with zero copy across vLLM, SGLang, TensorRT-LLM, and MLC-LLM, achieving up to **$10\times$ higher token serving throughput** and reducing per-token grammar overhead from milliseconds to microseconds.
 
+---
+
+## 187. Mechanistic Steering Topologies: Contrastive Activation Addition (CAA) (Rimsky et al., 2024)
+
+### 187.1 Isolating Latent Vectors from Paired Behavioral Prompts
+While fine-tuning alters model weights globally and risks catastrophic forgetting, activation engineering modulates behavior dynamically during inference. Nina Rimsky et al. (*Steering Llama 2 via Contrastive Activation Addition*, 2024 / arXiv:2312.06681) introduce **Contrastive Activation Addition (CAA)**, establishing a mathematically grounded protocol for isolating and injecting behavioral vectors directly into intermediate residual streams:
+
+```mermaid
+flowchart TD
+    Dataset["Contrastive Prompt Pairs: (p_pos, p_neg) [e.g., Sycophancy vs Truthfulness]"] --> Forward["Forward Pass through Frozen LLM"]
+    Forward --> Extract["Extract Hidden Activations: h_l(p_pos), h_l(p_neg) at Layer l"]
+    Extract --> Difference["Compute Difference Vector: Delta h_l^{(i)} = h_l(p_pos^{(i)}) - h_l(p_neg^{(i)})"]
+    Difference --> MeanShift["Mean Difference Steering Vector: v_l = (1/N) sum_{i=1}^N Delta h_l^{(i)}"]
+    MeanShift --> Intervene["Inference-Time Intervention: h_l'(x) = h_l(x) + alpha * v_l"]
+    Intervene --> BehavioralShift["Continuous Linear Behavioral Steering (Zero Parameter Updates)"]
+```
+
+### 187.2 Mathematical Mechanics of Activation Addition
+1. **Contrastive Dataset Construction:** Pairs $N$ prompts differing along a single target axis (e.g. sycophantic agreement vs. factual resistance, or hallucination vs. calibration):
+   $$\mathcal{D}_{\text{contrast}} = \left\{\left(p_{\text{pos}}^{(i)}, p_{\text{neg}}^{(i)}\right)\right\}_{i=1}^N$$
+2. **Mean Difference Extraction:** The steering vector $v_l \in \mathbb{R}^d$ at layer $l$ is calculated by averaging activation deltas at the terminal prompt token position:
+   $$v_l = \frac{1}{N} \sum_{i=1}^N \left(h_l\left(p_{\text{pos}}^{(i)}\right) - h_l\left(p_{\text{neg}}^{(i)}\right)\right)$$
+3. **Inference Intervention:** During subsequent unconstrained generation on unseen test prompts $x$, the steering vector is injected into the residual stream at target layer $l$:
+   $$h_l'(x_t) = h_l(x_t) + \alpha \cdot v_l$$
+   where $\alpha \in \mathbb{R}$ acts as a continuous steering multiplier ($\alpha > 0$ amplifies the behavior, $\alpha < 0$ suppresses it).
+4. **Empirical Steering Properties:**
+   - **Layer Specialization:** Middle-to-late transformer layers ($\sim 40\%\text{--}70\%$ model depth) exhibit the highest steering efficacy, where abstract semantic representations are fully formed prior to token unembedding.
+   - **Linear Superposition:** Multiple orthogonal behavioral vectors (e.g., $+ \alpha_1 v_{\text{honesty}} + \alpha_2 v_{\text{humor}} - \alpha_3 v_{\text{sycophancy}}$) can be composed concurrently in the residual stream without mutual interference.
+
+
 
 
 

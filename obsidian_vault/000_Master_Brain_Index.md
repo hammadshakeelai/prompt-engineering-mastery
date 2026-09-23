@@ -115,6 +115,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/contextual_calibration_few_shot_icl.md|Contextual Calibration Few Shot Icl]]
 - [[raw_research/snippets/contextual_retrieval.md|Contextual Retrieval]]
 - [[raw_research/snippets/continuous_batching_orca.md|Continuous Batching Orca]]
+- [[raw_research/snippets/contrastive_activation_addition_caa.md|Contrastive Activation Addition Caa]]
 - [[raw_research/snippets/contrastive_cot.md|Contrastive Cot]]
 - [[raw_research/snippets/contrastive_cot_pairs.md|Contrastive Cot Pairs]]
 - [[raw_research/snippets/contrastive_decoding_anti_degeneration.md|Contrastive Decoding Anti Degeneration]]
