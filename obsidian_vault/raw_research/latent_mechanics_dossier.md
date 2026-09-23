@@ -11482,3 +11482,110 @@ flowchart LR
 **Key Takeaways:**
 - **Full JSON Expressivity:** Moving from DFAs to Register-Augmented PDAs unlocks recursive schema validation, nested array cardinality constraints, and schema union polymorphism with zero structural degradation.
 - **GPU-Native Execution:** Compiling pushdown transitions directly into CUDA tensor kernels (Gram2Token) brings masking overhead down to **$12\,\mu\text{s}$**, eliminating the host-device synchronization barrier entirely.
+
+---
+
+## 310. Direct Nash Optimization (DNO) & Online Iterative DPO: Game-Theoretic Alignment Beyond Bradley-Terry Transitivity (Rosset et al., ICML 2024)
+
+### 310.1 The Collapse of the Bradley-Terry Scalar Reward Assumption
+Most post-training preference alignment algorithms (RLHF with PPO, standard DPO, IPO, and SimPO) rely on the foundational **Bradley-Terry (BT) preference model**:
+$$P(y_1 \succ y_2 \mid x) = \sigma\left( r(x, y_1) - r(x, y_2) \right)$$
+which presumes that every response $y$ can be mapped to an absolute scalar score $r(x, y) \in \mathbb{R}$.
+
+**The Transitivity Fallacy in Human & Machine Judgment:**
+In real-world evaluation, human preferences and multi-criteria trade-offs are frequently **non-transitive and cyclic** (analogous to the Condorcet paradox or Rock-Paper-Scissors):
+$$y_A \succ y_B \quad \text{and} \quad y_B \succ y_C \quad \text{yet} \quad y_C \succ y_A$$
+- Completion $A$ may beat $B$ on conciseness;
+- Completion $B$ may beat $C$ on formal correctness;
+- Completion $C$ may beat $A$ on creative nuance.
+Under the Bradley-Terry assumption, cyclic preferences cannot exist because scalar numbers are strictly ordered: $r(A) > r(B) > r(C) \implies r(A) > r(C)$. When forced into a scalar reward model, DPO policies suffer from **reward misspecification**, policy cycling, and intransitive collapse.
+
+```mermaid
+flowchart TD
+    subgraph BradleyTerryLimit["The Bradley-Terry Scalar Collapse"]
+        HumanPref["Human Multi-Criteria Evaluation (Cyclic: A > B, B > C, C > A)"] --> Forcing["Forced into Scalar Reward: r(A) > r(B) > r(C)"]
+        Forcing --> Contradiction["Mathematical Contradiction: r(C) > r(A) Impossible in R"]
+        Contradiction --> Misalign["Policy Cycling, Reward Hacking & Overfitting"]
+    end
+    subgraph GameTheoreticDNO["Direct Nash Optimization (DNO - ICML 2024)"]
+        PairGame["Two-Player Symmetric Zero-Sum Game: max_π1 min_π2 E[P(y1 > y2)]"]
+        PairGame --> NashEquilibrium["Nash Equilibrium Policy π*: Unexploitable by ANY Alternative"]
+        NashEquilibrium --> OnPolicyIter["On-Policy Iterative Generation: Samples from Current Policy π_θk"]
+        OnPolicyIter --> MonotonicSuper["Monotonic Convergence Across General Non-Transitive Preferences"]
+    end
+```
+
+---
+
+### 310.2 Direct Nash Optimization (DNO) Formulation
+**Direct Nash Optimization** (Rosset et al., ICML 2024) reformulates language model alignment from single-agent scalar reward maximization into a **two-player symmetric zero-sum game**:
+
+Let $\mathcal{P}(y_1 \succ y_2 \mid x) \in [0, 1]$ be a general preference oracle (human jury or multi-agent judge). Player 1 generates response $y_1 \sim \pi_1(\cdot \mid x)$ and Player 2 generates $y_2 \sim \pi_2(\cdot \mid x)$. The payoff to Player 1 is the win advantage:
+$$M(\pi_1, \pi_2) \triangleq \mathbb{E}_{x \sim \mathcal{D}, y_1 \sim \pi_1, y_2 \sim \pi_2} \left[ \mathcal{P}(y_1 \succ y_2 \mid x) - \frac{1}{2} \right]$$
+
+1. **The Regularized Minimax Objective:**
+   Subject to KL-divergence penalties relative to the reference prior $\pi_{\text{ref}}$:
+   $$\max_{\pi_1} \min_{\pi_2} \left\{ M(\pi_1, \pi_2) - \tau \mathbb{D}_{\text{KL}}(\pi_1 \,||\, \pi_{\text{ref}}) + \tau \mathbb{D}_{\text{KL}}(\pi_2 \,||\, \pi_{\text{ref}}) \right\}$$
+2. **The Nash Equilibrium Policy $\pi^\star$:**
+   By von Neumann’s Minimax Theorem, there exists a unique symmetric **Nash Equilibrium policy** $\pi^\star = \pi_1^\star = \pi_2^\star$ satisfying:
+   $$M(\pi, \pi^\star) \le M(\pi^\star, \pi^\star) = 0 \quad \forall \pi$$
+   The Nash policy $\pi^\star$ is **unexploitable**: no alternative completion strategy can achieve an expected win rate greater than $50\%$ against it.
+
+---
+
+### 310.3 The Online Iterative DPO Algorithm
+Rather than optimizing against a static, stale offline dataset $\mathcal{D}_{\text{offline}}$ (which causes catastrophic distribution shift), **Online Iterative DPO** computes on-policy updates at every iteration $k \in \{1, \dots, K\}$:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Policy as Active Policy π_θk
+    participant Sampler as On-Policy Generation Engine
+    participant Judge as Preference Oracle / Verifier
+    participant Loss as DNO / Iterative DPO Kernel
+    participant NextPolicy as Updated Policy π_θ(k+1)
+
+    Policy->>Sampler: Prompt x ~ D
+    Sampler->>Sampler: Sample 2 on-policy completions: y_1, y_2 ~ π_θk(· | x)
+    Sampler->>Judge: Submit pair (y_1, y_2)
+    Judge->>Judge: Evaluate general preference: elect y_w > y_l
+    Judge->>Loss: Fresh On-Policy Pair: (x, y_w, y_l)
+    Loss->>NextPolicy: DPO Step anchored to π_θk: Δθ ∝ [∇log π(y_w) - ∇log π(y_l)]
+    NextPolicy-->>Policy: Set Active Policy for next iteration k+1
+```
+
+1. **On-Policy Candidate Sampling:**
+   For batch of prompts $x \sim \mathcal{D}$, the active model generates two candidate responses:
+   $$y_1, y_2 \sim \pi_{\theta_k}(\cdot \mid x)$$
+2. **Oracle Pairwise Evaluation:**
+   A judge (Process Reward Model, LLM-as-a-Judge, or verified code execution sandbox) determines the winning completion $y_w \succ y_l$.
+3. **Iterative Policy Step:**
+   The policy is updated using the DPO loss, with the reference model set dynamically to the previous checkpoint $\pi_{\text{ref}} \leftarrow \pi_{\theta_k}$:
+   $$\mathcal{L}_{\text{DNO}}(\theta) = -\mathbb{E} \left[ \log \sigma\left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\theta_k}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\theta_k}(y_l \mid x)} \right) \right]$$
+   Because the reference model updates incrementally ($\pi_{\theta_k}$), the policy is never anchored to an obsolete base model, eliminating off-policy divergence.
+
+---
+
+### 310.4 Empirical Benchmarks Across Offline vs. Online Alignment
+
+```mermaid
+flowchart LR
+    subgraph BenchmarkUplift["AlpacaEval 2 Win Rate & Length Bias (Llama-3-70B)"]
+        OfflineDPO["Offline DPO: 31.4% Win Rate (+26% Length Inflation)"]
+        IterDPO["Online Iterative DPO: 38.6% Win Rate (+6% Length Inflation)"]
+        DNO_Bench["Direct Nash Optimization (DNO): 42.8% Win Rate (Zero Length Drift)"]
+    end
+```
+
+| Alignment Strategy | Preference Model | Data Distribution | Transitivity Required? | AlpacaEval 2 Win Rate | MT-Bench Score |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **SFT Baseline** | None | Offline Demonstrations | N/A | $18.6\%$ | $7.45$ |
+| **Standard DPO (Offline)**| Bradley-Terry | Static Offline Pairs | Yes (Strictly Scalar) | $31.4\%$ | $8.05$ |
+| **IPO (DeepMind)** | Quadratic Margin | Static Offline Pairs | Yes | $33.8\%$ | $8.18$ |
+| **Online Iterative DPO** | Bradley-Terry | Dynamic On-Policy | Yes | $38.6\%$ | $8.42$ |
+| **Direct Nash Optimization**| **Game-Theoretic Minimax**| **Dynamic On-Policy** | **No (Handles Cyclic / Intransitive)**| **$42.8\%$** | **$8.64$** |
+
+**Key Systems Findings:**
+- **Elimination of Distribution Shift:** By generating pairs on-policy, DNO and Online DPO explore the active failure modes of the current model checkpoint, boosting win rates by **$+11.4\%$ over standard offline DPO**.
+- **Resistance to Intransitive Gaming:** Unlike Bradley-Terry reward models which can be hacked via cyclic loops, the Nash equilibrium policy cannot be exploited by any adversary strategy.
+- **Superior Reasoning Parity:** On complex mathematical proofs (GSM8K/MATH), on-policy iterative alignment raises pass@1 by $+7.2\%$ compared to offline alignment.
