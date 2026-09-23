@@ -6898,5 +6898,183 @@ flowchart TD
    $$\hat{y}_{\text{steered}} = W_{\text{dec}} \left(f(x) + \alpha \cdot e_i\right) + b_{\text{dec}}$$
    enabling surgical suppression of hallucination, bias, or deceptive alignment circuits with minimal collateral damage to general capabilities.
 
+---
+
+## 244. Discrete Diffusion Language Models: Score Entropy & Markov Jump Processes (SEDD)
+
+### 244.1 SEDD Continuous-Time Markov Jump Topology
+```mermaid
+flowchart LR
+    subgraph Forward["Forward Process (Perturbation into Noise)"]
+        X0["Clean Text x_0 ~ p_0"] --> JUMP["Continuous-Time Markov Jump Process via Rate Matrix Q_t"]
+        JUMP --> XT["Noisy State x_t"]
+        XT --> ABSORB["Absorbing / Uniform Noise Distribution p_T"]
+    end
+    subgraph Reverse["Reverse Denoising via Concrete Score Matching"]
+        XT --> NET["Score Network s_θ(x_t, t)"]
+        NET --> PREDICT["Predict Transition Probability Ratios (Concrete Score)"]
+        PREDICT --> SAMPLER["Reverse-Time Jump Sampler (Bidirectional Token Infilling)"]
+        SAMPLER --> RECON["Clean Generated Text x_0"]
+    end
+```
+
+### 244.2 Mathematical Formalization of SEDD
+1. **Continuous-Time Markov Jump Process:** Lou et al. (2024) formulate discrete token diffusion over vocabulary $\mathcal{V}$ where transition probabilities are governed by generator rate matrix $Q_t \in \mathbb{R}^{V \times V}$:
+   $$\frac{d}{dt} P(x_t = j \mid x_0) = \sum_{k} P(x_t = k \mid x_0) Q_t(k, j)$$
+2. **Concrete Score Matching Objective:** Rather than relying on continuous Gaussian approximations or categorical relaxation, SEDD trains a neural score network $s_\theta(x_t, t)_j \approx \frac{p_t(j)}{p_t(x_t)}$ via a score entropy loss:
+   $$\mathcal{L}_{\text{score}}(\theta) = \mathbb{E}_{t, x_0, x_t}\left[\sum_{j \neq x_t} \left(s_\theta(x_t, t)_j - \frac{(Q_t)_{x_t, j} p_{t \mid 0}(j \mid x_0)}{p_{t \mid 0}(x_t \mid x_0)}\right)^2\right]$$
+3. **Non-Causal Bidirectional Infilling:** By discarding causal lower-triangular attention masks, SEDD models full bidirectional token contexts simultaneously:
+   $$P(x_{\text{target}} \mid x_{\text{prefix}}, x_{\text{suffix}})$$
+   delivering generation quality and perplexity on par with autoregressive GPT-2 while natively executing arbitrary prefix, suffix, and middle token infilling.
+
+---
+
+## 245. AlphaProof & Formal Neurosymbolic Verification: Lean 4 Reasoning Loops
+
+### 245.1 AlphaProof Closed-Loop Architecture
+```mermaid
+flowchart TD
+    subgraph Formalize["1. Autoformalization"]
+        NAT["Natural Language Problem (IMO 2024)"] --> GEMINI["Gemini Autoformalizer"]
+        GEMINI --> LEAN_CODE["Formal Lean 4 Specification"]
+    end
+    subgraph Prover["2. Neurosymbolic Proof Search (AlphaZero Engine)"]
+        LEAN_CODE --> STATE["Proof State Representation"]
+        STATE --> POLICY["Policy Network π_θ (Candidate Tactic Generator)"]
+        STATE --> VALUE["Value Network V_ϕ (State Solvability Evaluator)"]
+        POLICY --> MCTS["Monte Carlo Tree Search (Tactic Proof Tree)"]
+    end
+    subgraph Verify["3. Strict Compile-Time Verification"]
+        MCTS --> LEAN_ENV["Lean 4 Kernel / Compiler Engine"]
+        LEAN_ENV --> |"Valid Proof / Typecheck Passed"| REWARD["Deterministic Environment Reward r = +1.0"]
+        LEAN_ENV --> |"Kernel Error / Type Mismatch"| REJECT["Reward r = 0 (Prune Branch)"]
+        REWARD --> TRAIN["RL Fine-Tuning of Policy & Value Weights"]
+    end
+```
+
+### 245.2 Mathematical Mechanics of Neurosymbolic Proof Search
+1. **Autoformalization Mapping:** Translates informal mathematics $P_{\text{informal}}$ into machine-checkable dependent type theory in the Calculus of Inductive Constructions:
+   $$\text{Spec} = \text{Autoformalize}\left(P_{\text{informal}}\right) \in \text{Type}_{\text{Lean 4}}$$
+2. **Deterministic Kernel Verification:** Lean 4's microkernel serves as an infallible compile-time oracle:
+   $$\text{Check}(\text{Proof}, \text{Spec}) = \begin{cases} \text{Verified} & \text{if } \vdash \text{Proof} : \text{Spec} \\ \text{Invalid} & \text{otherwise} \end{cases}$$
+3. **Reinforcement Learning from Formal Proofs:** AlphaProof (DeepMind, 2024) eliminates LLM hallucination in mathematical deduction by grounding neural generation in symbolic verification, solving 4 out of 6 problems at the 2024 International Mathematical Olympiad (IMO) to attain silver-medal human parity.
+
+---
+
+## 246. Moshi & Mimi: Full-Duplex Speech-Native Foundation Architecture
+
+### 246.1 Multi-Stream Interleaved Spoken Dialogue Topology
+```mermaid
+flowchart LR
+    subgraph Codec["Mimi Neural Audio Codec (12.5 Hz)"]
+        AUDIO_IN["User Raw Audio (24 kHz)"] --> ENCODER["Mimi Encoder"]
+        ENCODER --> RVQ["Residual Vector Quantization (8 Codebooks, 80ms Frames)"]
+        RVQ --> USER_TOKENS["User Acoustic Tokens U_t"]
+    end
+    subgraph Backbone["Moshi 7.5B Parameter Transformer Backbone"]
+        USER_TOKENS & MOSHI_PAST & TEXT_TOKENS --> MULTI_STREAM["Multi-Stream Interleaved Attention"]
+        MULTI_STREAM --> PRED_AUDIO["Moshi Acoustic Tokens M_t"]
+        MULTI_STREAM --> PRED_TEXT["Inner Monologue Text Tokens T_t"]
+    end
+    subgraph Out["Zero-Cascading Playback"]
+        PRED_AUDIO --> DECODER["Mimi Decoder"]
+        DECODER --> PLAYBACK["Continuous Spoken Audio (<200ms Latency)"]
+    end
+```
+
+### 246.2 Multi-Stream RVQ Autoregression
+1. **Mimi Audio Codec Compression:** Defossez et al. (Kyutai, 2024) compress 24kHz audio down to 12.5 Hz frame representations using Residual Vector Quantization (RVQ) with $K = 8$ hierarchical codebooks:
+   $$z_t = \sum_{k=1}^K c_k(q_{t, k}), \quad q_{t, k} \in \{1, \dots, 2048\}$$
+2. **Multi-Stream Sequence Interleaving:** The 7.5B Transformer models joint probability over text and synchronized bidirectional audio streams without intermediate ASR/TTS bottlenecks:
+   $$P\left(U_t, M_t, T_t \mid U_{<t}, M_{<t}, T_{<t}\right) = P(T_t \mid \dots) \prod_{k=1}^K P(M_{t, k} \mid \dots)$$
+3. **Full-Duplex Conversational Dynamics:** Operates with sub-200ms end-to-end latency, natively supporting conversational interruptions, overlapping speech, tone modulation, and spontaneous backchanneling ("uh-huh", "yeah") identical to human conversational cadence.
+
+---
+
+## 247. Test-Time Reasoning Model Prompting: o1/o3 & DeepSeek-R1 Steering Paradigms
+
+### 247.1 Paradigm Shift in Prompt Engineering for Pure RL Reasoners
+```mermaid
+flowchart TD
+    subgraph StandardLLM["Standard LLM Prompting (Instruction-Tuned / SFT)"]
+        S1["Few-Shot Exemplars"] --> REC1["Elicits Pattern Matching"]
+        S2["'Think step by step'"] --> REC2["Forces Superficial Linear Rationale Generation"]
+    end
+    subgraph PureReasoning["Pure RL Test-Time Reasoning Models (o1/o3, DeepSeek-R1)"]
+        R1["Few-Shot CoT Injected"] --> FAIL1["Constrains Internal Verification Search (Overthinking / Degradation)"]
+        R2["Minimalist Goal-Oriented Prompt"] --> PASS["Unlocks Autonomous Monte Carlo Exploration & Dynamic Verification"]
+        R3["System / Developer Prompt Constraints"] --> STEER["Sets Output Boundaries Without Biasing Trajectory"]
+    end
+```
+
+### 247.2 Axioms for Reasoning Model Steerability
+1. **Prompt Minimalism Over Prompt Elaboration:** Explicit CoT prompts ("Let's think step by step", manual pseudo-code breakdowns) induce interference patterns in the model's internal reinforcement-learned reasoning loop, triggering redundant self-verification and degraded reasoning performance.
+2. **Sampling Temperature Rigidity:** Because test-time models internally manage exploration diversity across their reasoning traces:
+   $$T = 1.0, \quad \text{top\_p} = 1.0$$
+   Lowering temperature ($T \to 0$) truncates critical branching exploration in the latent tree search, leading to repetitive reasoning loops and logic deadlocks.
+3. **Compute Budget Allocation Parameters:** Test-time computational depth is governed via explicit reasoning budget directives:
+   $$\text{effort} \in \{\text{low}, \text{medium}, \text{high}\} \implies N_{\text{thinking\_tokens}} \in [10^3, 3 \times 10^4]$$
+   scaling search breadth and depth across problem hardness thresholds.
+
+---
+
+## 248. Kahneman-Tversky Optimization (KTO): Prospect Theory Alignment
+
+### 248.1 KTO Prospect Theory Utility Curve
+```mermaid
+flowchart LR
+    subgraph Value["S-Shaped Prospect Theory Value Function v(z)"]
+        LOSS["Losses (z < 0): Convex & Steeper (Slope = λ · β)"] --- ORIGIN["Reference Point z_ref = 0"]
+        ORIGIN --- GAIN["Gains (z > 0): Concave (Slope = β)"]
+    end
+    subgraph Training["Unpaired Telemetry Ingestion"]
+        UP["Thumbs-Up Output (y ∈ Y_desirable)"] --> V_GAIN["Treated as Gain: v(r_θ - z_ref)"]
+        DOWN["Thumbs-Down Output (y ∈ Y_undesirable)"] --> V_LOSS["Treated as Loss: v(z_ref - r_θ) Penalized by λ > 1"]
+    end
+```
+
+### 248.2 Mathematical Formalization of KTO
+1. **Unpaired Binary Alignment:** Ethayarajh et al. (2024) discard pairwise comparison datasets $(y_w \succ y_l)$, training directly from independent feedback signals $y \in \mathcal{Y}_{\text{desirable}} \cup \mathcal{Y}_{\text{undesirable}}$.
+2. **Prospect Theory Value Formulation:**
+   $$r_\theta(x, y) = \beta \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)}$$
+   $$z_{\text{ref}} = \mathbb{E}_{x' \sim \mathcal{D}, y' \sim \pi_{\text{ref}}}\left[\beta \log \frac{\pi_\theta(y' \mid x')}{\pi_{\text{ref}}(y' \mid x')}\right]$$
+   $$\mathcal{L}_{\text{KTO}}(\theta) = \mathbb{E}_{(x, y)}\left[w(y) \left(1 - v_{\text{kto}}\left(r_\theta(x, y) - z_{\text{ref}}\right)\right)\right]$$
+   where the utility curve incorporates loss aversion parameter $\lambda \approx 1.33\text{--}2.0$:
+   $$v_{\text{kto}}(z) = \begin{cases} \sigma(z) & \text{if } y \in \mathcal{Y}_{\text{desirable}} \\ \sigma(-\lambda z) & \text{if } y \in \mathcal{Y}_{\text{undesirable}} \end{cases}$$
+3. **Data Efficiency:** Matches or surpasses DPO win rates across LLaMA and Mistral models while operating on real-world production telemetry where unpaired thumbs-up/down ratings outnumber preference pairs by orders of magnitude.
+
+---
+
+## 249. Multi-Agent Debate & Consensus Dynamics
+
+### 249.1 Divergence-Convergence Debate Topology
+```mermaid
+flowchart TD
+    subgraph Round1["Round 1: Divergent Generation"]
+        PROMPT["Problem Prompt x"] --> A1["Agent A (Math Specialist)"]
+        PROMPT --> A2["Agent B (Critical Auditor)"]
+        PROMPT --> A3["Agent C (Alternative Heuristic)"]
+    end
+    subgraph Round2["Round 2: Reciprocal Cross-Critique"]
+        A1 & A2 & A3 --> PEER["Peer-Critique & Argument Defense Exchange"]
+        PEER --> REFINE1["Agent A Revised Response"]
+        PEER --> REFINE2["Agent B Revised Response"]
+        PEER --> REFINE3["Agent C Revised Response"]
+    end
+    subgraph Consensus["Round 3: Synthesis & Verification"]
+        REFINE1 & REFINE2 & REFINE3 --> JUDGE["Consensus Judge / Scoring Matrix Aggregator"]
+        JUDGE --> VERIFIED["Error-Corrected Final Solution y*"]
+    end
+```
+
+### 249.2 Mathematical Formulation of Debate Convergence
+1. **Iterative Deliberation Rounds:** Liang et al. and Du et al. (2023) formulate multi-agent debate across $N$ agents over $T$ interaction rounds:
+   $$y_i^{(t)} \sim \pi_{\theta_i}\left(\cdot \mid x, \left\{y_j^{(t-1)}\right\}_{j=1}^N\right), \quad i \in \{1, \dots, N\}$$
+2. **Consensus Metric & Peer Scoring Matrix:**
+   $$S_{ij}^{(t)} = \text{Score}\left(Agent_i \text{ rates } y_j^{(t)}\right) \in [0, 1]$$
+   $$\text{Agreement}(t) = \frac{1}{N(N-1)} \sum_{i \neq j} \text{Sim}\left(y_i^{(t)}, y_j^{(t)}\right)$$
+   Debate terminates when $\text{Agreement}(t) \ge \tau_{\text{consensus}}$ or when maximum rounds $T_{\max}$ is reached.
+3. **Confabulation Breakdown:** Empirically eliminates single-model sycophancy and hallucinations, driving a 4–8% accuracy improvement on GSM8K and MATH by forcing competitive justification and cross-agent error detection.
+
 
 
