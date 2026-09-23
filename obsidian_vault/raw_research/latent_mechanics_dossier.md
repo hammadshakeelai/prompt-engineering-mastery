@@ -9724,3 +9724,102 @@ flowchart LR
   - Standard Uniform Eviction (H2O): Drops to $64.2\%$ due to early layer starvation.
   - **PyramidKV + SnapKV:** Maintains **$99.8\%$ retrieval accuracy**, demonstrating full empirical equivalence with uncompressed attention.
 - **Decoding Concurrency:** Frees up to $45\,\text{GB}$ of HBM per instance, allowing an immediate **$4.5\times\text{--}5.2\times$ increase in maximum concurrent batch size** and boosting cluster serving throughput by up to **$3.8\times$**.
+
+---
+
+## 293. Token Healing & Subword Boundary Repair: Eliminating Greedy Tokenization Bias in Constrained Prompts (Lundberg et al. / Guidance)
+
+### 293.1 The Greedy Tokenization Trap in Subword Models
+Modern language models rely almost exclusively on subword tokenizers (Byte-Pair Encoding / BPE, WordPiece, SentencePiece, Unigram). These algorithms are **greedy**: they scan character strings from left to right and match the longest token present in the vocabulary.
+
+While optimal for static text encoding, this greedy heuristic creates a severe, invisible mathematical failure mode called the **Token Boundary Pathology** when prompts end on arbitrary characters, partial words, or syntax delimiters:
+
+#### The Compound Token Collapse
+Consider an innocent prompt that ends with a URL protocol: `"Visit http:"`.
+1. **The Greedy Prompt Commitment:** The tokenizer splits `"http:"` into two distinct tokens: `["http", ":"]`.
+2. **The Training Distribution Mismatch:** In standard web pre-training corpuses (Common Crawl, The Pile), the 7-character sequence `"http://"` is extremely high frequency. During vocabulary creation, BPE merged the entire sequence into a single atomic token:
+   $$\text{Token ID 18432} = \text{"http://"}$$
+3. **The Artificial Probability Penalty:** Because the user prompt forced a hard token boundary by committing to the standalone token `":"` (Token ID 25), the language model is **permanently prohibited from emitting the natural token `"http://"`**.
+4. Instead, the model is artificially forced to emit `["//"]` (Token ID 1451). However, because `"//"` rarely follows `":"` in natural text without being part of the merged compound token, its conditional probability is unnaturally low:
+   $$\log P(\text{"//"} \mid \text{"Visit http"}, \text{":"}) \ll \log P(\text{"http://"} \mid \text{"Visit "})$$
+5. This boundary fragmentation artificially depresses model confidence, induces hallucinated continuations, and causes syntax validation failures in structured schemas.
+
+```mermaid
+flowchart TD
+    subgraph GreedyTrap["The Token Boundary Pathology (Greedy BPE Fragmentation)"]
+        UserPrompt["Prompt ends with 'http:'"] --> GreedyBPE["Greedy Tokenizer emits ['http', ':']"]
+        GreedyBPE --> Blocked["Compound Token 'http://' is Permanently Blocked from Vocabulary Logits"]
+        Blocked --> Forced["Model is Forced to emit unnatural token '//' (Log-Likelihood Drops)"]
+    end
+    subgraph TokenHealingSolution["Token Healing Architecture (Lundberg et al. / Guidance)"]
+        PopToken["1. Rollback: Pop final token ':' -> Trim prompt to 'Visit '"]
+        PrefixTrie["2. Compile Prefix Trie: Restrict next token to start with ':'"]
+        AllowedSet["Allowed Set: {':', '://', ':8080', ':path'}"]
+        SampleHeal["3. Unbiased Generation: Model can freely choose compound '://'"]
+        SampleHeal --> SmoothParity["Optimal Distribution Restored (Zero Token Boundary Distortion)"]
+    end
+```
+
+---
+
+### 293.2 Mathematical Formulation of the Token Healing Algorithm
+**Token Healing** (Lundberg et al., Microsoft Guidance, 2023) eliminates token boundary bias by introducing an adaptive rollback and prefix-constrained generation step at the interface between the prompt and the completion:
+
+1. **Dynamic Prompt Tail Rollback:**
+   Let the tokenized prompt sequence be $T = (t_1, t_2, \dots, t_N) \in \Sigma^N$.
+   - The engine pops the final prompt token $t_N$, recovering its decoded character/byte substring:
+     $$s_{\text{tail}} = \text{decode}(t_N)$$
+   - The prompt context provided to the transformer's KV cache is truncated to the first $N-1$ tokens:
+     $$T_{\text{context}} = (t_1, t_2, \dots, t_{N-1})$$
+2. **Prefix-Constrained Vocabulary Subspace:**
+   To guarantee that generation strictly continues the user's intended prompt, the first generated token must extend the string prefix $s_{\text{tail}}$. The admissible vocabulary subset is:
+   $$\mathcal{V}_{\text{healed}}(s_{\text{tail}}) = \left\{ w \in \Sigma \mid \text{decode}(w) \text{ has character prefix } s_{\text{tail}} \right\}$$
+   A boolean logit mask $\mathcal{M}_{\text{heal}} \in \{0, -\infty\}^V$ is evaluated via a pre-indexed vocabulary prefix Trie:
+   $$\mathcal{M}_{\text{heal}}[w] = \begin{cases} 0 & \text{if } w \in \mathcal{V}_{\text{healed}}(s_{\text{tail}}) \\ -\infty & \text{otherwise} \end{cases}$$
+3. **Unbiased Next-Token Sampling:**
+   The logits for the healed first step are evaluated:
+   $$\tilde{z}_1 = \text{Softmax}\left( z\left(T_{\text{context}}\right) + \mathcal{M}_{\text{heal}} \right)$$
+   Sampling $w_1 \sim \tilde{z}_1$ yields two possible outcomes:
+   - **Case A (Compound Token Preference):** If the model prefers a compound completion (e.g. `w_1 = "://"`), it emits the compound token directly, perfectly healing the boundary.
+   - **Case B (Original Token Preference):** If the original token was indeed optimal, the model simply re-samples $w_1 = t_N$ (since $t_N \in \mathcal{V}_{\text{healed}}$), continuing normal generation.
+   Therefore, Token Healing introduces **zero distortion** and strictly restores the true underlying language model distribution.
+
+---
+
+### 293.3 Synchronous Fused Grammar Masking
+When generating structured outputs (JSON Schemas, regexes, SQL) with engines like LLGuidance or SGLang, Token Healing is composed with the formal grammar's initial state transition mask:
+$$\mathcal{M}_{\text{composite}}[w] = \mathcal{M}_{\text{heal}}(s_{\text{tail}})[w] \;\land\; \mathcal{M}_{\text{grammar}}(s_0)[w]$$
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Application Prompt
+    participant Healer as Token Healing Engine
+    participant Grammar as Grammar Automaton (JSON Schema)
+    participant Model as LLM Backbone
+
+    App->>Healer: Submit Prompt ending with '{"user_id": "'
+    Healer->>Healer: Pop final token '"' -> s_tail = '"'
+    Healer->>Grammar: Query Initial Grammar Mask M_grammar(s_0)
+    Healer->>Healer: Intersect: M_heal('"') ∩ M_grammar(s_0)
+    Healer->>Model: Forward Pass on Truncated Context + Fused Mask
+    Model-->>Healer: Emit Valid Compound Token (e.g. '"admin"')
+    Healer-->>App: Stream Seamless Valid JSON Output
+```
+
+---
+
+### 293.4 Quantitative Benchmarks & Perplexity Audits
+```mermaid
+flowchart LR
+    subgraph QualityRecovery["Perplexity & Pass@1 Recovery with Token Healing"]
+        NaivePunct["Trailing Delimiters Without Healing: +2.4 Perplexity Spike"]
+        HealedPunct["With Token Healing: Zero Perplexity Spike (Exact Continuity)"]
+        CodeComp["HumanEval Prefix Code Pass@1: Increases by +8.6%"]
+    end
+```
+
+**Empirical Performance Across Benchmarks:**
+- **Perplexity Normalization:** Eliminates the **$+1.8\text{--}3.2$ perplexity spike** typically observed when prompts terminate on punctuation marks, trailing whitespaces, code indentation spaces, or quotation marks.
+- **Code Completion (HumanEval Infilling):** When prompts terminate mid-variable or mid-operator (e.g. `def process_data(d`), Token Healing raises HumanEval pass@1 by **$+8.6\%$** by preventing greedy subword mis-segmentation.
+- **Serving Efficiency:** Because the rollback requires only popping a single token and Trie mask lookup runs in $<0.05\,\mu\text{s}$, the entire healing mechanism incurs **$<0.1\%$ computational overhead**.
