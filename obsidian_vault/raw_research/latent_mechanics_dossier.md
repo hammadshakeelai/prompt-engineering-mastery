@@ -2033,3 +2033,123 @@ At decoding step $t$ in state $q_t$:
 
 - **Guarantees:** $P(\text{syntax error}) \equiv 0$. The generated sequence is mathematically guaranteed to belong to the regular language $\mathcal{L}(\mathcal{M})$.
 - **Zero Overhead Serving:** Because bitmasks are computed offline and stored as contiguous bit-arrays, runtime logit masking executes in **$<15\,\mu\text{s}$**, introducing zero perceptible latency during high-throughput enterprise serving in vLLM and SGLang.
+
+## 66. Perfect Linear Concept Erasure & Closed-Form Subspace Surgery (LEACE, Belrose et al., NeurIPS 2023)
+
+### 66.1 The Mathematical Limits of Iterative Null-Space Projection
+Removing unwanted or sensitive concepts $Z \in \mathbb{R}^k$ (e.g., demographic bias, grammatical syntax artifacts, sycophancy latents) from representation space $X \in \mathbb{R}^d$ has historically relied on iterative adversarial training or Iterative Null-space Projection (INLP). These heuristics exhibit severe theoretical shortcomings:
+1. **Incomplete Erasure:** Linear classifiers trained post-hoc frequently rediscover residual non-linear leakage or imperfectly suppressed projections.
+2. **Excessive Representation Distortion:** Repeated orthogonal projections degrade model perplexity and utility on unrelated downstream tasks.
+3. **Hyperparameter Fragility:** Iterative convergence depends sensitively on learning rates, stopping criteria, and batch samples.
+
+Nora Belrose et al. (*LEACE: Perfect Linear Concept Erasure*, EleutherAI / NeurIPS 2023 / arXiv:2306.03819) introduce **LEACE (LEAst-squares Concept Erasure)**, deriving the unique, closed-form affine transformation that mathematically guarantees zero linear predictability while strictly minimizing representation distortion.
+
+```mermaid
+flowchart LR
+    Act["Activation Vector X in R^d"] --> Centering["Center: X - mu_X"]
+    Centering --> Covariance["Compute Sample Covariances: Sigma_XX, Sigma_XZ, Sigma_ZZ"]
+    Covariance --> ClosedForm["Closed-Form Affine Predictor: P(X) = (I - M) (X - mu_X) + mu_X"]
+    ClosedForm --> ZeroPredict["Provable Guarantee: Cov(P(X), Z) = 0"]
+    ZeroPredict --> Scrubbing["Layer-by-Layer Concept Scrubbing in Residual Stream"]
+```
+
+### 66.2 Closed-Form Formulation & Optimality Theorem
+Let $X \in \mathbb{R}^d$ and $Z \in \mathbb{R}^k$ be random vectors with finite second moments, means $\mu_X, \mu_Z$, and covariance matrices $\Sigma_{XX}, \Sigma_{XZ}, \Sigma_{ZZ}$.
+LEACE seeks an affine transformation $P(x) = A x + b$ that satisfies:
+$$\operatorname{Cov}\left( P(X), Z \right) = 0$$
+subject to minimizing the expected squared Euclidean or Mahalanobis distance:
+$$\min_{A, b} \mathbb{E}\left[ \|P(X) - X\|_2^2 \right]$$
+
+The analytical, closed-form solution for the projection matrix $A$ and bias vector $b$ is:
+$$A = I - \Sigma_{XZ} \left( \Sigma_{XZ}^\top \Sigma_{XX}^{-1} \Sigma_{XZ} \right)^{-1} \Sigma_{XZ}^\top \Sigma_{XX}^{-1}$$
+$$b = \mu_X - A \mu_X = (I - A) \mu_X$$
+Equivalently, writing $P(X)$ in terms of the linear least-squares predictor of $X$ from $Z$:
+$$P(x) = x - \Sigma_{XZ} \Sigma_{ZZ}^{-1} \left( z(x) - \mu_Z \right)$$
+where $z(x)$ is the optimal linear prediction of $Z$ given $x$.
+
+- **The LEACE Optimality Theorem:** For any pseudo-inner product metric, LEACE is the unique affine map satisfying $\operatorname{Cov}(P(X), Z) = 0$ that minimizes expected reconstruction loss.
+- **Universal Impossibility for Linear Probes:** Under $P(X)$, every linear probe $w \in \mathbb{R}^d$ achieves $R^2 = 0$ in predicting $Z$, mathematically eliminating the concept from linear accessibility.
+
+### 66.3 Concept Scrubbing Across LLM Layers
+In deep transformer architectures, LEACE can be inserted into the residual stream at any layer $l$:
+$$h^{(l)}_{\text{scrubbed}} = P^{(l)}\left( h^{(l)} \right)$$
+- **Ablation vs. Scrubbing:** Unlike 1D Difference-in-Means ablation (Section 44) which only handles binary concepts, LEACE supports multi-dimensional, continuous concept targets $Z \in \mathbb{R}^k$ with closed-form matrix algebra requiring no gradient steps.
+- **Empirical Validation:** Completely neutralizes part-of-speech and gender bias in BERT/LLaMA representations with $<0.01$ change in overall language modeling loss.
+
+---
+
+## 67. Self-Information & Mutual Information Context Pruning (Selective Context, Li et al., EMNLP 2023)
+
+### 67.1 The Quadratic Latency & VRAM Tax of Long Prompts
+Large language models incur a quadratic attention computational cost $\mathcal{O}(T^2)$ during prompt prefill and linear KV-cache growth $\mathcal{O}(T)$ during autoregressive decoding. In multi-document retrieval (RAG) and few-shot in-context learning:
+- $60\%\text{--}80\%$ of tokens comprise grammatical filler, stylistic repetition, or semantically redundant phrasing.
+- Naive heuristic truncation (sliding windows, prefix dropping) abruptly severs critical reasoning dependencies.
+
+Yucheng Li, Bo Dong, Chenghua Lin, and Frank Guerin (*Compressing Context to Enhance Inference Efficiency of Large Language Models*, EMNLP 2023 / arXiv:2310.06201) formulate **Selective Context**, an information-theoretic filtering paradigm that evaluates token informativeness via base model self-information.
+
+```mermaid
+flowchart TD
+    Prompt["Raw Input Prompt Sequence x_1 .. x_T"] --> Lexical["Lexical Unit Partitioning: Tokens / Phrases / Sentences"]
+    Lexical --> BaseLM["Base Language Model Forward Pass"]
+    BaseLM --> ShannonSurprise["Compute Self-Information: I(u_i) = -log P(u_i | context)"]
+    ShannonSurprise --> PercentileSort["Rank Units by Self-Information & Filter Low-Surprise Tokens"]
+    PercentileSort --> PrunedPrompt["Compressed Informative Prompt (50% Length)"]
+    PrunedPrompt --> TargetLLM["Target LLM Inference (36% VRAM Reduction, 32% Latency Reduction)"]
+```
+
+### 67.2 Information-Theoretic Formulation: Shannon Self-Information
+Let sequence $x = (u_1, u_2, \dots, u_N)$ be divided into lexical units $u_i$ (individual tokens, phrases, or sentences).
+The informativeness of unit $u_i$ conditioned on previous context $u_{<i}$ is quantified by its **self-information** (Shannon surprise):
+$$I(u_i) = -\frac{1}{|u_i|} \sum_{t=1}^{|u_i|} \log P_{\mathcal{M}}\left( x_{i, t} \mid x_{<i}, x_{i, <t} \right)$$
+where $P_{\mathcal{M}}$ is the conditional next-token distribution estimated by a lightweight, agile base language model (e.g., LLaMA-2-7B or GPT-2-small).
+
+- **High Self-Information ($I(u_i) \gg 0$):** Indicates unexpected, information-dense content (domain-specific terms, entities, numerical constraints, logical propositions).
+- **Low Self-Information ($I(u_i) \to 0$):** Indicates predictable, formulaic filler (e.g., `"In accordance with the aforementioned details..."`) that can be safely discarded without semantic loss.
+
+### 67.3 Compression Thresholding & Benchmark Performance
+Given target compression ratio $\rho \in (0, 1)$, Selective Context retains the top-$\rho$ proportion of lexical units with highest self-information:
+$$\mathcal{S}_{\text{pruned}} = \left\{ u_i \in x \;\middle|\; I(u_i) \ge \tau_\rho \right\}$$
+where $\tau_\rho$ is the empirical $(1-\rho)$-quantile of self-information scores across the sequence. Retained tokens are concatenated in their original sequential order to preserve grammatical coherence.
+
+- **Empirical Gains:** Evaluated across multi-document QA, summarization, and conversation:
+  - Achieves **$50\%$ context length reduction** ($\rho=0.5$).
+  - Delivers a **$36\%$ reduction in KV-cache VRAM** and a **$32\%$ reduction in end-to-end inference latency**.
+  - Retains semantic fidelity with $<0.023$ drop in BERTscore and $<0.038$ drop in factual faithfulness.
+
+---
+
+## 68. Multimodal Visual Grounding & Set-of-Mark Prompting (SoM, Yang et al., CVPR 2024 / Microsoft)
+
+### 68.1 The Spatial Grounding Void in Vision-Language Models
+Frontier Large Multimodal Models (LMMs) such as GPT-4V, Gemini 1.5 Pro, and Claude 3.5 Sonnet demonstrate remarkable high-level semantic perception (image captioning, chart interpretation, artistic style attribution). However, when evaluated on **fine-grained spatial grounding**—referring expression comprehension, surgical object localization, and pixel-level reasoning:
+1. **Coordinate Hallucination:** Prompting models to output numerical bounding boxes (`[ymin, xmin, ymax, xmax]`) or center coordinates yields high spatial error rates ($>40\%$) due to the absence of continuous spatial priors in subword tokenizers.
+2. **Ambiguity in Complex Scenes:** In cluttered visual scenes (e.g., industrial schematics, microscopic pathology, multi-agent crowds), text queries cannot unambiguously designate specific sub-components.
+
+Jianwei Yang, Hao Zhang, Feng Li, Xueyan Zou, Chunyuan Li, and Jianfeng Gao (*Set-of-Mark Prompting Unleashes Extraordinary Visual Grounding in GPT-4V*, Microsoft / CVPR 2024 / arXiv:2310.11441) introduce **Set-of-Mark (SoM) Visual Prompting**, transforming continuous coordinate regression into discrete, symbolic visual reference reasoning.
+
+```mermaid
+flowchart TD
+    RawImage["Raw Visual Input I in R^(H x W x 3)"] --> SegPipeline["Interactive Segmentation Engine (SAM / SEEM)"]
+    SegPipeline --> Masks["Extract Semantic Masks & Contours: {M_1, M_2, .. M_K}"]
+    Masks --> Overlay["Overlay Distinct Visual Marks: Numbers [1], [2] / Colored Outlines"]
+    RawImage --> Overlay
+    Overlay --> MarkedImage["Set-of-Mark Visual Prompt I_marked"]
+    MarkedImage --> LMM["Vision-Language Model (GPT-4V / Gemini Pro)"]
+    TextQuery["Text Prompt: 'Identify the functional component [3]'"] --> LMM
+    LMM --> DiscreteOutput["Grounded Symbolic Output referencing Marks [1] .. [K]"]
+```
+
+### 68.2 The Set-of-Mark (SoM) Visual Prompting Pipeline
+The SoM framework bridges vision and language by superimposing visual metadata directly onto the input image before feeding it into the multimodal model:
+
+1. **Partitioning via Interactive Segmentation:** An off-the-shelf segmentation model (Segment Anything Model - SAM, or Semantic-SAM) segments the image into $K$ candidate masks $\mathcal{M} = \{M_1, M_2, \dots, M_K\}$ at calibrated semantic granularities (semantic level, instance level, or part level).
+2. **Visual Mark Superimposition:** For each segmented region $M_k$, an alphanumeric tag, colored contour boundary, or centroid glyph $g_k$ is overlaid directly onto the pixel canvas:
+   $$I_{\text{marked}} = \operatorname{Overlay}\left( I, \{(M_k, g_k)\}_{k=1}^K \right)$$
+   where $g_k \in \{[1], [2], \dots, [K]\}$ are high-contrast visual markers placed at the geometric medoid of mask $M_k$.
+3. **Symbolic Grounding in Text Space:** The prompt to the LMM conditions on the marked image $I_{\text{marked}}$, asking the model to reason over the numerical identifiers $[k]$:
+   $$\text{"Which numbered mark corresponds to the catalytic converter? Provide reasoning for [1], [2], and [3]."}$$
+
+### 68.3 Zero-Shot Supremacy & Coordinate-Free Reasoning
+- **RefCOCOg & Visual Referring Comprehension:** On the challenging RefCOCOg benchmark, zero-shot GPT-4V equipped with Set-of-Mark prompting achieves **$84.2\%$ accuracy**, surpassing fully fine-tuned, task-specific segmentation models without updating a single weight parameter of the vision-language backbone.
+- **Elimination of Coordinate Quantization:** Converts a difficult spatial regression task (predicting continuous 2D coordinates via discrete tokens) into a categorical multi-choice selection problem over grounded visual tokens $[1]\dots[K]$.
+- **Visual Chain-of-Thought (Visual CoT):** Enables multi-step visual reasoning: the LMM sequentially references visual marks ($[1] \to [4] \to [7]$) to explain mechanistic relationships, spatial containment, and causal visual sequences.
