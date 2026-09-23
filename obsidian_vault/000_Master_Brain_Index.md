@@ -25,6 +25,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 ## 🔬 2. Raw Subagent Research (Web & Factual Dumps)
 - [[raw_research/agentic_memory.md]]
 - [[raw_research/agent_orchestration_frameworks.md]]
+- [[raw_research/agent_orchestration_magentic_one_and_state_machines.md]]
 - [[raw_research/agent_swarm_actor_orchestration.md]]
 - [[raw_research/automated_process_supervision_prm_scaling.md]]
 - [[raw_research/compiler_in_the_loop_lean4_proof_search.md]]
@@ -77,6 +78,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/actor_model_agent_swarms.md|Actor Model Agent Swarms]]
 - [[raw_research/snippets/adaptive_computation.md|Adaptive Computation]]
 - [[raw_research/snippets/agent_memory_taxonomy.md|Agent Memory Taxonomy]]
+- [[raw_research/snippets/agent_orchestration_magentic_one_and_state_machines.md|Agent Orchestration Magentic One And State Machines]]
 - [[raw_research/snippets/agent_planning.md|Agent Planning]]
 - [[raw_research/snippets/agent_sleep_memory_consolidation.md|Agent Sleep Memory Consolidation]]
 - [[raw_research/snippets/algorithm_of_thoughts.md|Algorithm Of Thoughts]]
