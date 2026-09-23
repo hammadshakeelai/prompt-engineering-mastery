@@ -9495,3 +9495,81 @@ flowchart LR
 - **Decoding Throughput:** Delivers **$2.2\times\text{--}4.8\times$ end-to-end wall-clock speedup** compared to standard autoregressive constrained decoding.
 - **Memory Bandwidth Reduction:** Reduces total HBM memory reads by **$45.8\%$**, freeing memory channels and enabling higher concurrent batch sizes on identical GPU infrastructure.
 - **Guaranteed Zero-Error Syntax:** 100% mathematical guarantee of schema compliance, as deterministic tokens are emitted directly from the validated grammar transition table.
+
+---
+
+## 290. Kahneman-Tversky Optimization (KTO): Prospect Theory & Behavioral Economics in Preference Alignment (Ethayarajh et al., ICML 2024)
+
+### 290.1 The Axiomatic Flaw of Expected Utility in LLM Alignment
+Almost all standard Reinforcement Learning from Human Feedback paradigms—including PPO, DPO, and IPO—derive their mathematical foundation from the **von Neumann-Morgenstern Expected Utility Theorem (1944)** and the **Bradley-Terry Preference Model (1952)**:
+$$P(y_w \succ y_l \mid x) = \sigma\left( r(x, y_w) - r(x, y_l) \right)$$
+Under this assumption, humans act as rational economic agents who evaluate choices on an absolute utility scale and whose preferences depend linearly on probability.
+
+**The Cognitive and Practical Reality:**
+1. **Behavioral Violation (Prospect Theory):** Nobel laureates Daniel Kahneman and Amos Tversky (1979) proved conclusively that human perception of value violates expected utility in three fundamental ways:
+   - **Reference Dependence:** Individuals evaluate gains and losses not relative to an absolute asset level, but relative to a neutral **reference point** ($z_{\text{ref}}$).
+   - **Loss Aversion:** The psychological pain of a loss is substantially greater than the pleasure of a commensurate gain. Losses typically loom **$1.5\times\text{--}2.5\times$ larger than gains** in human utility functions.
+   - **Diminishing Sensitivity:** Value curves are S-shaped—concave in the domain of gains (risk-averse) and convex in the domain of losses (risk-seeking).
+2. **The Paired-Data Scarcity Bottleneck:**
+   Real-world AI deployment telemetry produces **unpaired binary signals**:
+   - A user copies an answer to their clipboard or executes the code: $y \in \mathcal{Y}_{\text{desirable}}$.
+   - A user clicks "Regenerate", edits the output, or closes the tab: $y \in \mathcal{Y}_{\text{undesirable}}$.
+   Forcing telemetry into synthetic counterfactual pairs $(x, y_w, y_l)$ introduces severe sampling bias, noise, and data waste.
+
+```mermaid
+flowchart TD
+    subgraph ExpectedUtility["Traditional Alignment (VNM Expected Utility & DPO)"]
+        DPO_Pairs["Requires Explicit Paired Data (x, y_w, y_l)"] --> LinUtility["Assumes Linear Absolute Utility r(x, y)"]
+        LinUtility --> Symmetric["Symmetric Treatment of Gains and Losses"]
+    end
+    subgraph ProspectTheoryKTO["KTO Alignment (Kahneman-Tversky Prospect Theory)"]
+        Unpaired["Works on Native Unpaired Data: (x, y) ∈ {Desirable, Undesirable}"] --> RefAnchor["Computes Dynamic Reference Point: z_ref = E[r_θ(x, y)]"]
+        RefAnchor --> S_Curve["S-Shaped Valuation Function v(z)"]
+        S_Curve --> LossAverse["Applies Asymmetric Loss Aversion Penalty: λ_U > λ_D"]
+        LossAverse --> OptPolicy["Optimizes Directly for Human Perceived Value"]
+    end
+```
+
+---
+
+### 290.2 Mathematical Architecture of KTO
+**Kahneman-Tversky Optimization (KTO)** (Ethayarajh et al., ICML 2024) replaces the Bradley-Terry objective with a direct maximization of perceived human utility under Prospect Theory:
+
+1. **The Implicit Reward Function:**
+   As in DPO, the policy's implicit reward for prompt $x$ and completion $y$ is parameterized via log-ratio against the reference model $\pi_{\text{ref}}$:
+   $$r_\theta(x, y) \triangleq \beta \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)}$$
+2. **The Dynamic Reference Point ($z_{\text{ref}}$):**
+   The reference anchor represents the expected reward under the current policy distribution:
+   $$z_{\text{ref}} \triangleq \mathbb{E}_{x \sim \mathcal{D}, y \sim \pi_\theta(\cdot \mid x)} \left[ r_\theta(x, y) \right] = \beta \, \mathbb{E}_{x \sim \mathcal{D}} \left[ \mathbb{D}_{\text{KL}}\left(\pi_\theta(\cdot \mid x) \parallel \pi_{\text{ref}}(\cdot \mid x)\right) \right]$$
+   During mini-batch gradient descent across batch size $B$, $z_{\text{ref}}$ is estimated dynamically via the batch mean:
+   $$\hat{z}_{\text{ref}} = \frac{1}{B} \sum_{i=1}^B \beta \log \frac{\pi_\theta(y_i \mid x_i)}{\pi_{\text{ref}}(y_i \mid x_i)}$$
+3. **The S-Shaped Prospect Value Function ($v$):**
+   The subjective perceived value $v(x, y)$ of an output is asymmetric around the reference anchor:
+   $$v(x, y) = \begin{cases} \sigma\left( r_\theta(x, y) - z_{\text{ref}} \right) & \text{if } y \in \mathcal{Y}_{\text{desirable}} \\ \sigma\left( z_{\text{ref}} - r_\theta(x, y) \right) & \text{if } y \in \mathcal{Y}_{\text{undesirable}} \end{cases}$$
+4. **The KTO Loss Function with Loss Aversion Multipliers:**
+   Let $\lambda_D > 0$ and $\lambda_U > 0$ denote the weighting multipliers for desirable and undesirable examples, with the loss aversion ratio $\frac{\lambda_U}{\lambda_D} > 1$:
+   $$\mathcal{L}_{\text{KTO}}(\theta) = \mathbb{E}_{(x, y) \sim \mathcal{D}_D} \left[ \lambda_D \left( 1 - \sigma\left( \beta \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)} - z_{\text{ref}} \right) \right) \right] + \mathbb{E}_{(x, y) \sim \mathcal{D}_U} \left[ \lambda_U \left( 1 - \sigma\left( z_{\text{ref}} - \beta \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)} \right) \right) \right]$$
+
+---
+
+### 290.3 Gradient Dynamics & Data-Imbalance Robustness
+```mermaid
+flowchart LR
+    subgraph DataFlexibility["KTO Data Distribution Properties"]
+        UnpairedDataset["Unpaired Feedback (Thumbs Up / Down)"] --> Independent["No Pair Construction Overhead"]
+        Imbalance["Handles 10:1 Imbalanced Feedback (90% Upvotes, 10% Downvotes)"] --> Stability["Z_ref Prevents Saturated Policy Collapse"]
+    end
+```
+
+**Analytical Gradient Inspection:**
+Evaluating the policy gradient with respect to $\theta$:
+- **For Desirable Completions ($y \in \mathcal{D}_D$):**
+  $$\nabla_\theta \mathcal{L}_{\text{desirable}} = -\beta \lambda_D \, \sigma\left( z_{\text{ref}} - r_\theta(x, y) \right) \nabla_\theta \log \pi_\theta(y \mid x)$$
+  Increases the probability of desirable tokens proportionally to how far $r_\theta(x, y)$ falls below the reference threshold.
+- **For Undesirable Completions ($y \in \mathcal{D}_U$):**
+  $$\nabla_\theta \mathcal{L}_{\text{undesirable}} = +\beta \lambda_U \, \sigma\left( r_\theta(x, y) - z_{\text{ref}} \right) \nabla_\theta \log \pi_\theta(y \mid x)$$
+  Suppresses undesirable tokens, amplified by the loss aversion factor $\lambda_U > \lambda_D$.
+
+**Empirical Performance (Llama-3 8B & Mistral 7B):**
+- **Unpaired Matching DPO:** Across AlpacaEval 2.0, MT-Bench, and GSM8K, KTO trained purely on unpaired binary data matches or slightly exceeds DPO trained on identical underlying paired preferences ($+1.2\%$ win rate on AlpacaEval 2.0).
+- **Extreme Class Imbalance Tolerance:** When trained on a heavily skewed distribution containing $90\%$ positive feedback and only $10\%$ negative feedback (mirroring real-world web telemetry), KTO maintains optimal gradient scaling, whereas standard RLHF collapse occurs due to lack of paired negative counterweights.
