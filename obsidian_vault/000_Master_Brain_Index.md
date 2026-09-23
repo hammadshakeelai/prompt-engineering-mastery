@@ -113,6 +113,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/chain_of_symbol.md|Chain Of Symbol]]
 - [[raw_research/snippets/chain_of_verification.md|Chain Of Verification]]
 - [[raw_research/snippets/circuit_breakers_representation_rerouting.md|Circuit Breakers Representation Rerouting]]
+- [[raw_research/snippets/claude_opus_5_5_system_prompt_pliny.md|Claude Opus 5 5 System Prompt Pliny]]
 - [[raw_research/snippets/claude_system_prompt_arch.md|Claude System Prompt Arch]]
 - [[raw_research/snippets/code_evals.md|Code Evals]]
 - [[raw_research/snippets/coding_agents.md|Coding Agents]]
