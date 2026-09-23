@@ -1880,3 +1880,156 @@ SPPO solves for $\pi^*$ iteratively without external gold demonstrations. In ite
 - **Convergence Rate:** SPPO guarantees convergence to an $\epsilon$-approximate Nash equilibrium at rate $\mathcal{O}(1/\sqrt{T})$ iterations.
 - **Transitivity Invariance:** Handles cyclic and intransitive preference graphs with theoretical consistency where standard Bradley-Terry optimization diverges.
 - **Benchmark Results:** Applied to Mistral-7B and Llama-3-8B across 3 self-play iterations, SPPO achieves **$28.53\%$ win-rate** on AlpacaEval 2.0 (outperforming DPO, IPO, and KTO) without using high-cost proprietary model annotations (GPT-4 distillation).
+
+## 63. JumpReLU Sparse Autoencoders & Heaviside-Gated Feature Steering (Gemma Scope, Lieberum et al., Google DeepMind 2024)
+
+### 63.1 The Shrinkage Pathology of $L_1$-Regularized Sparse Autoencoders
+Classical Sparse Autoencoders (SAEs) map polysemantic residual activations $x \in \mathbb{R}^d$ into a high-dimensional sparse latent space $f \in \mathbb{R}^m$ ($m \gg d$) by minimizing reconstruction error subject to an $L_1$ penalty:
+$$\mathcal{L}_{\text{standard}} = \|x - \hat{x}\|_2^2 + \lambda \|f\|_1, \quad f = \operatorname{ReLU}\left( W_{\text{enc}} x + b_{\text{enc}} \right)$$
+While the $L_1$ norm induces sparsity, it introduces a severe mathematical distortion known as **shrinkage bias**:
+$$\frac{\partial \mathcal{L}}{\partial f_i} \propto \lambda \cdot \operatorname{sign}(f_i)$$
+The constant gradient penalty $\lambda$ suppresses the magnitude of strongly activating, highly predictive features, forcing the encoder to systematically underestimate the true activation scale. When steering activations via feature clamping or intervention ($x_{\text{steered}} = x + \alpha W_{\text{dec}}[:, i]$), shrinkage bias causes severe miscalibration and downstream fluency collapse.
+
+Tom Lieberum, Senthooran Rajamanoharan, Neel Nanda et al. (*Gemma Scope: Open Sparse Autoencoders Everywhere All At Once on Gemma 2*, Google DeepMind, 2024 / arXiv:2408.05147; Rajamanoharan et al., 2024) introduce **JumpReLU SAEs**, completely decoupling the binary decision of feature firing from feature magnitude.
+
+```mermaid
+flowchart LR
+    Act["Residual Activation x in R^d"] --> PreAct["Pre-Activation z = W_enc x + b_enc"]
+    PreAct --> Heaviside["Heaviside Gating H(z - theta)"]
+    PreAct --> Linear["Linear Identity z"]
+    Heaviside --> Mult["Hadamard Product: f = z * H(z - theta)"]
+    Linear --> Mult
+    Mult --> Dec["Decoder Reconstruction x_hat = W_dec f + b_dec"]
+    Mult --> L0Loss["True L0 Sparsity Loss: lambda * sum H(z - theta)"]
+    Dec --> MSE["Reconstruction Loss ||x - x_hat||^2"]
+```
+
+### 63.2 Mathematical Formulation of the JumpReLU Activation
+The JumpReLU activation function applies a discontinuous jump at a learned, vector-valued positive threshold $\theta \in \mathbb{R}_+^m$:
+$$\operatorname{JumpReLU}_\theta(z) = z \odot H(z - \theta) = \begin{cases} z_i & \text{if } z_i > \theta_i \\ 0 & \text{if } z_i \le \theta_i \end{cases}$$
+where $H(\cdot)$ is the Heaviside step function:
+$$H(u) = \begin{cases} 1 & \text{if } u > 0 \\ 0 & \text{if } u \le 0 \end{cases}$$
+
+- **Unbiased Magnitude Scaling:** Once a pre-activation exceeds the threshold ($z_i > \theta_i$), its output magnitude is completely unpenalized ($f_i = z_i$). The model learns true activation intensities without artificial $L_1$ shrinkage.
+- **Direct $L_0$ Optimization:** JumpReLU enables direct penalization of the non-zero feature count ($\|f\|_0$) via the sum of Heaviside gates:
+  $$\mathcal{L}_{L_0} = \lambda \sum_{i=1}^m H(z_i - \theta_i)$$
+
+### 63.3 Straight-Through Estimators (STE) for Discontinuous Backpropagation
+Because the derivative of the Heaviside step function $H'(u) = \delta(u)$ is zero everywhere except at $u=0$ where it is infinite, standard gradient descent fails. Gemma Scope optimizes threshold $\theta$ using a bandwidth-controlled rectangle surrogate gradient:
+$$\frac{\partial H(z - \theta)}{\partial z} \approx \frac{1}{\epsilon} \operatorname{rect}\left( \frac{z - \theta}{\epsilon} \right), \quad \operatorname{rect}(u) = \begin{cases} 1 & \text{if } |u| \le \frac{1}{2} \\ 0 & \text{otherwise} \end{cases}$$
+where $\epsilon$ controls the width of the active gradient window. This allows gradients to update the threshold $\theta_i$ when pre-activations hover near the activation boundary.
+
+- **Empirical Scale:** Gemma Scope releases over 400 JumpReLU SAEs spanning all 26 layers of Gemma-2-2B and 42 layers of Gemma-2-9B (covering residual streams, attention head outputs, and MLP sub-layers with expansion factors up to $64\times$, $\approx 163\text{k}$ latents per layer). JumpReLU sets the Pareto frontier in mean squared error (MSE) versus $L_0$ sparsity, establishing the gold standard for mechanistic feature steering.
+
+---
+
+## 64. Deep Continuous Prefix Steering & Multi-Layer Key-Value Tuning (P-Tuning v2, Liu et al., ACL 2022; Li & Liang, ACL 2021)
+
+### 64.1 The Representation Capacity Ceiling of Shallow Prompt Tuning
+Parameter-efficient tuning originally emerged via **Prompt Tuning** (Lester et al., EMNLP 2021) and **P-Tuning** (Liu et al., 2021), inserting continuous virtual token embeddings $P \in \mathbb{R}^{l \times d}$ strictly at the input embedding layer:
+$$\tilde{X} = \left[ P \,;\, \operatorname{Embed}(X) \right]$$
+While effective for massive models ($>100\text{B}$), shallow prompt tuning suffers from three fundamental theoretical deficiencies on models $\le 10\text{B}$:
+1. **Vanishing Steering Authority:** Input prompt embeddings must propagate through $30\text{--}80$ nonlinear attention and MLP layers. In deep architectures, residual stream entropy and attention dispersion wash out prefix influence, collapsing task steerability.
+2. **Optimization Brittleness:** Gradients backpropagating through dozens of frozen layers to update $P$ suffer from severe non-convexity, making convergence hyperparameter-sensitive.
+3. **Sequence Length Tax:** Adding $l$ virtual tokens consumes $l$ positions of the input context window across every layer.
+
+Xiao Liu et al. (*P-Tuning v2: Prompt Tuning Can Be Comparable to Fine-tuning Universally Across Scales and Tasks*, ACL 2022 / arXiv:2110.07602) and Xiang Lisa Li & Percy Liang (*Prefix-Tuning*, ACL 2021) resolve these constraints by formulating **Deep Multi-Layer Prefix Steering**.
+
+```mermaid
+flowchart TD
+    subgraph Layer1["Transformer Layer 1"]
+        K1["Key Projection K^(1)"]
+        V1["Value Projection V^(1)"]
+        P_K1["Prefix Key P_K^(1)"]
+        P_V1["Prefix Value P_V^(1)"]
+        P_K1 --> Attn1["Augmented Attn([P_K^(1); K^(1)], [P_V^(1); V^(1)])"]
+        K1 --> Attn1
+        P_V1 --> Attn1
+        V1 --> Attn1
+    end
+
+    subgraph LayerL["Transformer Layer L"]
+        KL["Key Projection K^(L)"]
+        VL["Value Projection V^(L)"]
+        P_KL["Prefix Key P_K^(L)"]
+        P_VL["Prefix Value P_V^(L)"]
+        P_KL --> AttnL["Augmented Attn([P_K^(L); K^(L)], [P_VL^(L); V^(L)])"]
+        KL --> AttnL
+        P_VL --> AttnL
+        VL --> AttnL
+    end
+
+    MLPReparam["Training: MLP Reparameterization P = MLP(E)"] -.-> P_K1
+    MLPReparam -.-> P_V1
+    MLPReparam -.-> P_KL
+    MLPReparam -.-> P_VL
+```
+
+### 64.2 Key-Value Space Virtual Prefix Formulation
+Instead of prepending virtual tokens at the input layer, Deep Prefix Steering injects independent continuous steering matrices into the **Key and Value projection manifolds** of *every transformer layer* $l \in \{1, \dots, L\}$:
+$$\tilde{K}^{(l)} = \left[ P_K^{(l)} \,;\, K_{\text{seq}}^{(l)} \right] \in \mathbb{R}^{(l_p + T) \times d_k}$$
+$$\tilde{V}^{(l)} = \left[ P_V^{(l)} \,;\, V_{\text{seq}}^{(l)} \right] \in \mathbb{R}^{(l_p + T) \times d_v}$$
+where $l_p$ is prefix length (typically $10\text{--}30$ tokens), $T$ is sequence length, and $P_K^{(l)}, P_V^{(l)}$ are trainable parameter matrices. The attention computation at layer $l$ becomes:
+$$\operatorname{Head}_h^{(l)} = \operatorname{Softmax}\left( \frac{Q^{(l)} \left( \tilde{K}^{(l)} \right)^\top}{\sqrt{d_k}} \right) \tilde{V}^{(l)}$$
+
+- **Direct Layerwise Control:** Every transformer layer directly conditions its attention heads on the task prefix, preventing representation fading regardless of model depth.
+- **Invariance to Intermediate Activations:** Prefix vectors cannot be overwritten by upstream residual stream activations, providing an invariant steerability manifold.
+
+### 64.3 The MLP Reparameterization Trick & Inference Freezing
+Directly optimizing $P_K^{(l)}, P_V^{(l)}$ via stochastic gradient descent leads to unstable training trajectories. To stabilize optimization:
+1. **Training Phase:** Parameterize prefixes through an embedding matrix $E^{(l)} \in \mathbb{R}^{l_p \times d_{\text{mid}}}$ followed by a two-layer bottleneck MLP:
+   $$P^{(l)} = \operatorname{MLP}\left( E^{(l)} \right) = W_2 \operatorname{Tanh}\left( W_1 E^{(l)} \right)$$
+   The smooth nonlinearity of the MLP ensures stable, well-conditioned gradient flow during early training steps.
+2. **Inference Phase:** Once training converges, the MLP is discarded. Only the materialized static matrices $P_K^{(l)}, P_V^{(l)}$ are retained and cached in the KV memory manager.
+3. **Zero Runtime Latency:** Materialized prefixes require zero parameter computation at test time; they function as static prefilled KV-cache prefixes, consuming **$<0.1\%\text{--}1\%$** of model parameters while matching full parameter fine-tuning across GLUE, SuperGLUE, and complex reasoning benchmarks.
+
+---
+
+## 65. Deterministic Finite-State Automata Masking & Regex-Guided Decoding (Outlines, Willard & Louf, 2023 / SGLang)
+
+### 65.1 The Hallucination of Syntax in Open-Ended Autoregression
+Large language models trained on natural text lack formal syntactic guarantees. When prompted to generate structured data formats (e.g., JSON schemas, SQL queries, Python ASTs, chemical SMILES):
+$$P(\text{syntax error}) = 1 - \prod_{t=1}^T P(x_t \in \operatorname{ValidSubwords}(x_{<t}))$$
+Even when individual token transition validity exceeds $99.8\%$, cumulative sequence validity over $T=500$ tokens degrades to $(0.998)^{500} \approx 36.7\%$. Post-hoc parsing, retrying, and temperature hacking waste inference compute and offer zero mathematical safety bounds.
+
+Brandon Willard and Rémi Louf (*Efficient Guided Generation for Large Language Models*, 2023 / Outlines; Zheng et al., SGLang 2024) eliminate syntax invalidity entirely by compiling structural constraints into **Deterministic Finite Automata (DFA)** and enforcing dynamic vocabulary logit masking at machine speed.
+
+```mermaid
+flowchart TD
+    Schema["User Constraint: Regex / JSON Schema"] --> RegexCompiler["Regex to Minimal DFA Compiler"]
+    RegexCompiler --> DFA["DFA: M = (Q, Sigma, delta, q_0, F)"]
+    DFA --> Precompute["Offline Indexing: Valid Subword Map V(q) for all q in Q"]
+    
+    subgraph RuntimeLoop["Runtime Autoregressive Generation Step t"]
+        CurrentState["Current DFA State q_t"] --> FetchMask["Fetch Precomputed Bitmask M(q_t) in O(1)"]
+        LLMLogits["Model Logits z_t in R^|V|"] --> ApplyMask["Logit Masking: z_t[~M(q_t)] = -inf"]
+        ApplyMask --> Softmax["Softmax & Sample Token x_t"]
+        Softmax --> AdvanceState["State Transition: q_t+1 = delta*(q_t, x_t)"]
+        AdvanceState --> CurrentState
+    end
+```
+
+### 65.2 Automaton Construction & Subword Vocabulary Indexing
+Any regular expression or regular schema can be compiled into a minimal Deterministic Finite Automaton (DFA) defined as a 5-tuple:
+$$\mathcal{M} = \left( Q, \Sigma, \delta, q_0, F \right)$$
+where $Q$ is a finite set of states, $\Sigma$ is the character alphabet, $\delta: Q \times \Sigma \to Q$ is the transition function, $q_0$ is the start state, and $F \subseteq Q$ is the set of accepting states.
+
+The fundamental challenge in LLM decoding is the **subword tokenization mismatch**: LLMs generate multi-character subwords $w \in \mathcal{V}$, whereas DFAs operate over individual characters $c \in \Sigma$.
+Outlines resolves this via **offline transition closure indexing**:
+1. For each subword $w = c_1 c_2 \dots c_k \in \mathcal{V}$, define extended transition $\delta^*(q, w)$:
+   $$\delta^*(q, w) = \delta(\dots \delta(\delta(q, c_1), c_2) \dots, c_k)$$
+2. For every state $q \in Q$, precompute the set of permissible vocabulary tokens $V(q)$:
+   $$V(q) = \left\{ w \in \mathcal{V} \;\middle|\; \delta^*(q, w) \text{ is defined and } \exists s \in \Sigma^* \text{ s.t. } \delta^*(\delta^*(q, w), s) \in F \right\}$$
+3. Materialize $V(q)$ as a compressed Boolean bitmask vector $\mathbf{M}_q \in \{0, 1\}^{|\mathcal{V}|}$.
+
+### 65.3 Logit Interception & Zero-Latency Execution
+At decoding step $t$ in state $q_t$:
+1. **$\mathcal{O}(1)$ Bitmask Lookup:** Retrieve precomputed mask $\mathbf{M}_{q_t}$.
+2. **Logit Masking:** Set invalid token logits to negative infinity:
+   $$\tilde{z}_{t, v} = \begin{cases} z_{t, v} & \text{if } \mathbf{M}_{q_t}[v] = 1 \\ -\infty & \text{if } \mathbf{M}_{q_t}[v] = 0 \end{cases}$$
+3. **Probability Re-normalization:**
+   $$P_{\text{guided}}(x_t = v \mid x_{<t}) = \frac{\exp(\tilde{z}_{t, v})}{\sum_{v' \in V(q_t)} \exp(\tilde{z}_{t, v'})}$$
+4. **State Transition:** Advance automaton: $q_{t+1} = \delta^*(q_t, x_t)$.
+
+- **Guarantees:** $P(\text{syntax error}) \equiv 0$. The generated sequence is mathematically guaranteed to belong to the regular language $\mathcal{L}(\mathcal{M})$.
+- **Zero Overhead Serving:** Because bitmasks are computed offline and stored as contiguous bit-arrays, runtime logit masking executes in **$<15\,\mu\text{s}$**, introducing zero perceptible latency during high-throughput enterprise serving in vLLM and SGLang.
