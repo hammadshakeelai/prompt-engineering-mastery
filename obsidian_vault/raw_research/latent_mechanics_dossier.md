@@ -3158,6 +3158,229 @@ During fine-tuning, the model is trained with a composite multi-token loss:
 $$\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{main}}(x_{t+1}) + \sum_{k=1}^K \lambda_k \mathcal{L}_{\text{spec}}^{(k)}(x_{t+k+1})$$
 - **Serving Performance:** Speculative Streaming achieves **$1.9\times\text{--}3.5\times$ speedups** across diverse benchmarks on both device (Apple Silicon, mobile CPUs) and server environments (A100/H100), matching Leviathan-style speculative decoding while eliminating $100\%$ of secondary draft model memory and operational complexity.
 
+---
+
+## 91. Transcoders & Linearized Feature Circuit Attribution Graphs (Dunefsky et al., NeurIPS 2024 / Anthropic)
+
+### 91.1 The Non-Linear MLP Opacity Problem
+Standard Sparse Autoencoders (SAEs) act as identity autoencoders ($\hat{x} \approx x$), mapping an activation vector $x \in \mathbb{R}^d$ into an overcomplete sparse feature dictionary via:
+$$\hat{x} = W_{\text{dec}}\,\phi(W_{\text{enc}}(x - b_{\text{dec}}) + b_{\text{enc}}) + b_{\text{dec}}$$
+While SAEs isolate monosemantic features within static snapshots (e.g., residual streams), they treat multi-layer perceptron (MLP) layers as opaque, non-linear black boxes: $\text{MLP}(x) = W_2\,\sigma(W_1 x + b_1)$. Inter-layer circuit tracing across MLPs thus requires local Jacobian approximations or remains blocked by dense non-linearities.
+
+Jacob Dunefsky, Peter Chlenski, and Neel Nanda (*Transcoders Find Interpretable LLM Feature Circuits*, NeurIPS 2024; Anthropic Transformer Circuits) introduce **Transcoders**: neural modules that replace identity autoencoding with functional module translation, predicting the non-linear transformation $y = \text{MLP}(x)$ directly from module inputs $x$:
+$$f(x) = W_{\text{dec}}\,\operatorname{ReLU}(W_{\text{enc}} x + b_{\text{enc}}) + b_{\text{dec}}$$
+where latent features are constrained to be sparse via $L_1$, TopK, or JumpReLU regularization, with $W_{\text{dec}} \in \mathbb{R}^{d \times M}$ and $M \gg d$.
+
+```mermaid
+flowchart TD
+    ResidualIn["Residual Stream Input x_l"] --> TranscoderEnc["Transcoder Encoder: a = ReLU(W_enc * x_l + b_enc)"]
+    TranscoderEnc --> SparseFeatures["Sparse Interpretable Features {a_i}"]
+    SparseFeatures --> TranscoderDec["Transcoder Decoder: y_hat = W_dec * a + b_dec"]
+    TranscoderDec --> ResidualOut["Reconstructed MLP Output y_hat written to Residual Stream"]
+    
+    subgraph CircuitAttribution["Exact Linear Feature Attribution"]
+        SparseFeatures --> FeatureI["Feature i at Layer l"]
+        FeatureI --> LinearWeight["Weight Matrix W_enc^(l+k) * W_dec^(l)"]
+        LinearWeight --> FeatureJ["Feature j at Layer l+k"]
+    end
+```
+
+### 91.2 Factorizing MLPs into End-to-End Attribution Graphs
+By replacing $\text{MLP}(x)$ with $f(x) = \sum_{i=1}^M a_i(x)\,W_{\text{dec}, i} + b_{\text{dec}}$, where $a_i(x) = [\operatorname{ReLU}(W_{\text{enc}} x + b_{\text{enc}})]_i$ is the scalar activation of latent $i$, internal MLP non-linearities are completely eliminated. The network’s multi-layer computation is linearized, confining non-linear operations solely to discrete, scalar feature thresholding:
+
+1. **Additive Residual Writing:** Active latents write directly into the residual stream along sparse dictionary directions $W_{\text{dec}, i}$.
+2. **Direct Linear Composition:** A downstream transcoder feature $j$ at layer $l+k$ reads from the residual stream via encoder row $W_{\text{enc}, j}^{(l+k)}$. The direct causal attribution from feature $i$ to feature $j$ simplifies to an exact linear inner product:
+   $$A_{i \to j} = a_i^{(l)}\,\left( W_{\text{enc}, j}^{(l+k)} W_{\text{dec}, i}^{(l)} \right)$$
+3. **Exact Attribution DAGs:** Linearizing MLP contributions enables exact gradient-free attribution across arbitrary layers (and through attention matrices $W_O W_V$). This transforms the transformer from an opaque cascade of non-linear modules into a fully transparent Directed Acyclic Graph (DAG) of interpretable feature circuits.
+
+---
+
+## 92. Gist Tokens: Prompt Compression via Attention Bottlenecking (Mu et al., NeurIPS 2023)
+
+### 92.1 Prompt Redundancy & The Quadratic Prefill Tax
+Prompt engineering pipelines (few-shot demonstrations, dense agent instructions, system prompts) force models to re-attend over repetitive prompt tokens on every request. This incurs quadratic prefill compute and consumes substantial GPU VRAM for Key-Value caches.
+
+Jesse Mu, Xiang Lisa Li, and Noah Goodman (*Learning to Compress Prompts with Gist Tokens*, Stanford / NeurIPS 2023 / arXiv:2304.08467) introduce **Gist Tokens**: learnable compression tokens that compress prompt contexts into $k$ compact vectors via modified attention masks.
+
+```mermaid
+flowchart TD
+    RawPrompt["Raw Prompt Tokens P = (x_1, ..., x_L)"] --> GistMask["Modified Causal Attention Mask"]
+    
+    subgraph AttentionTopology["Attention Bottleneck Mask M"]
+        GistMask --> P_attends["P attends causally to P"]
+        GistMask --> G_attends["k Gist Tokens G attend to P and G"]
+        GistMask --> Query_attends["Query I and Completion Y attend ONLY to G (Forbidden from P)"]
+    end
+    
+    Query_attends --> KVPrune["Prune P from GPU VRAM: Retain only k Gist KV States"]
+    KVPrune --> EfficientGen["Autoregressive Generation (26x Compression, 40% FLOP Reduction)"]
+```
+
+### 92.2 Attention Bottleneck Masking Formulation
+Given prompt tokens $P = (x_1, \dots, x_L)$, $k$ special gist tokens $\mathcal{G} = [g_1, \dots, g_k]$ are appended at the boundary. The attention matrix $M \in \{0, 1\}^{N \times N}$ is constrained during instruction fine-tuning:
+1. **Prompt Self-Attention:** $M_{i, j} = 1$ for $j \le i \in P$.
+2. **Gist Absorption:** Gist tokens attend to all preceding prompt tokens: $M_{g, i} = 1$ for all $i \in P \cup \{g' \le g\}$.
+3. **Strict Information Bottleneck:** Downstream query tokens $I$ and generated completion tokens $Y$ are explicitly masked from attending to $P$:
+   $$M_{t, i} = 0, \quad \forall t \in I \cup Y, \; i \in P$$
+   $$M_{t, g} = 1, \quad \forall t \in I \cup Y, \; g \in \mathcal{G}$$
+
+### 92.3 KV Cache Pruning & Empirical Benchmarks
+- **Instantaneous KV Memory Eviction:** Because tokens in $I \cup Y$ never query $P$, the entire Key-Value cache for $P$ is discarded immediately following prefill. Only the $k \times d_{\text{kv}}$ tensors of the gist tokens are retained.
+- **Empirical Performance:** Evaluated on LLaMA-7B and FLAN-T5 across HumanEval and Alpaca, Gist tokens achieve **up to $26\times$ token compression** and **$40\%$ FLOPs reduction** with minimal loss in task execution fidelity.
+
+---
+
+## 93. Microsoft LLGuidance & Subword Pushdown Automata Parsing (Guidance-AI 2024)
+
+### 93.1 High-Performance Grammar Enforcement in Serving Engines
+Grammar-constrained generation is vital for enterprise schema compliance (JSON, SQL, function calling). However, evaluating CFG or regex constraints per token often introduces $5\text{--}50\text{ ms}$ of CPU latency, severely bottlenecking high-throughput GPU inference engines.
+
+**LLGuidance** (developed by Microsoft under `guidance-ai/llguidance` and powering OpenAI's Structured Outputs, vLLM, SGLang, and llama.cpp) executes formal grammar constraints with **sub-50 microsecond per token overhead** via compiled pushdown automata and subword trie masking.
+
+```mermaid
+flowchart TD
+    Schema["JSON Schema / Lark EBNF Grammar"] --> LarkCompiler["Lark Grammar Compiler"]
+    LarkCompiler --> PushdownAutomaton["Pushdown Automaton (PDA) + Earley Parser Engine"]
+    
+    GPUForward["GPU Computes Logits z in R^|V|"] --> PDA_Step["PDA Advances State & Queries Subword Trie"]
+    PDA_Step --> TrieMask["Fast SIMD Subword Trie Bitmask Synthesis (<50 microseconds)"]
+    TrieMask --> ApplyMask["Apply Logit Mask: z_v = -inf for invalid transitions"]
+    ApplyMask --> SampleToken["Sample Syntactically Valid Token"]
+```
+
+### 93.2 Pushdown Automaton Execution & Subword Trie Masking
+1. **Lark Grammar Compilation:** LLGuidance compiles JSON schemas, regular expressions, and context-free grammars into a unified pushdown automaton (PDA).
+2. **Subword Prefix Trie:** Tokenizers (BPE, WordPiece) partition syntax unpredictably. LLGuidance indexes the model vocabulary $\mathcal{V}$ into a character trie where each leaf corresponds to a token ID.
+3. **SIMD Token Mask Synthesis:** At step $t$, the PDA determines the set of permissible character continuations. It traverses the subword trie using SIMD bitwise operations, constructing a 32-bit aligned boolean bitmask in **$\sim 50\,\mu\text{s}$**, ensuring zero GPU stalls.
+4. **Integration Impact:** Powers strict JSON Schema adherence with **$100\%$ schema validity** across billions of production requests with $<1\%$ serving latency impact.
+
+---
+
+## 94. Test-Time Training (TTT) Layers & Expressive Linear/MLP Hidden States (Sun et al., Stanford 2024)
+
+### 94.1 The Memory Capacity vs. Linear Complexity Trade-Off
+Sequence modeling architectures face a fundamental dilemma:
+- **Transformers:** Quadratic attention complexity $\mathcal{O}(N^2)$ in context length $N$ and growing Key-Value cache memory footprint, but exceptionally expressive context modeling.
+- **Linear Attention & RNNs (Mamba, RWKV):** Linear time $\mathcal{O}(N)$ and constant $\mathcal{O}(1)$ memory decoding, but bounded recurrent states that suffer from memory saturation and poor context extrapolation beyond training limits.
+
+Karen Sun, Xinhao Li, Karan Dalal, Jiarui Xu, Arjun Vikram, Shengbang Fang, et al. (*Learning to (Learn at Test Time): RNNs with Expressive Hidden States*, Stanford, UC Berkeley, UCSD, Meta / arXiv:2407.04620) resolve this dilemma with **Test-Time Training (TTT)**. Instead of defining the RNN hidden state as a fixed-dimensional vector $s_t \in \mathbb{R}^d$, TTT redefines the hidden state as an **actual machine learning model** $W_t$.
+
+```mermaid
+flowchart TD
+    InputToken["Input Sequence Token x_t"] --> FeatureView["Feature Map / View Generation: x_tilde_t"]
+    FeatureView --> LossCompute["Self-Supervised Reconstruction Loss: ell(W_(t-1); x_tilde_t)"]
+    LossCompute --> GradientStep["Test-Time Gradient Descent: W_t = W_(t-1) - eta * grad(ell)"]
+    GradientStep --> UpdatedModel["Updated Model State W_t (Expressive Internal Weight Matrix)"]
+    UpdatedModel --> Readout["Output Projection: z_t = W_t * q_t"]
+    Readout --> OutputToken["Context-Conditioned Token Representation z_t"]
+```
+
+### 94.2 Mathematical Formulation of TTT Layers
+1. **Hidden State Parameterization:** The hidden state at time $t$ is a weight matrix $W_t \in \mathbb{R}^{d_1 \times d_2}$ (TTT-Linear) or multi-layer MLP weights $\Theta_t$ (TTT-MLP).
+2. **Self-Supervised Reconstruction Objective:** For input token $x_t$, the layer constructs a training view $\tilde{x}_t$ (e.g., via corruptive linear projection) and evaluates reconstruction error:
+   $$\ell(W; x_t) = \frac{1}{2} \| W \tilde{x}_t - x_t \|^2$$
+3. **The Hidden State Update Rule:** The transition from $W_{t-1}$ to $W_t$ is a gradient step of online self-supervised learning:
+   $$W_t = W_{t-1} - \eta \nabla_W \ell(W_{t-1}; x_t)$$
+4. **Token Readout:** Output feature $z_t$ is computed by evaluating the updated model $W_t$ on a query projection:
+   $$z_t = W_t \cdot \operatorname{LayerNorm}(q(x_t))$$
+
+### 94.3 Empirical Performance & Long-Context Extrapolation
+- **Linear Complexity & Throughput:** TTT-Linear achieves linear $\mathcal{O}(N)$ prefill complexity and constant $\mathcal{O}(1)$ decoding state size, matching Mamba in wall-clock latency while running faster than FlashAttention-2 at $8\text{k}+$ contexts.
+- **Context Extrapolation:** Unlike Mamba or Transformer baselines that plateau or degrade beyond $16\text{k}$ tokens, TTT layers monotonically reduce perplexity as context scales out to $32\text{k}\text{--}128\text{k}$ tokens, demonstrating true online in-weights learning.
+
+---
+
+## 95. Speculative RAG & Parallel Specialist Drafting with Generalist Verification (Wang et al., UCSD / Google, ICLR 2025)
+
+### 95.1 Context Bloat & Latency Bottlenecks in Retrieval-Augmented Generation
+Standard Retrieval-Augmented Generation (RAG) feeds all retrieved documents (often 10–50 passages) into a single monolithic frontier model. This introduces severe pathologies:
+1. **High TTFT & Attention Quadratic Bottleneck:** Prefilling dozens of lengthy passages bloats context windows, degrading time-to-first-token.
+2. **Lost-in-the-Middle Phenomenon:** Crucial facts buried in intermediate passages are neglected by attention mechanisms.
+3. **Hallucinatory Synthesis:** Single models struggle to disentangle contradictory evidence across retrieved snippets.
+
+Zilong Wang, Zifeng Wang, Long T. Le, Huaixiu Steven Zheng, and Swaroop Mishra (*Speculative RAG: Enhancing Retrieval-Augmented Generation through Drafting and Verification*, UCSD & Google Cloud AI Research / ICLR 2025 / arXiv:2407.08223) resolve this through a bipartite **Drafting-Verification** architecture.
+
+```mermaid
+flowchart TD
+    UserQuery["User Query q"] --> Retriever["Document Retrieval Engine: Retrieves Docs D_1..D_M"]
+    Retriever --> Partition["Document Partitioning: Subsets S_1, S_2, S_3, S_4"]
+    
+    subgraph DraftingPhase["Parallel Specialist Drafting (Lightweight RAG Specialist LM)"]
+        Partition --> Draft1["Specialist LM(q, S_1) -> Draft d_1"]
+        Partition --> Draft2["Specialist LM(q, S_2) -> Draft d_2"]
+        Partition --> Draft3["Specialist LM(q, S_3) -> Draft d_3"]
+        Partition --> Draft4["Specialist LM(q, S_4) -> Draft d_4"]
+    end
+    
+    Draft1 --> VerificationPool["Candidate Draft Pool {d_1, d_2, d_3, d_4}"]
+    Draft2 --> VerificationPool
+    Draft3 --> VerificationPool
+    Draft4 --> VerificationPool
+    
+    VerificationPool --> GeneralistLM["Generalist Verifier LM (Single Forward Pass)"]
+    UserQuery --> GeneralistLM
+    GeneralistLM --> VerifiedAnswer["Consolidated Factual Answer (3.5x Speedup, +12.9% Accuracy)"]
+```
+
+### 95.2 Architectural Formulation: Specialist vs. Generalist
+1. **Document Subset Partitioning:** Given $M$ retrieved passages $\mathcal{D} = \{D_1, \dots, D_M\}$, Speculative RAG partitions $\mathcal{D}$ into $K$ diverse, non-overlapping subsets $\mathcal{S}_1, \dots, \mathcal{S}_K$.
+2. **Parallel Specialist Drafting:** A lightweight, instruction-distilled Specialist LM $\mathcal{M}_{\text{spec}}$ processes each subset concurrently:
+   $$d_k = \mathcal{M}_{\text{spec}}\left( q, \mathcal{S}_k \right), \quad \forall k \in \{1, \dots, K\}$$
+   Each draft $d_k$ contains a candidate answer grounded in its specific subset $\mathcal{S}_k$.
+3. **Batched Generalist Verification:** A frozen frontier Generalist LM $\mathcal{M}_{\text{gen}}$ evaluates all $K$ candidate drafts simultaneously in a single forward pass:
+   $$y^* = \mathcal{M}_{\text{gen}}\left( q, \{d_1, d_2, \dots, d_K\} \right)$$
+   The Generalist verifies logical consistency, resolves contradictions across drafts, and emits the finalized answer.
+
+### 95.3 Empirical Benchmarks
+- **Accuracy Gains:** Evaluated on TriviaQA, PopQA, and PubHealth, Speculative RAG achieves up to **$+12.9\%$ accuracy improvement** over standard RAG baselines.
+- **Latency Acceleration:** Cuts end-to-end serving latency by up to **$3.5\times$**, while reducing total input token consumption by **$51\%$** because the heavy Generalist processes concise candidate drafts rather than raw, noisy document passages.
+
+---
+
+## 96. Auxiliary-Loss-Free Load Balancing & Expert Bias Routing in Mixture-of-Experts (DeepSeek 2024)
+
+### 96.1 The Gradient Interference of Auxiliary Balancing Losses
+In Mixture-of-Experts (MoE) architectures (e.g., Switch Transformer, Mixtral, DeepSeek-V2), tokens are routed to top-$K$ experts using gating networks. Because standard softmax routing tends to collapse toward a handful of popular experts ("expert collapse"), models traditionally introduce an **Auxiliary Load Balancing Loss**:
+$$\mathcal{L}_{\text{aux}} = \alpha \cdot N \sum_{i=1}^N f_i P_i$$
+where $f_i$ is the fraction of tokens routed to expert $i$, and $P_i$ is the mean routing probability.
+
+However, researchers at DeepSeek (*Auxiliary-Loss-Free Load Balancing Strategy for Mixture-of-Experts*, DeepSeek / arXiv:2408.15664) demonstrate that $\mathcal{L}_{\text{aux}}$ produces severe **gradient interference**:
+- The auxiliary balancing gradient $\nabla_\theta \mathcal{L}_{\text{aux}}$ frequently conflicts with the main language modeling cross-entropy gradient $\nabla_\theta \mathcal{L}_{\text{LM}}$.
+- Forcing the model to balance experts via gradient descent penalizes optimal feature specialization, degrading final model reasoning capability.
+
+```mermaid
+flowchart TD
+    TokenRep["Token Representation x_t"] --> RouterGEMM["Router Projection: W_r * x_t"]
+    RouterGEMM --> AffineBias["Add Dynamic Expert Biases: s_i = (W_r * x_t)_i + b_i"]
+    AffineBias --> TopK["Select Top-K Experts argmax_K(s_i)"]
+    TopK --> ExpertDispatch["Dispatch to Experts without Gradient Backprop to Bias b"]
+    
+    subgraph FeedbackLoop["Online Load Monitor (Loss-Free Balancing)"]
+        TopK --> BatchCount["Compute Batch Expert Load L_i"]
+        BatchCount --> BiasUpdate["Update Bias: b_i <- b_i + gamma * (Mean_Load - L_i)"]
+        BiasUpdate --> AffineBias
+    end
+```
+
+### 96.2 Formulation of Auxiliary-Loss-Free Balancing
+DeepSeek replaces the auxiliary loss entirely with **dynamic, non-differentiable expert-wise routing biases**:
+1. **Biased Routing Score:** For input token representation $x_t$, the routing affinity score for expert $i$ is modulated by an additive bias $b_i$:
+   $$s_{i, t} = \operatorname{Softmax}\left( W_r x_t \right)_i + b_i$$
+2. **Top-$K$ Selection:** Tokens are dispatched to the $K$ experts with the highest biased scores $s_{i, t}$:
+   $$\mathcal{E}_{\text{active}} = \operatorname{TopK}\left( \{s_{1, t}, \dots, s_{N, t}\}, K \right)$$
+3. **Weight Normalization for Expert Computation:** Crucially, while selection utilizes $s_{i, t}$, the gating weights used for scaling expert outputs are derived solely from un-biased routing probabilities:
+   $$w_{i, t} = \frac{\operatorname{Softmax}(W_r x_t)_i}{\sum_{j \in \mathcal{E}_{\text{active}}} \operatorname{Softmax}(W_r x_t)_j}$$
+4. **Dynamic Bias Feedback Update:** At the end of each training step, biases $b_i$ are adjusted proportional to their actual token load $L_i$ relative to target average load $\bar{L}$:
+   $$b_i \leftarrow b_i + \gamma \cdot \left( \bar{L} - L_i \right)$$
+   where $\gamma > 0$ is a step hyperparameter. If expert $i$ is overloaded ($L_i > \bar{L}$), $b_i$ decreases, lowering its selection probability in subsequent steps without perturbing model weights.
+
+### 96.3 Deployment in DeepSeek-V3
+Implemented in **DeepSeek-V3** across 256 routed experts and 1 shared expert:
+- Completely eliminates auxiliary loss gradient interference.
+- Delivers near-perfect expert load distribution (load variance $<2\%$) throughout pretraining on 14.8 trillion tokens, ensuring maximum compute efficiency across thousands of GPUs without language modeling capacity degradation.
+
+
+
 
 
 
