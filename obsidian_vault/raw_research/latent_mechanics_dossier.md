@@ -12107,3 +12107,87 @@ flowchart LR
 
 **Theoretical Significance:**
 Transcoders resolve the longest-standing open obstacle in mechanistic interpretability: converting black-box non-linear deep neural networks into human-auditable, provably linear computational circuits where every token prediction can be traced back to discrete, monosemantic feature activations.
+
+---
+
+## 316. Mooncake: KVCache-Centric Disaggregated Architecture for LLM Serving (Qin et al., Moonshot AI & Tsinghua, 2024)
+
+### 316.1 The Disaggregated Serving Dilemma & Inter-Cluster Imbalance
+In traditional monolithic LLM serving architectures (e.g., standard vLLM or TensorRT-LLM instances), prefill (prompt phase) and decode (generation phase) execute on the same GPU cluster:
+
+1. **Phase Interference and GPU Resource Starvation:**
+   - **Prefill is Compute-Bound:** Characterized by high arithmetic intensity ($\text{FLOPs} / \text{Byte}$), saturating Tensor Cores.
+   - **Decode is Memory-Bandwidth Bound:** Generates one token at a time with low arithmetic intensity, stalled by HBM memory bandwidth.
+   Mixing these phases on identical nodes introduces catastrophic tail latency ($\text{P99}$ TTFT and TBT degradation).
+2. **The KVCache Redundancy Tax:**
+   In multi-turn conversations, agent workflows, and document QA, the KV cache generated during the prefill phase must either remain pinned in high-cost HBM (causing early out-of-memory eviction) or be discarded and repeatedly recomputed from scratch, wasting millions of GPU FLOPs.
+
+```mermaid
+flowchart TD
+    subgraph Monolithic_Architecture["Monolithic Serving (Prefill + Decode Collided)"]
+        UserReq["Incoming Requests"] --> MonolithicGPU["GPU Workers (Prefill & Decode Competing)"]
+        MonolithicGPU --> OOM["HBM Exhaustion + High P99 TTFT/TBT"]
+    end
+    subgraph Mooncake_Architecture["Mooncake Disaggregated Architecture (Moonshot AI 2024)"]
+        Req["User Requests"] --> Conductor["Global Conductor & Scheduler"]
+        Conductor --> PrefillCluster["Prefill-Only Nodes (Compute-Saturated Tensor Cores)"]
+        Conductor --> DecodeCluster["Decode-Only Nodes (Bandwidth-Optimized Decoding)"]
+        PrefillCluster -- "Async RDMA Transfer (InfiniBand/RoCE)" --> DistributedCache["Disaggregated KVCache Pool (GPU HBM + Host DRAM + NVMe SSD)"]
+        DistributedCache -- "Zero-Copy Lookup" --> DecodeCluster
+    end
+```
+
+---
+
+### 316.2 Mooncake's Disaggregated Systems Architecture
+**Mooncake** (Qin et al., Moonshot AI & Tsinghua University, 2024) decouples prefill and decode entirely, placing an elastic, disaggregated **KVCache Memory Pool** at the structural center of the cluster.
+
+#### A. Multi-Tiered Hierarchical Storage Hierarchy
+Mooncake organizes cluster storage into a unified virtual memory address space:
+1. **Tier 1 (GPU HBM):** Local high-speed cache ($2\text{--}3.2 \text{ TB/s}$ per GPU).
+2. **Tier 2 (Host CPU DRAM):** High-capacity system memory accessible via PCIe Gen 5 ($64\text{--}128 \text{ GB/s}$) and cluster-wide RDMA ($400\text{--}800 \text{ Gbps}$).
+3. **Tier 3 (Local NVMe SSDs):** High-density persistent flash arrays ($7\text{--}14 \text{ GB/s}$ read throughput).
+
+#### B. Asynchronous Zero-Copy Transport via Messenger
+To prevent prefill nodes from idling while transmitting gigabytes of KV cache tensors to decode nodes, Mooncake implements **Messenger**, an optimized RDMA transport engine:
+- Tensors are sliced into fine-grained memory blocks ($16\text{--}64\text{ tokens}$).
+- As soon as layer $l$ completes its prefill forward pass on the Prefill node, its KV cache is immediately streamed asynchronously via RDMA over InfiniBand/RoCE into the destination Decode node's HBM or host DRAM:
+  $$t_{\text{transfer}} \le t_{\text{prefill, downstream layers}}$$
+- By overlapping computation with communication, the transfer latency of KV caches is effectively hidden ($t_{\text{overhead}} \to 0$).
+
+---
+
+### 316.3 KVCache-Centric Scheduling & Prefix Routing
+Mooncake's Conductor tracks the global residency of cached prefix blocks across all cluster nodes using a distributed Radix Tree index:
+
+$$\text{TargetNode}^\star = \arg\max_{j \in \mathcal{N}} \left( \alpha \cdot \text{PrefixOverlap}(q, \mathcal{C}_j) - \beta \cdot \text{Load}(j) \right)$$
+
+1. **Cache-Aware Request Dispatch:**
+   Incoming queries with shared prefixes (system prompts, few-shot examples, large PDF contexts) are routed directly to nodes that already house the prefix blocks in HBM or DRAM, eliminating redundant prefill computation.
+2. **Predictive Pre-Loading:**
+   When a long-turn agent task is detected, the Conductor prefetches older historical KV blocks from NVMe SSD into host DRAM before generation begins.
+
+---
+
+### 316.4 Quantitative Benchmarks Across Production Workloads
+
+```mermaid
+flowchart LR
+    subgraph ThroughputScaling["Production Request Throughput (Kimi 200k Context)"]
+        vLLM["Standard vLLM: 1.00x Baseline"]
+        Splitwise["Prefill/Decode Split (Splitwise): 1.85x Throughput"]
+        Mooncake["Mooncake (Disaggregated KVCache Pool): 4.25x Throughput (75% Cost Reduction)"]
+    end
+```
+
+| Metric | Monolithic Serving (vLLM / TGI) | Disaggregated Prefill/Decode (Splitwise) | Mooncake (KVCache-Centric) |
+| :--- | :--- | :--- | :--- |
+| **Separation of Concerns** | Mixed Prefill + Decode | Physical Node Split | **Disaggregated Elastic Storage + Compute Split** |
+| **KV Cache Redundancy** | High (Frequent Recomputes) | High (Inter-Node Transfer Stalls) | **Zero (Global Distributed Radix Cache Pool)** |
+| **P99 TTFT (200k Context)** | $14.2 \text{ s}$ | $6.8 \text{ s}$ | **$1.85 \text{ s}$ ($7.6\times$ Improvement)** |
+| **P99 TBT (Decode Jitter)** | $120 \text{ ms}$ (High Interference) | $48 \text{ ms}$ | **$24 \text{ ms}$ (Stall-Free Dedicated Decode)** |
+| **Cluster Request Capacity** | $1.0\times$ Baseline | $1.85\times$ | **$4.25\times$ Throughput ($525\%$ Gain)** |
+| **GPU HBM Utilization Efficiency** | $< 45\%$ (Fragmentation & OOM Prone)| $\approx 65\%$ | **$> 92\%$ (Elastic Tiered Offload)** |
+
+**Key Architectural Takeaway:**
+Mooncake demonstrates that for long-context LLM applications ($128\text{k}\text{--}1\text{M}$ tokens), serving is no longer primarily an inference computation problem—it is a **distributed data management and memory-tiering problem**.
