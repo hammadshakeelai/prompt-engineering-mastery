@@ -8697,3 +8697,94 @@ flowchart LR
 - **Dead Latent Reduction:** Across a $1\text{M}$-feature SAE ($E = 128\times$), standard $L_1$ training yielded **$38.4\%$ dead latents**; ghost gradient training reduced dead latents to **$<0.6\%$**.
 - **Loss Metric Stability:** Completely eliminates the $15\text{--}25\%$ reconstruction loss spikes observed during periodic neuron resampling.
 - **Disentanglement Resolution:** Fine-grained semantic probe accuracy (distinguishing sub-domain concepts like *Python asyncio event loops* vs *threading locks*) improved by **$+44.1\%$**, proving that feature absorption was effectively halted.
+
+---
+
+## 280. Mooncake Disaggregated Architecture: KVCache-Centric Serving, 3-Tier Hierarchical Storage & RDMA Prefill-Decode Decoupling (FAST 2025 Best Paper)
+
+### 280.1 The Fundamental Flaw of Colocated LLM Serving
+In conventional inference serving systems (e.g., standard vLLM, TensorRT-LLM without disaggregation), prompt prefill and token decoding are colocated on the identical GPU execution instances. This colocation produces severe hardware resource interference due to the asymmetric computational characteristics of the two inference phases:
+1. **Prefill Phase (Compute-Bound):** Ingests $L_{\text{prompt}}$ tokens, computing all-pairs attention with $O(L_{\text{prompt}}^2)$ FLOPs. It completely saturates GPU Tensor Cores with high arithmetic intensity ($\text{FLOPs/byte} \gg 100$).
+2. **Decode Phase (Memory-Bandwidth-Bound):** Emits tokens autoregressively one-by-one. Each step reads the entire historical Key-Value cache from HBM for a single vector-matrix product ($O(1)$ arithmetic intensity, $\text{FLOPs/byte} \ll 10$), saturating memory bandwidth while leaving Tensor Cores $>80\%$ idle.
+
+**The Colocation Catastrophe:** When a long prompt ($128\text{K}$ tokens) arrives at a node actively serving $32$ decoding streams, the node preempts decoding to run the prefill GEMM. The time-between-tokens (TBT) spikes from $25\,\text{ms}$ to $>3000\,\text{ms}$, catastrophically violating Service Level Objectives (SLOs) and stranding GPU compute.
+
+```mermaid
+flowchart TD
+    subgraph ColocatedServing["Traditional Colocated Serving (Resource Interference)"]
+        Req["Incoming Long Prompt (128K)"] --> Instance["Shared GPU Instance"]
+        DecodeStreams["Active Decoding Streams (TBT ~ 25ms)"] --> Instance
+        Instance --> Preemption["Prefill Preempts Decoding -> TBT Spikes to 3000ms+ (SLO Violation)"]
+    end
+    subgraph MooncakeDisaggregated["Mooncake Disaggregated KVCache-Centric Architecture"]
+        ReqP["Incoming Request"] --> Conductor["Conductor Global Scheduler (Locality-Aware)"]
+        Conductor --> PrefillPool["Prefill Server Pool (Saturates Tensor Cores)"]
+        PrefillPool --> RDMA["Zero-Copy RDMA Engine (400 Gbps RoCEv2 Transfer)"]
+        RDMA --> DecodePool["Decode Server Pool (Dedicated Memory Bandwidth)"]
+        DecodePool --> User["Smooth Monotonic Token Stream (Zero TBT Spikes)"]
+    end
+```
+
+---
+
+### 280.2 The 3-Tier Hierarchical KV Cache Storage Fabric
+To prevent redundant prefill computations across multi-turn agent conversations and long-context RAG pipelines, Mooncake (Zhong et al., Moonshot AI / Kimi, FAST 2025 Best Paper) decouples the KV cache from GPU compute, organizing memory into a distributed **3-tier hierarchical storage fabric**:
+
+```mermaid
+flowchart LR
+    subgraph Tier1["Tier 1: GPU HBM"]
+        HBM["Active Tokens (<1 μs access, 3.35 TB/s)"]
+    end
+    subgraph Tier2["Tier 2: Host CPU DRAM / CXL 2.0 Fabric"]
+        DRAM["Warm Shared Prefix Trees (150 ns, 300 GB/s)"]
+    end
+    subgraph Tier3["Tier 3: Distributed NVMe SSD Cluster"]
+        SSD["Cold Historical Context (<100 μs, Infinite Capacity)"]
+    end
+    Tier1 <--->|High-Speed PCIe 5.0 / NVLink| Tier2
+    Tier2 <--->|Distributed RDMA Storage Network| Tier3
+```
+
+1. **Tier 1 (GPU HBM - Hot Cache):**
+   Stores Key-Value tensors for tokens currently participating in active generation loops. Optimized for sub-microsecond latency and high memory bandwidth ($2.0\text{--}3.35\,\text{TB/s}$ on NVIDIA H100).
+2. **Tier 2 (Host CPU DRAM & CXL 2.0 Fabric - Warm Cache):**
+   Maintains high-capacity shared prompt prefixes (system prompts, common few-shot exemplars, retrieved document corpuses) and paused conversational sessions. Connected via high-throughput bidirectional PCIe 5.0 DMA / CXL ($200\text{--}400\,\text{GB/s}$).
+3. **Tier 3 (Distributed NVMe SSD Cluster - Cold Cache):**
+   Persists millions of historical session states across the entire datacenter. When a recurring user resumes a multi-turn conversation, historical context is streamed into Tier 2/Tier 1 via RDMA, **completely eliminating prefill recomputation**.
+
+---
+
+### 280.3 Zero-Copy RDMA Transfer Engine & Conductor Scheduling
+The prefill-to-decode transition is coordinated through an asynchronous, kernel-bypass transport engine:
+
+1. **Zero-Copy RoCEv2 Transfer Protocol:**
+   Once a prefill instance finishes processing a prompt, its KV cache blocks are registered in pinned memory. The Mooncake transfer engine invokes RDMA Read/Write over $400\,\text{Gbps}$ RoCEv2 links:
+   $$T_{\text{transfer}} = \frac{\text{Size}_{\text{KV}}}{B_{\text{RDMA}}} + \tau_{\text{handshake}}$$
+   For a $128\text{K}$-token context in a 70B model with GQA ($16\text{ heads}$, $d_h = 128$, FP16):
+   $$\text{Size}_{\text{KV}} = 2 \times 80 \times 16 \times 128 \times 131\text{,}072 \times 2 \text{ bytes} \approx 8.59\,\text{GB}$$
+   Over a $400\,\text{Gbps}$ network ($50\,\text{GB/s}$ effective bandwidth), total transfer latency is:
+   $$T_{\text{transfer}} \approx \frac{8.59\,\text{GB}}{50\,\text{GB/s}} \approx 171.8\,\text{ms}$$
+   This latency is fully masked by initiating transfer asynchronously during the final layers of prefill.
+2. **Conductor Locality-Aware Routing:**
+   The central Conductor scheduler maintains a global Radix tree index of cached prefixes across all nodes. Incoming requests are routed via prefix-matching heuristics:
+   $$\text{Node}^* = \arg\max_{n \in \mathcal{N}} \left| \text{Prefix}(x) \cap \text{Cache}(n) \right|$$
+   If an incoming request matches $90\%$ of an existing cached context, only the incremental $10\%$ delta tokens are scheduled for prefill.
+3. **Overload Early Rejection:**
+   Under extreme traffic surges, rather than allowing queue latency to cascade into cluster-wide SLO failure, Conductor uses probabilistic queuing models to reject or degrade non-critical requests at the cluster boundary, preserving monotonic decode smoothness for active streams.
+
+---
+
+### 280.4 Empirical Benchmarks & Production Scale (Kimi)
+```mermaid
+flowchart TD
+    subgraph Gains["Mooncake Empirical Production Results"]
+        G1["Throughput on Long Contexts: Up to +525% vs Colocated vLLM"]
+        G2["Cluster Request Capacity: Handles +75% Higher Concurrency"]
+        G3["TBT Tail Latency (P99): Reduced by 84% Under Heavy Bursts"]
+        G4["Prefill Recomputation: Reduced by 92% via 3-Tier Persistence"]
+    end
+```
+
+- **Throughput Scaling:** Achieves up to **$525\%$ throughput improvement** over monolithic colocated vLLM when processing ultra-long context workloads ($64\text{K}\text{--}200\text{K}$ tokens).
+- **Cluster Capacity:** Allows Kimi's production cluster to support **$75\%$ higher request loads** while maintaining strict P99 TBT latency thresholds ($<35\,\text{ms}$).
+- **Energy & Resource Efficiency:** Prevents GPU Tensor Core starvation in decode pools, raising average compute utilization across the datacenter from $18\%$ to over **$54\%$**.
