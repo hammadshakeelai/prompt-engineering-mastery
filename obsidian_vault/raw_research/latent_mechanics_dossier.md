@@ -1577,3 +1577,160 @@ To prevent the $\mathcal{O}(N^2)$ explosion of full round-robin tournaments, Are
 - Operates in $\mathcal{O}(N)$ complexity with 500 challenging, high-separability real-world prompts filtered by BenchBuilder.
 - Achieves **$89\%\text{--}98\%$ correlation** (Pearson and Spearman) with human crowdsourced Chatbot Arena Elo ratings, establishing automated LLM-as-a-Judge pipelines as the definitive standard for zero-hallucination alignment benchmarking.
 
+## 57. Lossless Self-Speculative Decoding via Double Early Exiting (Kangaroo, Liu et al., NeurIPS 2024)
+
+### 57.1 Architectural Motivation & Drafting Bottlenecks
+Standard speculative decoding requires pairing a large target model $M_{\text{target}}$ with an independent, smaller draft model $M_{\text{draft}}$ (e.g., Llama-68M drafting for Llama-70B). In enterprise serving systems, this incurs three critical inefficiencies:
+1. **Memory Fragmentation & VRAM Overhead:** Hosting an independent draft model consumes dedicated GPU memory and requires maintaining two disjoint KV cache memory managers.
+2. **Vocabulary & Tokenizer Mismatches:** When draft models differ in architecture, vocabulary alignments introduce translation bottlenecks.
+3. **Representation Divergence:** Small standalone draft models lack the semantic representations of the target LLM, leading to low token acceptance rates ($\alpha < 0.6$).
+
+Fangcheng Liu et al. (*Kangaroo: Lossless Self-Speculative Decoding via Double Early Exiting*, NeurIPS 2024 / arXiv:2404.18911) resolve these constraints by formulating a self-speculative architecture that derives the draft model directly from a shallow sub-network of the target LLM itself, governed by a double early exiting mechanism.
+
+```mermaid
+flowchart TD
+    subgraph TargetLLM["Target LLM (L Layers)"]
+        In["Input Token Sequence"] --> L1["Layer 1 .. L_s (Shallow Sub-Network)"]
+        L1 --> LRest["Layer L_s+1 .. L (Deep Target Layers)"]
+        LRest --> OutTarget["Target Head / Logits"]
+    end
+
+    subgraph KangarooDraft["Kangaroo Double Early Exit"]
+        L1 --> Exit1["Early Exit 1: Sub-Network Draft"]
+        Exit1 --> Adapter["Lightweight Adapter A_phi"]
+        Adapter --> DraftLogits["Draft Token Logits"]
+        DraftLogits --> ConfCheck{"Confidence >= eta?"}
+        ConfCheck -- Yes --> ContinueDraft["Draft Token tau+1"]
+        ConfCheck -- No --> Exit2["Early Exit 2: Dynamic Halting"]
+    end
+
+    Exit2 --> Verification["Parallel Target Verification (Lossless Rejection Sampling)"]
+    ContinueDraft --> ConfCheck
+    OutTarget --> Verification
+```
+
+### 57.2 The Double Early Exiting Mechanism
+Kangaroo implements two distinct early-exit points during generation:
+
+1. **Sub-Network Early Exiting (Representation Adapter):**
+   - The draft model is constructed from the first $L_s$ layers of the target model ($L_s \ll L$, typically $L_s \in [2, 6]$ layers for a 32-layer LLM).
+   - Because intermediate representations $h^{(L_s)}$ differ significantly from final pre-unembedding representations $h^{(L)}$, Kangaroo attaches a lightweight adapter module $A_\phi$ (typically a single Transformer decoder layer or shallow MLP):
+     $$\hat{h}_{t} = A_\phi\left(h_{t}^{(L_s)}\right)$$
+     $$\hat{P}_{\text{draft}}(x_{t+1} \mid x_{\le t}) = \operatorname{Softmax}\left( W_{\text{unembed}} \hat{h}_t \right)$$
+   - Only the adapter parameters $\phi$ ($\approx 1\%$ of model parameters) are trained, while the target model's shallow layers remain completely frozen.
+
+2. **Dynamic Early Exiting (Confidence-Based Halting):**
+   - In speculative drafting, drafting speculative tokens beyond the model's confidence boundary yields low-probability tokens that are guaranteed to be rejected during target model verification, wasting draft compute.
+   - At each speculative drafting step $\tau \in \{1, \dots, \gamma\}$, Kangaroo computes the top-1 draft prediction confidence:
+     $$c_\tau = \max_{v \in \mathcal{V}} \hat{P}_{\text{draft}}(v \mid x_{\le t+\tau-1})$$
+   - If $c_\tau < \eta$ (where $\eta \in [0.6, 0.85]$ is a calibrated dynamic confidence threshold), Kangaroo triggers Early Exit 2: **speculative drafting halts immediately**, terminating the draft phase at length $\tau < \gamma$.
+
+### 57.3 Lossless Verification & Spec-Bench Speedups
+The target LLM performs a single parallel forward pass across the dynamically drafted tokens $\tilde{x}_1, \dots, \tilde{x}_\tau$. Verification uses exact speculative rejection sampling (Leviathan et al., 2023):
+$$\alpha_i = \min\left(1, \frac{P_{\text{target}}(\tilde{x}_i \mid x_{<i})}{\hat{P}_{\text{draft}}(\tilde{x}_i \mid x_{<i})}\right)$$
+Upon rejection at position $k$, the target model resamples from the normalized difference distribution:
+$$P'(x) = \frac{\max\left(0, P_{\text{target}}(x) - \hat{P}_{\text{draft}}(x)\right)}{\sum_{v} \max\left(0, P_{\text{target}}(v) - \hat{P}_{\text{draft}}(v)\right)}$$
+This guarantees mathematical equivalence:
+$$P_{\text{Kangaroo}}(x) \equiv P_{\text{target}}(x)$$
+
+- **Spec-Bench Results:** Across diverse downstream benchmarks (Multi-turn Chat, Translation, Mathematical Reasoning, and Python Synthesis), Kangaroo delivers up to **$2.04\times$ wall-clock speedup**, outperforming Medusa-1 and standalone draft models while requiring no secondary model deployment and adding $<1.5\%$ parameter overhead.
+
+---
+
+## 58. Reference-Free Preference Alignment & Length-Normalized Rewards (SimPO & CPO, Meng et al. / Xu et al., NeurIPS/ICML 2024)
+
+### 58.1 The Structural Limitations of Standard DPO
+Direct Preference Optimization (DPO, Rafailov et al., NeurIPS 2023) bypasses reinforcement learning value modeling by parameterizing the implicit reward function through the log-ratio of the policy $\pi_\theta$ to a frozen reference model $\pi_{\text{ref}}$ under the Bradley-Terry preference model:
+$$r_{\text{DPO}}(x, y) = \beta \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)}$$
+$$\mathcal{L}_{\text{DPO}}(\theta) = -\mathbb{E}_{(x, y_w, y_l)} \left[ \log \sigma \left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right) \right]$$
+
+Despite widespread adoption, DPO exhibits two critical structural vulnerabilities:
+1. **Verbosity Exploitation (Length Hacking):**
+   The unnormalized sequence log-probability $\log \pi(y \mid x) = \sum_{t=1}^{|y|} \log \pi(y_t \mid y_{<t}, x)$ scales linearly with token length $|y|$. When average per-token log-probabilities are slightly negative, longer responses inadvertently receive higher relative reward margins, incentivizing policies to output verbose, padded text to artificially inflate implicit rewards without improving reasoning content.
+2. **Reference Model Hardware Redundancy:**
+   Computing $\mathcal{L}_{\text{DPO}}$ requires evaluating both $\pi_\theta(y \mid x)$ and $\pi_{\text{ref}}(y \mid x)$ on every forward pass. Retaining the frozen reference model $\pi_{\text{ref}}$ in GPU VRAM consumes $50\%$ of available accelerator memory, severely limiting batch size and context window length during post-training.
+
+### 58.2 SimPO: Mathematical Formulation & Target Reward Margin
+Yu Meng, Mengzhou Xia, and Danqi Chen (*SimPO: Simple Preference Optimization with a Reference-Free Reward*, Princeton / NeurIPS 2024 / arXiv:2405.14734) eliminate the reference model entirely and establish a length-normalized implicit reward directly from policy log-likelihood:
+$$r_{\text{SimPO}}(x, y) = \frac{\beta}{|y|} \log \pi_\theta(y \mid x) = \frac{\beta}{|y|} \sum_{t=1}^{|y|} \log \pi_\theta(y_t \mid y_{<t}, x)$$
+
+To enforce strong separation between winning ($y_w$) and losing ($y_l$) completions, SimPO introduces a fixed target reward margin $\gamma > 0$ into the Bradley-Terry objective:
+$$\mathcal{L}_{\text{SimPO}}(\theta) = -\mathbb{E}_{(x, y_w, y_l)} \left[ \log \sigma \left( \frac{\beta}{|y_w|} \log \pi_\theta(y_w \mid x) - \frac{\beta}{|y_l|} \log \pi_\theta(y_l \mid x) - \gamma \right) \right]$$
+
+The analytical gradient of SimPO with respect to model parameters $\theta$ is:
+$$\nabla_\theta \mathcal{L}_{\text{SimPO}} = -\beta \left( 1 - \sigma\left( \Delta r_{\text{SimPO}} - \gamma \right) \right) \left[ \frac{\nabla_\theta \log \pi_\theta(y_w \mid x)}{|y_w|} - \frac{\nabla_\theta \log \pi_\theta(y_l \mid x)}{|y_l|} \right]$$
+where $\Delta r_{\text{SimPO}} = \frac{\beta}{|y_w|} \log \pi_\theta(y_w \mid x) - \frac{\beta}{|y_l|} \log \pi_\theta(y_l \mid x)$.
+
+- **Target Margin Dynamics ($\gamma$):** In standard DPO, as soon as $\Delta r > 0$, the gradient magnitude $1 - \sigma(\Delta r)$ decays toward zero. In SimPO, updates continue driving the margin until $\Delta r \ge \gamma$, preventing premature convergence on easily separable pairs.
+- **Length Normalization:** Dividing by sequence length $|y|$ eliminates the mathematical advantage of longer sequences, completely arresting verbosity creep.
+
+### 58.3 Contrastive Preference Optimization (CPO) for High-Precision Domains
+In generation tasks governed by strict factual or syntactic fidelity (e.g., machine translation, formal logic, and compiler code synthesis), Haoran Xu et al. (*Contrastive Preference Optimization*, ICML 2024 / arXiv:2401.08417) demonstrate that unregularized preference optimization causes moderate-quality outputs to degenerate. CPO resolves this by combining a bounded preference objective with supervised fine-tuning (SFT) regularization on the winning sample:
+$$\mathcal{L}_{\text{CPO}}(\theta) = \mathcal{L}_{\text{DPO\_bound}}(\theta) + \alpha \mathcal{L}_{\text{SFT}}(y_w \mid x)$$
+where $\mathcal{L}_{\text{SFT}}(y_w \mid x) = -\sum_{t=1}^{|y_w|} \log \pi_\theta(y_{w, t} \mid y_{w, <t}, x)$.
+This dual objective prevents catastrophic forgetting of high-probability token transitions while simultaneously penalizing contrastive negative distractors.
+
+### 58.4 Empirical Benchmark Calibrations
+- **AlpacaEval 2.0 (Length-Controlled LC Win Rate):** Llama-3-8B-Instruct fine-tuned with SimPO achieves a **$+6.4\%$** boost in length-controlled win rate over DPO, while generating answers that are on average **$18\%$ shorter**.
+- **Arena-Hard-Auto:** Outperforms DPO, KTO, and ORPO across all creative and technical prompts.
+- **Hardware Efficiency:** Completely eliminates $\pi_{\text{ref}}$, freeing $\approx 50\%$ VRAM and cutting training time per epoch by $30\%$.
+
+---
+
+## 59. Test-Time Compute Optimal Scaling & Verifier vs. Revision Trade-Offs (Snell et al., UC Berkeley / Google DeepMind 2024)
+
+### 59.1 Pretraining vs. Inference FLOP Equivalence
+Classical scaling laws (Kaplan et al., 2020; Chinchilla, Hoffmann et al., 2022) formulate compute scaling almost exclusively during pretraining:
+$$L(N, D) = E + \frac{A}{N^\alpha} + \frac{B}{D^\beta}$$
+Charlie Snell, Jaehoon Lee, Kelvin Xu, and Aviral Kumar (*Scaling LLM Test-Time Compute Optimally can be More Effective than Scaling Model Parameters*, UC Berkeley & Google DeepMind, 2024 / arXiv:2408.03314) formalize the equivalence between pretraining compute and inference test-time compute:
+$$\text{FLOPs}_{\text{total}} = \text{FLOPs}_{\text{pretrain}} + Q \times \text{FLOPs}_{\text{test-time}}$$
+where $Q$ is query volume. The central thesis demonstrates that for complex reasoning tasks, **allocating additional FLOPs at inference time on a smaller, agile base model outperforms scaling the static parameter count of a larger model evaluated single-pass.**
+
+```mermaid
+flowchart TD
+    Prompt["Input Query x"] --> DiffEst["Prompt Difficulty Estimator d(x)"]
+    DiffEst -- Easy / Medium --> BranchParallel["Parallel Best-of-N Search + Verifier"]
+    DiffEst -- Hard / OOD --> BranchSeq["Sequential Adaptive Revision Loop"]
+
+    BranchParallel --> SampleN["Draw N Samples in Parallel"]
+    SampleN --> PRMScoring["Score with PRM / Verifier"]
+    PRMScoring --> SelectTop["Select Argmax Completion"]
+
+    BranchSeq --> InitialCoT["Generate Initial Trajectory y_0"]
+    InitialCoT --> Critique["Verifier Localization & Critique"]
+    Critique --> Revise["Conditioned Revision y_k+1 ~ pi(y | x, y_k, c_k)"]
+    Revise --> HaltingCheck{"Verifier Score >= tau?"}
+    HaltingCheck -- No --> Critique
+    HaltingCheck -- Yes --> EmitAnswer["Emit Verified Answer"]
+```
+
+### 59.2 Two Primary Test-Time Compute Scaling Mechanics
+Snell et al. rigorously contrast the two fundamental axes of spending test-time compute:
+
+1. **Verifier-Guided Search (Parallel Best-of-$N$ & Step-Level Beam Search):**
+   - Draws $N$ candidate trajectories in parallel or executes step-level beam search guided by a dense Process Reward Model (PRM).
+   - *Coverage Dynamic:* The probability that at least one trajectory is correct scales as:
+     $$P_{\text{success}}(N) = 1 - (1 - p)^N$$
+     where $p$ is the model's single-pass pass@1 probability.
+   - *Diminishing Returns:* As problem difficulty increases such that $p \to 0$, $P_{\text{success}}$ requires exponentially large $N$. Verifier False-Positive rates eventually dominate, causing Best-of-$N$ to plateau or degrade at large $N$ (Verifier Goodharting).
+
+2. **Adaptive Sequence Revisions (Sequential Local Correction):**
+   - The model iteratively revises its own prior generation conditioned on intermediate error critiques:
+     $$y^{(k+1)} \sim \pi_{\text{revise}}\left(y \mid x, y^{(k)}, c^{(k)}\right)$$
+   - Revisions are trained on "incorrect-to-correct" paired transition trajectories.
+   - Unlike parallel sampling which restarts from scratch on every trajectory, revision maintains valid reasoning steps and performs surgical corrections on identified invalid derivation steps.
+
+### 59.3 Prompt Difficulty-Conditioned Compute Optimal Allocation
+The critical theoretical breakthrough in Snell et al. is that **the compute-optimal search topology depends strictly on the difficulty $d(x)$ of the problem**:
+
+| Problem Difficulty Regime | Base Pass@1 ($p$) | Compute-Optimal Search Strategy | Rationale & Failure Mode of Alternatives |
+| :--- | :--- | :--- | :--- |
+| **Easy Problems** | $p \ge 0.5$ | **Parallel Best-of-$N$ (Low $N$)** | Rapidly discovers correct path; revision overhead is wasteful compute. |
+| **Intermediate Problems** | $0.15 \le p < 0.5$ | **Verifier-Guided Beam Search** | PRM prunes invalid intermediate sub-branches before error compounding occurs. |
+| **Hard / Frontier Problems** | $p < 0.05$ | **Sequential Adaptive Revisions** | $p$ is too small for Best-of-$N$ to find a correct sample within $10^4$ draws; sequential correction enables exploring otherwise unreachable solution manifolds. |
+
+- **Compute-Optimal Routing:** By training a lightweight difficulty classifier or using early step-entropy to route questions to the optimal search mechanism, systems achieve the same target accuracy on MATH and GSM8K with **$>4\times$ less compute** compared to uniform Best-of-$N$.
+
+### 59.4 Empirical Frontier Results & Parameter Equivalence
+- **Parameter Trade-off Invariance:** A **7B parameter model** scaled with compute-optimal test-time compute matches or exceeds the performance of a **$14\times$ larger model (70B+)** run with standard greedy decoding, using identical total compute budgets.
+- **Foundation for Frontier Reasoning Models:** This formal compute-optimal framework establishes the theoretical architecture underpinning modern reasoning models (OpenAI o1/o3, DeepSeek-R1), where inference compute is dynamically budgeted according to task difficulty.

@@ -39,6 +39,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/security_jailbreaks.md]]
 - [[raw_research/system_prompt_patterns.md]]
 - [[raw_research/test_time_compute.md]]
+- [[raw_research/test_time_compute_optimal_scaling.md]]
 - [[raw_research/OBLITERATUS]] - (Abliteration & Orthogonal Direction Modification Toolkit)
 - [[raw_research/chatgpt_system_prompts]] - (Extracted System Prompts for ChatGPT, Claude, Apple Intelligence)
 
@@ -60,6 +61,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[research_engine/research_pivot_07.md]]
 - [[research_engine/research_pivot_08.md]]
 - [[research_engine/research_pivot_09.md]]
+- [[research_engine/research_pivot_10.md]]
 
 ## 🧩 5. Atomic Concept Snippets Knowledge Graph
 - [[raw_research/snippets/activation_steering_vectors.md|Activation Steering Vectors]]
@@ -149,6 +151,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/instruction_tuning.md|Instruction Tuning]]
 - [[raw_research/snippets/instructor_pydantic.md|Instructor Pydantic]]
 - [[raw_research/snippets/judge_bias_mitigation.md|Judge Bias Mitigation]]
+- [[raw_research/snippets/kangaroo_self_speculative_decoding.md|Kangaroo Self Speculative Decoding]]
 - [[raw_research/snippets/kivi_and_think_kv_compression.md|Kivi And Think Kv Compression]]
 - [[raw_research/snippets/knowledge_distillation.md|Knowledge Distillation]]
 - [[raw_research/snippets/kto_prospect_theory.md|Kto Prospect Theory]]
@@ -246,6 +249,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/semantic_kernel_arch.md|Semantic Kernel Arch]]
 - [[raw_research/snippets/sglang_radix_jumpforward.md|Sglang Radix Jumpforward]]
 - [[raw_research/snippets/simpo_length_normalized.md|Simpo Length Normalized]]
+- [[raw_research/snippets/simpo_reference_free_alignment.md|Simpo Reference Free Alignment]]
 - [[raw_research/snippets/skeleton_of_thought.md|Skeleton Of Thought]]
 - [[raw_research/snippets/smoothquant_activation_migration.md|Smoothquant Activation Migration]]
 - [[raw_research/snippets/snapkv_and_pyramidkv.md|Snapkv And Pyramidkv]]
@@ -265,6 +269,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/syncode_dfa_mask_stores.md|Syncode Dfa Mask Stores]]
 - [[raw_research/snippets/synthetic_data_generation.md|Synthetic Data Generation]]
 - [[raw_research/snippets/tabular_data_prompting.md|Tabular Data Prompting]]
+- [[raw_research/snippets/test_time_compute_budget_forcing.md|Test Time Compute Budget Forcing]]
 - [[raw_research/snippets/test_time_compute_ext.md|Test Time Compute Ext]]
 - [[raw_research/snippets/test_time_compute_scaling.md|Test Time Compute Scaling]]
 - [[raw_research/snippets/textgrad.md|Textgrad]]
