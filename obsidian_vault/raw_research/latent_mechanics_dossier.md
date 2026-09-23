@@ -8312,3 +8312,77 @@ flowchart LR
   - Standard $L_1$ penalty causes up to **$45\%$ dead latents** at $E \ge 64\times$ due to shrinking activations below activation threshold.
   - **TopK SAE ($k = 32$ or $64$):** Achieves **$<1.2\%$ dead latents** at $E = 128\times$, improving Pareto reconstruction frontier by **$2.4\times$** at identical sparsity budgets.
 - **Circuit Tracing Precision:** High-expansion TopK dictionaries enable granular causal interventions: knocking out a single split latent (e.g. *sycohpantic agreement on user's incorrect math answer*) cleanly reverses the erroneous behavior while preserving standard conversational politeness and reasoning accuracy.
+
+---
+
+## 275. Frontier System Prompt Architecture: Comparative Mechanics of Production Agent Instructions (Claude Opus, ChatGPT-4o, Cursor, CL4R1T4S)
+
+### 275.1 The System Prompt as the Primary Steerability Substrate
+While pre-training instills foundational linguistic capabilities and post-training (RLHF/DPO) aligns policy preferences, the **system prompt** operates as the runtime operating system of frontier LLMs. It anchors the model's persona, establishes authority boundaries, regulates tool access, dictates formatting grammars, and governs safety refusal mechanics.
+
+Public research archives—most notably **`elder-plinius/CL4R1T4S`** (Pliny the Liberator), `asgeirtj/system_prompts_leaks`, and `Piebald-AI/claude-code-system-prompts`—have revealed that production system prompts at labs like Anthropic, OpenAI, and Cursor are not simple character briefs, but complex programmatic scripts spanning thousands of tokens.
+
+```mermaid
+flowchart TD
+    subgraph SystemPromptArchitecture["Anatomy of a Frontier Production System Prompt"]
+        Layer1["1. Identity & Epistemic Persona (Authority, Anti-Sycophancy, Tone)"]
+        Layer2["2. Structural Delimitation Engine (XML / Markdown Namespaces)"]
+        Layer3["3. UI & Artifact Protocol (Code Sandboxing, Diff Blocks, Canvas)"]
+        Layer4["4. Latent Thinking & Scratchpad Rules (<thinking>, Chain-of-Thought)"]
+        Layer5["5. Tool Execution & Environment Grounding (APIs, Terminals, Browsers)"]
+        Layer6["6. Safety & Refusal Boundaries (Anti-Preachiness, CBRN Redlines)"]
+    end
+    Layer1 --> Layer2 --> Layer3 --> Layer4 --> Layer5 --> Layer6
+```
+
+---
+
+### 275.2 Comparative Anatomy: Anthropic Claude vs. OpenAI vs. Agentic Coding Systems
+
+```mermaid
+flowchart LR
+    subgraph Claude["Anthropic Claude (Opus / Sonnet)"]
+        C1["Strict XML Namespaces: <antml>, <rules>, <context>"]
+        C2["Artifacts Engine: <antArtifact> with Strict Line/Reuse Heuristics"]
+        C3["Native <thinking> Protocol for Latent Pre-Planning"]
+        C4["Anti-Preachy Alignment: Plain Refusals without Moralizing"]
+    end
+    subgraph OpenAI["OpenAI ChatGPT-4o / o1"]
+        O1["Markdown Sections: Clear Headers & Bulleted Directives"]
+        O2["Canvas & Code Sandbox Interleaving Rules"]
+        O3["Hidden Reasoning Tokens & Reasoning Effort Regulators"]
+        O4["Policy-Check Redirection & Tone Moderation"]
+    end
+    subgraph Cursor["Cursor / Windsurf Agentic Prompts"]
+        K1["Context Tree Injection: Repo Index & Active File Anchors"]
+        K2["Diff Application Protocol: SEARCH/REPLACE Block Constraints"]
+        K3["Terse Execution: Suppress Conversational Filler"]
+        K4["Compiler/Linter Feedback Loop Integration"]
+    end
+```
+
+#### 1. Anthropic Claude (Opus / Claude 3.5 Sonnet / Claude Code)
+Detailed analysis of the extracted prompts from `elder-plinius/CL4R1T4S` reveals key design paradigms:
+- **XML Tag Hierarchy:** Anthropic systematically encapsulates instructions inside semantic XML tags (`<persona_guidelines>`, `<artifacts_info>`, `<examples>`). This provides strong structural boundaries that prevent user prompt injection from overriding core system instructions.
+- **The Artifacts Engine (`<antArtifact>`):** The prompt defines a deterministic decision tree for rendering code and documents:
+  - Requires artifacts for standalone, reusable, or executable content $>15$ lines.
+  - Forbids ellipsis placeholders (`// rest of code here`), forcing complete, functional files.
+  - Forbids artifacts for short utility snippets or conversational explanations.
+- **Tone & Anti-Sycophancy:** Explicitly forbids false apologies (*"Never say 'I apologize for the misunderstanding'"*), commands intellectual honesty, and requires presenting balanced multi-perspective views on unsettled questions.
+- **Anti-Preachiness in Safety:** When encountering forbidden requests (e.g. malware synthesis, weapons), Claude is instructed to state its refusal plainly and neutrally without scolding, lecturing, or patronizing the user.
+
+#### 2. OpenAI (ChatGPT-4o / o1 / o3)
+- **Hierarchical Markdown:** Utilizes formatted Markdown headers to establish operational parameters.
+- **Adaptive Tool Triggers:** Outlines strict triggering policies for Python analysis sandboxes, web browsing, and image generation, mandating code execution whenever arithmetic or numerical verification is involved.
+- **Reasoning Suppression & Visibility:** For reasoning models (o1/o3), instructions explicitly delineate the internal thinking process from the user-visible response, forbidding the leakage of raw chain-of-thought traces.
+
+#### 3. Agentic Coding Assistants (Cursor / Windsurf)
+- **Terse Pragmatism:** Instructed to minimize conversational pleasantries, jumping directly to code modifications.
+- **Diff Parsing Safety:** Mandates exact line matching (`<<<<<<< SEARCH / ======= / >>>>>>> REPLACE`) to ensure that automated AST patchers can apply edits without syntax corruption.
+
+---
+
+### 275.3 Empirical Insights for Robust Prompt Engineering
+1. **XML Isolation Prevents Jailbreaks:** Encapsulating untrusted user inputs inside `<user_query>` tags and system instructions inside `<system_directive>` significantly reduces token confusion and prompt injection vulnerabilities compared to plain text headers.
+2. **Deterministic Thresholding Over Vague Guidelines:** Replacing vague instructions (e.g., *"Write clean code"*) with quantitative rules (e.g., *"If code exceeds 15 lines and constitutes a complete script, wrap it in a dedicated execution container"*) dramatically improves agent consistency.
+3. **Neutral Refusal Framing:** Conditioning safety filters to be completely objective and non-judgmental prevents adversarial escalation, where users attempt jailbreaks specifically to bypass moralizing responses.

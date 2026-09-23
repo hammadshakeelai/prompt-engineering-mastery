@@ -169,6 +169,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/flashattention3_hopper_asynchrony.md|Flashattention3 Hopper Asynchrony]]
 - [[raw_research/snippets/flashattention_2_vs_3.md|Flashattention 2 Vs 3]]
 - [[raw_research/snippets/formal_theorem_proving_alphaproof_lean.md|Formal Theorem Proving Alphaproof Lean]]
+- [[raw_research/snippets/frontier_lab_system_prompts_pliny_cl4r1t4s.md|Frontier Lab System Prompts Pliny Cl4R1T4S]]
 - [[raw_research/snippets/frontier_research_pivot_2026_09_23.md|Frontier Research Pivot 2026 09 23]]
 - [[raw_research/snippets/frontier_research_pivot_2026_09_23_part2.md|Frontier Research Pivot 2026 09 23 Part2]]
 - [[raw_research/snippets/frontier_research_pivot_2026_09_23_part3.md|Frontier Research Pivot 2026 09 23 Part3]]
