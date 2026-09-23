@@ -7262,5 +7262,44 @@ flowchart TD
    - **Latency Speedup:** Delivers $2.23\times$ wall-clock decoding speedup on 64k-token sequences across LLaMA-2-7B, Mistral-7B, and Yi-34B.
    - **Zero Needle Degradation:** Achieves $100\%$ accuracy on passkey retrieval benchmarks and matches dense baseline perplexity on LongBench and PG-19, completely avoiding the destructive error propagation of static eviction.
 
+---
+
+## 255. Grammar-Guided Speculative Decoding & Deterministic Structural Token Bypass
+
+### 255.1 The Syntax-Speculation Friction Bottleneck
+```mermaid
+flowchart TD
+    subgraph NaiveSpec["Naive Speculative Decoding + Grammar Post-Filter (Friction Bottleneck)"]
+        DRAFT_N["Draft Model M_q"] --> PROPOSE_N["Propose γ Unconstrained Tokens: [x_1, x_2, ..., x_γ]"]
+        PROPOSE_N --> GRAMMAR_REJ{"Token x_k Violates JSON/EBNF Syntax?"}
+        GRAMMAR_REJ --> |"Yes: Syntax Error"| EARLY_ABORT["Draft Trajectory Aborted at k << γ (Acceptance Rate α → 0)"]
+    end
+    subgraph GSD["Grammar-Guided Speculative Decoding (XGrammar / FastSchema, 2024)"]
+        PDA_STATE["Grammar State C_t"] --> CHECK_DET{"|Valid Tokens| == 1?"}
+        CHECK_DET --> |"Deterministic Literal"| BYPASS["Bypass Neural Forward Pass: Emit Token Directly from AST (0 FLOPs)"]
+        CHECK_DET --> |"Branching State"| SYNC_DRAFT["Draft Model Evaluates Grammar Mask M_q at Each Step"]
+        SYNC_DRAFT --> VALID_TREE["Propose Strictly Syntax-Valid Speculative Tree"]
+        VALID_TREE --> TARGET_VERIFY["Target Model M_p Parallel Verification (Acceptance Rate α > 0.85)"]
+    end
+```
+
+### 255.2 Mathematical Mechanics of Grammar-Guided Speculation
+1. **The Syntax-Speculation Breakdown:** In standard speculative decoding, draft model $M_q$ samples unconstrained candidate tokens $x_1, \dots, x_\gamma \sim q(\cdot)$. When generating structured outputs (JSON Schemas, SQL, code), the grammar acceptance set $\mathcal{V}_{\text{valid}}(C) \subset \mathcal{V}$ is often a tiny fraction ($<1\%$) of the vocabulary. Unconstrained draft models propose invalid tokens with high probability, truncating the speculative chain at step $k \ll \gamma$ and destroying speculative speedups.
+2. **Grammar-Synchronized Draft Sampling:** At draft step $j \in \{1, \dots, \gamma\}$, candidate tokens are sampled directly from the grammar-conditioned draft distribution:
+   $$q_{\text{grammar}}\left(x_j \mid x_{<j}, C_j\right) = \frac{q\left(x_j \mid x_{<j}\right) \cdot \mathbb{I}\left[x_j \in \mathcal{V}_{\text{valid}}(C_j)\right]}{\sum_{w \in \mathcal{V}_{\text{valid}}(C_j)} q\left(w \mid x_{<j}\right)}$$
+   where $C_{j+1} = \delta(C_j, x_j)$ represents the deterministic transition of the pushdown automaton or DFA.
+3. **Deterministic Structural Token Bypass (AST Fast-Forward):**
+   When the grammar parser enters a deterministic literal sequence (e.g., fixed JSON keys `"status": `, boolean constants `true`, or formatting punctuation `": ["`):
+   $$|\mathcal{V}_{\text{valid}}(C_t)| = 1 \implies \mathcal{V}_{\text{valid}}(C_t) = \{w^*\}$$
+   The engine completely **bypasses neural network forward passes** on both draft and target models, emitting token $w^*$ instantaneously with zero FLOP overhead and advancing the grammar state $C_{t+1} = \delta(C_t, w^*)$.
+4. **Target Model Parallel Verification:**
+   The target model verifies the syntax-valid speculative sequence $(x_1, \dots, x_\gamma)$ in a single parallel forward pass. The acceptance probability for candidate token $x_j$ under target distribution $p(x)$ is:
+   $$\alpha_j = \min\left(1, \frac{p_{\text{grammar}}\left(x_j \mid x_{<j}, C_j\right)}{q_{\text{grammar}}\left(x_j \mid x_{<j}, C_j\right)}\right)$$
+   If candidate $x_j$ is rejected, replacement token $x_j'$ is drawn from the adjusted grammar-bounded residual:
+   $$p_{\text{resample}}(x) = \frac{\max\left(0, p(x) - q(x)\right) \cdot \mathbb{I}\left[x \in \mathcal{V}_{\text{valid}}(C_j)\right]}{1 - \sum_{w \in \mathcal{V}_{\text{valid}}(C_j)} \min(p(w), q(w))}$$
+5. **Empirical Throughput Acceleration:**
+   - **Acceptance Uplift:** Grammar synchronization elevates empirical acceptance rate $\alpha$ from $<30\%$ to $>85\%$ on structured JSON generation benchmarks.
+   - **End-to-End Latency:** Combined with deterministic structural bypass, delivers up to **$3.5\times\text{--}4.8\times$ wall-clock speedup** over unconstrained autoregressive decoding across LLaMA-3 and Qwen architectures.
+
 
 
