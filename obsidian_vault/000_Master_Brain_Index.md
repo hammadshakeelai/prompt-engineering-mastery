@@ -307,6 +307,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/sedd_discrete_diffusion_language_models.md|Sedd Discrete Diffusion Language Models]]
 - [[raw_research/snippets/selective_context_information_pruning.md|Selective Context Information Pruning]]
 - [[raw_research/snippets/self_consistency.md|Self Consistency]]
+- [[raw_research/snippets/self_play_preference_optimization_spin_sppo.md|Self Play Preference Optimization Spin Sppo]]
 - [[raw_research/snippets/self_rag.md|Self Rag]]
 - [[raw_research/snippets/self_rag_ext.md|Self Rag Ext]]
 - [[raw_research/snippets/self_rag_reflective_decision_tokens.md|Self Rag Reflective Decision Tokens]]
