@@ -326,6 +326,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/role_prompting.md|Role Prompting]]
 - [[raw_research/snippets/ruler_benchmark_long_context.md|Ruler Benchmark Long Context]]
 - [[raw_research/snippets/s1_budget_forcing_test_time.md|S1 Budget Forcing Test Time]]
+- [[raw_research/snippets/sae_feature_splitting_and_dictionary_bounds.md|Sae Feature Splitting And Dictionary Bounds]]
 - [[raw_research/snippets/sae_monosemanticity.md|Sae Monosemanticity]]
 - [[raw_research/snippets/score_entropy_discrete_diffusion_sedd.md|Score Entropy Discrete Diffusion Sedd]]
 - [[raw_research/snippets/sedd_discrete_diffusion_language_models.md|Sedd Discrete Diffusion Language Models]]

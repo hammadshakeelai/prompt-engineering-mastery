@@ -8243,3 +8243,72 @@ flowchart LR
 3. **Phase Transition & Over-Steering:**
    - If $\alpha > \alpha_{\text{critical}}$ (typically $\alpha > 3.0$), the injected vector dominates the residual stream norm, causing token entropy collapse, repetitive looping, and ungrammatical token emission.
    - Surgical effectiveness is maximized when injection is restricted to middle-depth layers ($l \in [0.4 L, 0.7 L]$), preserving lower-level sensory feature parsing and upper-level vocabulary unembedding projection fidelity.
+
+---
+
+## 274. Sparse Autoencoder Feature Splitting & Dictionary Capacity Bounds: The Geometry of Polysemantic Superposition
+
+### 274.1 The Geometry of High-Dimensional Superposition
+The **Linear Representation Hypothesis** posits that high-level concepts are represented as linear directions in a model's internal activation space $\mathbb{R}^d$. However, the number of distinct semantic concepts $N$ an advanced foundation model internalizes vastly exceeds the residual stream dimensionality $d$ (e.g., $d = 4096$ in Llama-3 8B, but $N \sim 10^6\text{--}10^7$).
+
+Transformers resolve this dimensional bottleneck through **superposition**: packing $N \gg d$ nearly orthogonal feature vectors $\{f_i\}_{i=1}^N$ into $\mathbb{R}^d$. By the Johnson-Lindenstrauss lemma and compressed sensing theory, in high dimensions ($d \ge 4096$), an exponentially large number of vectors can be chosen such that the pairwise cosine similarity is bounded:
+$$\max_{i \neq j} \left| \langle f_i, f_j \rangle \right| \le \frac{c}{\sqrt{d}} = \epsilon$$
+When features are sparsely active (probability of feature activation $p = P(f_i > 0) \ll 1$), the interference noise from cross-talk between co-activated features remains negligible compared to the signal amplitude:
+$$\mathbb{E}\left[ \left\| \sum_{j \neq i} f_j \mathbb{I}(f_j > 0) \langle f_j, f_i \rangle \right\|_2^2 \right] = O(p \cdot N \cdot \epsilon^2)$$
+
+```mermaid
+flowchart TD
+    subgraph Superposition["High-Dimensional Polysemantic Superposition"]
+        Features["N Independent Sparse Concept Latents (N >> d)"] --> Projection["Linear Projection Matrix W ∈ R^{d x N}"]
+        Projection --> DenseState["Residual Stream State x ∈ R^d (Interference bounded by O(1/√d))"]
+    end
+    subgraph SparseAutoencoder["Overcomplete SAE Dictionary (M = E · d)"]
+        DenseState --> Encoder["SAE Encoder: z = TopK(W_enc · x + b)"]
+        Encoder --> Monosemantic["M Monosemantic Feature Dictionaries (M >> d)"]
+        Monosemantic --> Decoder["SAE Decoder: x̂ = W_dec · z"]
+    end
+```
+
+---
+
+### 274.2 The Mechanics of Feature Splitting Across Expansion Factors
+When an overcomplete Sparse Autoencoder is trained to recover features from activation vector $x \in \mathbb{R}^d$:
+$$\hat{x} = \sum_{i=1}^M z_i w_{\text{dec}, i} + b_{\text{dec}}, \quad z = \text{Activation}\left( W_{\text{enc}} x + b_{\text{enc}} \right)$$
+the expansion factor $E = \frac{M}{d}$ governs the granularity of extracted latents. As $E$ scales from $4\times$ to $128\times$, the learned dictionary undergoes continuous **Feature Splitting**:
+
+1. **Low Expansion ($E = 4\times\text{ to }8\times$): Umbrella Features:**
+   When dictionary capacity $M$ is constrained, the SAE aggregates semantically correlated fine-grained features into a single broad "umbrella" direction $w_{\text{umbrella}} \in \mathbb{R}^d$:
+   $$w_{\text{umbrella}} \approx \sum_{k=1}^K \alpha_k f_{\text{fine}, k}$$
+   For example, a single latent activates whenever text involves *the German language*, regardless of whether it is colloquial speech, legal code, or historical prose.
+2. **High Expansion ($E = 64\times\text{ to }256\times$): Feature Resolution:**
+   As capacity expands, the training loss gradient favors splitting the umbrella feature into distinct, orthogonal sub-features:
+   $$\{w_{\text{sub}, 1}, w_{\text{sub}, 2}, \dots, w_{\text{sub}, K}\}$$
+   The umbrella feature completely disappears or diminishes in activation frequency. In its place, independent monosemantic latents emerge:
+   - Latent A: *German legal and constitutional terminology*.
+   - Latent B: *German colloquial greetings and internet slang*.
+   - Latent C: *18th-century German philosophical prose*.
+3. **Mathematical Condition for Splitting:**
+   A feature $f$ splits into $\{f_1, f_2\}$ when the reduction in reconstruction error $\Delta \mathcal{L}_{\text{MSE}}$ exceeds the penalty imposed by the sparsity constraint $\lambda \Delta \mathcal{L}_{\text{sparsity}}$:
+   $$\Delta \mathcal{L}_{\text{MSE}} = \mathbb{E}\left[ \| x - \hat{x}_{\text{single}} \|^2 - \| x - \hat{x}_{\text{split}} \|^2 \right] > \lambda \left( \mathbb{E}[|z_1| + |z_2|] - \mathbb{E}[|z_{\text{single}}|] \right)$$
+
+---
+
+### 274.3 Dictionary Capacity Scaling Laws & Architecture Benchmarks
+```mermaid
+flowchart LR
+    subgraph Architectures["SAE Architectural Paradigms"]
+        Standard["Standard L1 SAE: Suffers from Shrinkage Bias & Dead Neurons"]
+        Gated["Gated SAE: Decouples Detection (Gate) from Magnitude (Value)"]
+        TopK["TopK SAE: Enforces Exact L0 Sparsity (Zero Shrinkage, Best MSE)"]
+        JumpReLU["JumpReLU SAE: Discontinuous Thresholding with Heaviside Indicator"]
+    end
+```
+
+**Quantitative Scaling Laws (Anthropic / DeepMind, 2024):**
+- **Loss Scaling Law:** The reconstruction mean squared error $\mathcal{L}_{\text{MSE}}$ scales as a joint power-law of dictionary size $M$ and average $L_0$ sparsity:
+  $$\mathcal{L}_{\text{MSE}}(M, L_0) = C \cdot M^{-\beta_M} \cdot L_0^{-\beta_L}$$
+  where empirical fits on frontier models yield $\beta_M \approx 0.18 \pm 0.03$ and $\beta_L \approx 0.42 \pm 0.04$.
+- **Dead Latent Mitigations:**
+  - Standard $L_1$ penalty causes up to **$45\%$ dead latents** at $E \ge 64\times$ due to shrinking activations below activation threshold.
+  - **TopK SAE ($k = 32$ or $64$):** Achieves **$<1.2\%$ dead latents** at $E = 128\times$, improving Pareto reconstruction frontier by **$2.4\times$** at identical sparsity budgets.
+- **Circuit Tracing Precision:** High-expansion TopK dictionaries enable granular causal interventions: knocking out a single split latent (e.g. *sycohpantic agreement on user's incorrect math answer*) cleanly reverses the erroneous behavior while preserving standard conversational politeness and reasoning accuracy.
