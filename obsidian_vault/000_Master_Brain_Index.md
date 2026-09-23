@@ -72,6 +72,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[research_engine/research_pivot_14.md]]
 
 ## 🧩 5. Atomic Concept Snippets Knowledge Graph
+- [[raw_research/snippets/actadd_activation_addition_steering.md|Actadd Activation Addition Steering]]
 - [[raw_research/snippets/activation_steering_vectors.md|Activation Steering Vectors]]
 - [[raw_research/snippets/active_prompting.md|Active Prompting]]
 - [[raw_research/snippets/active_prompting_uncertainty.md|Active Prompting Uncertainty]]
@@ -112,6 +113,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/continuous_batching_orca.md|Continuous Batching Orca]]
 - [[raw_research/snippets/contrastive_cot.md|Contrastive Cot]]
 - [[raw_research/snippets/contrastive_cot_pairs.md|Contrastive Cot Pairs]]
+- [[raw_research/snippets/contrastive_decoding_anti_degeneration.md|Contrastive Decoding Anti Degeneration]]
 - [[raw_research/snippets/copy_suppression_attention_heads.md|Copy Suppression Attention Heads]]
 - [[raw_research/snippets/cot_faithfulness.md|Cot Faithfulness]]
 - [[raw_research/snippets/cot_when_it_helps.md|Cot When It Helps]]
@@ -290,6 +292,7 @@ This is the autonomous, auto-generated Knowledge Graph for the Prompt Engineerin
 - [[raw_research/snippets/speculative_grammar_decoding.md|Speculative Grammar Decoding]]
 - [[raw_research/snippets/speculative_grammar_tree_decoding.md|Speculative Grammar Tree Decoding]]
 - [[raw_research/snippets/speculative_rag.md|Speculative Rag]]
+- [[raw_research/snippets/speculative_streaming_in_model_drafting.md|Speculative Streaming In Model Drafting]]
 - [[raw_research/snippets/speech_native_latent_audio_steerability.md|Speech Native Latent Audio Steerability]]
 - [[raw_research/snippets/spin_self_play_fine_tuning.md|Spin Self Play Fine Tuning]]
 - [[raw_research/snippets/sppo_self_play_nash_alignment.md|Sppo Self Play Nash Alignment]]

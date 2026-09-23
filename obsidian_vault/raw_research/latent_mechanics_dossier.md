@@ -3028,5 +3028,136 @@ Computing element-wise gated recurrence naively in PyTorch is memory-bandwidth b
 
 - **Empirical Results:** GLA matches or exceeds LLaMA-style Softmax Transformers and Mamba on language modeling perplexity across 1.3B and 7B scales, while delivering **constant $\mathcal{O}(1)$ memory decoding** and **$4.2\times$ faster training throughput** on long sequences.
 
+---
+
+## 88. Activation Addition & Inference-Time Steering Vectors (ActAdd, Turner et al., 2023)
+
+### 88.1 Weight-Free Behavioral Steering
+Fine-tuning and reinforcement learning from human feedback modify model weights globally, risking catastrophic forgetting, high training costs, and destructive interference with off-target capabilities.
+
+Alexander Matt Turner, Lisa Thiergart, Gavin Leech, David Udell, Juan J. Vazquez, Ulisse Mini, and Monte MacDiarmid (*Activation Addition: Steering Language Models Without Optimization*, arXiv:2308.10248; and Contrastive Activation Addition, Rimsky et al., 2024) introduce **Activation Addition (ActAdd)**: a technique that controls high-level model behaviors by injecting static steering vectors directly into the Transformer's residual stream during the forward pass.
+
+```mermaid
+flowchart TD
+    PromptPos["Positive Contrast Prompt: 'Love / Honesty'"] --> ForwardPos["Target Model Forward Pass"]
+    PromptNeg["Negative Contrast Prompt: 'Hate / Deception'"] --> ForwardNeg["Target Model Forward Pass"]
+    
+    ForwardPos --> ActPos["Extract Activation: h_l(+)"]
+    ForwardNeg --> ActNeg["Extract Activation: h_l(-)"]
+    
+    ActPos --> Subtraction["Difference-in-Means: v_steer = E[h_l(+)] - E[h_l(-)]"]
+    ActNeg --> Subtraction
+    
+    UserQuery["User Test Query x"] --> TargetLayer["Layer l Residual Stream: h_l(x)"]
+    Subtraction --> Injection["Inference Intervention: h'_l(x) = h_l(x) + c * v_steer"]
+    TargetLayer --> Injection
+    Injection --> DownstreamLayers["Downstream Transformer Layers"]
+    DownstreamLayers --> SteeredOutput["Steered High-Fidelity Completion"]
+```
+
+### 88.2 Vector Extraction & Difference-in-Means Formulation
+Let $\mathcal{D}_+ = \{x_1^+, \dots, x_N^+\}$ and $\mathcal{D}_- = \{x_1^-, \dots, x_N^-\}$ be contrastive pairs of natural language prompts designed to elicit and suppress a target behavior (e.g., sycophancy, hallucination, or creative tone).
+
+1. For a designated intermediate layer $l \in \{1, \dots, L\}$, extract the residual stream activations at the final prompt token position:
+   $$\mathbf{v}_{\text{steer}}^{(l)} = \frac{1}{|\mathcal{D}_+|} \sum_{i=1}^{|\mathcal{D}_+|} h_l\left(x_i^+\right) - \frac{1}{|\mathcal{D}_-|} \sum_{j=1}^{|\mathcal{D}_-|} h_l\left(x_j^-\right)$$
+2. **Inference Intervention:** During test-time autoregressive generation on prompt $x$, modify the layer $l$ representation at every generation step $t$:
+   $$h_l'(t) = h_l(t) + c \cdot \mathbf{v}_{\text{steer}}^{(l)}$$
+   where $c \in \mathbb{R}$ is the steering coefficient.
+
+### 88.3 Specificity & Off-Target Invariance
+- **Linear Representation Geometry:** The success of ActAdd confirms that high-level cognitive and behavioral concepts are encoded as linear subspaces in intermediate Transformer layers.
+- **Selective Intervention:** When injected at middle layers ($l \in [0.4L, 0.7L]$), ActAdd cleanly shifts qualitative behavior without degrading syntactic coherence, factual knowledge retrieval, or perplexity on unrelated tasks.
+
+---
+
+## 89. Contrastive Decoding & Anti-Degeneration Plausibility Filtering (Li et al., ACL 2023)
+
+### 89.1 The Decoding Dilemma: Greedy Repetition vs. Sampling Incoherence
+Standard generation strategies present an inherent trade-off:
+- **Greedy / Beam Search:** Maximizing sequence likelihood yields severe repetition loops, bland responses, and unnatural phrase attractors.
+- **Stochastic Sampling (Top-$p$, Temperature):** Introducing entropy escapes repetition loops but causes semantic drift, logical contradictions, and factual confabulations in open-ended generation.
+
+Xiang Lisa Li, Ari Holtzman, Daniel Fried, Percy Liang, Jason Eisner, Tatsunori Hashimoto, Luke Zettlemoyer, and Mike Lewis (*Contrastive Decoding: Open-ended Text Generation as Optimization*, ACL 2023 / arXiv:2210.15097) resolve this dilemma by formulating generation as a contrastive optimization problem between an **expert model** $M_{\text{exp}}$ and an **amateur model** $M_{\text{ama}}$.
+
+```mermaid
+flowchart TD
+    Prefix["Current Generated Prefix y_(<t)"] --> ExpModel["Expert Model M_exp (e.g. 70B / 13B)"]
+    Prefix --> AmaModel["Amateur Model M_ama (e.g. 1B / 125M)"]
+    
+    ExpModel --> ExpLogits["Logits: log P_exp(v)"]
+    AmaModel --> AmaLogits["Logits: log P_ama(v)"]
+    
+    ExpLogits --> Plausibility["Plausibility Filter: P_exp(v) >= beta * max_w P_exp(w)"]
+    Plausibility --> CandidateVocab["Plausible Candidate Subset V_head"]
+    
+    ExpLogits --> ContrastiveScore["Compute Contrastive Logit: log P_exp(v) - alpha * log P_ama(v)"]
+    AmaLogits --> ContrastiveScore
+    CandidateVocab --> ContrastiveScore
+    
+    ContrastiveScore --> ArgMax["argmax over V_head"]
+    ArgMax --> NextToken["Next Token y_t: Fluent, Non-Repetitive, Factual"]
+```
+
+### 89.2 Contrastive Decoding Formulation
+Contrastive Decoding exploits the insight that undesirable decoding failure modes (such as local repetition, empty platitudes, and syntax loops) are shared, but far more pronounced, in low-capacity amateur models. Subtracting amateur likelihoods isolates the sophisticated reasoning unique to the expert.
+
+1. **Adaptive Plausibility Constraint:**
+   To prevent selecting nonsensical, low-probability tokens that happen to have near-zero amateur probability, CD restricts candidates to a high-probability head:
+   $$\mathcal{V}_{\text{head}}(y_{<t}) = \left\{ v \in \mathcal{V} \;\middle|\; P_{\text{exp}}(v \mid y_{<t}) \ge \beta \max_{w \in \mathcal{V}} P_{\text{exp}}(w \mid y_{<t}) \right\}$$
+   where $\beta \in (0, 1)$ (typically $\beta = 0.1$).
+2. **Contrastive Objective:**
+   Select the token that maximizes the difference in log-likelihoods:
+   $$\hat{y}_t = \arg\max_{v \in \mathcal{V}_{\text{head}}(y_{<t})} \left[ \log P_{\text{exp}}(v \mid y_{<t}) - \alpha \log P_{\text{ama}}(v \mid y_{<t}) \right]$$
+   where $\alpha \ge 0$ is the contrastive penalty weight.
+
+### 89.3 Empirical Results
+- Across Wikitext, News, and Story generation, Contrastive Decoding significantly outperforms nucleus sampling ($p=0.9$) and beam search.
+- It eliminates repetition errors entirely while producing text with strictly higher human-rated coherence, factuality, and lexical diversity.
+
+---
+
+## 90. Speculative Streaming & Multi-Stream In-Model Drafting (Bhendawade et al., Apple / ACL 2024)
+
+### 90.1 Auxiliary Model Bottlenecks in Edge Serving
+Traditional speculative decoding requires hosting two distinct models (target $M_{\text{target}}$ and draft $M_{\text{draft}}$), duplicating memory allocations and requiring complex runtime scheduling. On resource-constrained edge hardware or high-throughput servers, running an auxiliary model causes:
+1. Significant DRAM bandwidth contention.
+2. Draft-target tokenization misalignment and architectural divergence.
+
+Nikhil Bhendawade et al. (*Speculative Streaming: Fast LLM Inference without Auxiliary Models*, Apple / ACL 2024 / arXiv:2402.11131) introduce **Speculative Streaming**, a parameter-efficient framework that integrates speculative drafting directly into the target model itself via multi-stream attention.
+
+```mermaid
+flowchart TD
+    InputTokens["Sequence x_1:t"] --> TransformerBackbone["Base Transformer Backbone"]
+    
+    subgraph MultiStreamAttention["Multi-Stream Forward Pass"]
+        TransformerBackbone --> Stream0["Stream 0: Next-token verification & prediction x_(t+1)"]
+        TransformerBackbone --> Stream1["Stream 1: Speculative draft query for x_(t+2)"]
+        TransformerBackbone --> Stream2["Stream 2: Speculative draft query for x_(t+3)"]
+    end
+    
+    Stream0 --> VerifyCurrent["Target Verification"]
+    Stream1 --> DraftNext1["Draft Token t+2"]
+    Stream2 --> DraftNext2["Draft Token t+3"]
+    
+    VerifyCurrent --> FastSampling["Rejection Sampling / Acceptance Check"]
+    DraftNext1 --> FastSampling
+    DraftNext2 --> FastSampling
+    
+    FastSampling --> EmittedTokens["Multi-Token Emission (1.9x - 3.5x Speedup, Zero Draft Model)"]
+```
+
+### 90.2 Multi-Stream Attention Architecture
+Speculative Streaming transforms the standard causal attention forward pass into a multi-stream computation. At position $t$:
+- **Main Stream ($s=0$):** Executes standard causal language modeling, verifying previous speculative candidates and generating true token $x_{t+1}$.
+- **Speculative Streams ($s \in \{1, \dots, K\}$):** In parallel, $K$ lightweight auxiliary query vectors $\{q_t^{(1)}, \dots, q_t^{(K)}\}$ are fed through the same frozen attention layers using a specialized causal multi-stream attention mask:
+  $$M_{i, j}^{(s)} = \begin{cases} 1 & \text{if } j \le i \text{ in Main Stream} \\ 1 & \text{if } j = i \text{ in Stream } s \\ 0 & \text{otherwise} \end{cases}$$
+Because all streams attend to the exact same materialized Key-Value states in the main stream, speculative drafting incurs **zero additional KV cache memory overhead**.
+
+### 90.3 Future $n$-gram Pretraining Objective & Serving Impact
+During fine-tuning, the model is trained with a composite multi-token loss:
+$$\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{main}}(x_{t+1}) + \sum_{k=1}^K \lambda_k \mathcal{L}_{\text{spec}}^{(k)}(x_{t+k+1})$$
+- **Serving Performance:** Speculative Streaming achieves **$1.9\times\text{--}3.5\times$ speedups** across diverse benchmarks on both device (Apple Silicon, mobile CPUs) and server environments (A100/H100), matching Leviathan-style speculative decoding while eliminating $100\%$ of secondary draft model memory and operational complexity.
+
+
 
 
