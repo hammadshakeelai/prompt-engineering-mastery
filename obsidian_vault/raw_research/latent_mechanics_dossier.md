@@ -7461,5 +7461,46 @@ flowchart TD
    - **Throughput & Batch Size:** Halving the KV cache footprint doubles the maximum serving batch size supported within fixed GPU VRAM, cutting time-to-first-token (TTFT) and doubling decoding token throughput.
    - **Perplexity Invariance:** Pre-training from scratch or uptraining dense baselines with CLA yields negligible validation perplexity degradation ($\Delta \text{PPL} < 0.05$), unlocking hardware efficiency gains without sacrificing downstream benchmark capabilities.
 
+---
+
+## 260. Compressed Finite State Machines (cFSM) & Bit-Parallel Precomputed Token Masking
+
+### 260.1 The Vocabulary Expansion Bottleneck vs. cFSM Precomputation
+```mermaid
+flowchart TD
+    subgraph NaiveRegex["Naive Runtime Masking (The 128k Tokenizer Bottleneck)"]
+        STATE["Current Parser State q_t"] --> ITERATE["Iterate Over All |V| = 128,000 Vocabulary Tokens"]
+        ITERATE --> REGEX_TEST["Run Regex/DFA Transition for Each Token String"]
+        REGEX_TEST --> BOTTLENECK["Runtime Latency: 50ms - 200ms per Token (10x Slower than GPU Forward Pass)"]
+    end
+    subgraph cFSM_Engine["Compressed FSM Architecture (XGrammar / vLLM, 2024)"]
+        SCHEMA["Grammar / JSON Schema"] --> MIN_DFA["Offline Compilation: Minimal Deterministic Finite Automaton"]
+        MIN_DFA --> MPHF["State Compression via Minimal Perfect Hashing (MPHF)"]
+        MPHF --> BIT_MATRIX["Precompute Dense Bit-Matrix B ∈ {0, 1}^{|Q| × |V|}"]
+        BIT_MATRIX --> RUNTIME["Runtime Masking: Single O(1) Memory Indexing B[q_t] in < 1.5µs on Host"]
+    end
+```
+
+### 260.2 Mathematical Mechanics of cFSM Indexing
+1. **The State-Vocabulary Explosion Problem:** Let $G$ represent a structured grammar compiled into a Deterministic Finite Automaton (DFA) $\mathcal{M} = (Q, \Sigma, \delta, q_0, F)$. In modern large language models, the output alphabet consists of sub-word tokens $\mathcal{V}$ where $|\mathcal{V}| \ge 128\text{,}000$. Evaluating the valid token set dynamically at decoding step $t$:
+   $$\mathcal{V}_{\text{valid}}(q_t) = \left\{w \in \mathcal{V} \;\middle|\; \delta^*(q_t, \text{bytes}(w)) \neq \text{Error}\right\}$$
+   requires testing up to $128\text{,}000$ string transitions per autoregressive step, introducing catastrophic CPU-side latency bottlenecks.
+2. **Offline Bit-Matrix Precomputation:**
+   Instead of on-the-fly string parsing, the entire cross-product of automaton states and vocabulary tokens is pre-indexed ahead of generation into a static boolean bit-matrix:
+   $$B \in \{0, 1\}^{|Q| \times |\mathcal{V}|}, \quad B_{q, w} = \begin{cases} 1 & \text{if } \delta^*(q, \text{bytes}(w)) \in Q \setminus \{\text{Error}\} \\ 0 & \text{otherwise} \end{cases}$$
+3. **Minimal Perfect Hashing & State Compression (cFSM):**
+   Because real-world schemas (e.g., recursive JSON objects with dozens of properties) can generate thousands of automaton states $|Q|$, storing uncompressed bit-matrices consumes excessive RAM. Compressed FSMs (cFSM) apply two structural reductions:
+   - **Equivalence State Merging:** States with identical outgoing mask vectors are unified into equivalence classes:
+     $$q_1 \sim q_2 \iff B_{q_1, :} \equiv B_{q_2, :}$$
+     reducing the effective state row count by $80\%\text{--}95\%$: $|Q_{\text{eff}}| \ll |Q|$.
+   - **Bit-Packed Storage:** Rows are stored as packed 64-bit integer vectors ($u64$), requiring only:
+     $$\text{Memory} = \frac{|Q_{\text{eff}}| \cdot |\mathcal{V}|}{8 \times 10^6} \text{ MB} \approx 2\text{--}8 \text{ MB per schema}$$
+4. **$O(1)$ Runtime Mask Retrieval & GPU Kernel Injection:**
+   At runtime, identifying the validity mask reduces to a single array slice lookup:
+   $$M_t = B[q_t] \in \{0, 1\}^{|\mathcal{V}|}$$
+   which executes in **$1.2\text{--}1.8\,\mu\text{s}$ on the host CPU**, followed by an asynchronous memory copy to the GPU to mask logits before sampling:
+   $$z'_w = z_w + \log\left(M_{t, w}\right)$$
+   This completely decouples grammar complexity from generation latency, enabling structured serving at standard unconstrained token generation speeds.
+
 
 
