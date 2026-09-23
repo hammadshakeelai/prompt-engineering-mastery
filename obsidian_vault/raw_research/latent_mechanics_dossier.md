@@ -7502,5 +7502,110 @@ flowchart TD
    $$z'_w = z_w + \log\left(M_{t, w}\right)$$
    This completely decouples grammar complexity from generation latency, enabling structured serving at standard unconstrained token generation speeds.
 
+---
+
+## 261. Online Direct Preference Optimization (Online DPO): Bridging Offline Alignments and PPO
+
+### 261.1 Offline DPO Drift vs. Online Exploration Topology
+```mermaid
+flowchart TD
+    subgraph Offline["Offline DPO (Static Prefs Dataset)"]
+        STATIC["Static Pair Dataset D = {(x, y_w, y_l)}"] --> LOSS_OFF["Standard DPO Loss"]
+        LOSS_OFF --> DRIFT["Policy π_θ Shifts Out-of-Distribution from Static y_w, y_l"]
+        DRIFT --> EXPLOIT["Overfits to Spurious Offline Regularities (Verbosity, Formatting)"]
+    end
+    subgraph Online["Online DPO (On-Policy Exploration; Guo et al. 2024)"]
+        PROMPT["Prompt x ~ D_prompt"] --> ACTIVE_P["Active Policy π_θ"]
+        ACTIVE_P --> ROLLOUT["Sample Fresh On-Policy Pair: y_1, y_2 ~ π_θ(· | x)"]
+        ROLLOUT --> ORACLE["Reward Model / Verifier Oracle: Score r(x, y_1), r(x, y_2)"]
+        ORACLE --> PAIR["Label Winner y_w & Loser y_l On-the-Fly"]
+        PAIR --> DPO_STEP["Online DPO Gradient Update (Zero Critic VRAM Overhead)"]
+        DPO_STEP --> ACTIVE_P
+    end
+```
+
+### 261.2 Mathematical Formulation & Equivalence to PPO
+1. **The Distribution Shift Vulnerability of Offline DPO:** Standard DPO fits an implicit reward model directly to offline pairs collected under an initial reference policy $\pi_{\text{ref}}$. As optimization proceeds, policy distribution $\pi_\theta$ diverges from $\pi_{\text{ref}}$, evaluating out-of-distribution completions where the implicit reward $r_\theta(x, y) = \beta \log \frac{\pi_\theta(y \mid x)}{\pi_{\text{ref}}(y \mid x)}$ becomes uncalibrated, triggering reward collapse.
+2. **On-Policy Sampling & Instantaneous Preference Labeling:** At each training step $t$, Online DPO samples two candidate trajectories directly from the active policy:
+   $$y_1, y_2 \sim \pi_\theta(\cdot \mid x), \quad x \sim \mathcal{D}_{\text{prompts}}$$
+   An authoritative reward model $r_\phi$ or verifiable environment assigns labels:
+   $$y_w = \arg\max_{y \in \{y_1, y_2\}} r_\phi(x, y), \quad y_l = \arg\min_{y \in \{y_1, y_2\}} r_\phi(x, y)$$
+3. **The Online DPO Loss Function:**
+   $$\mathcal{L}_{\text{Online-DPO}}(\theta) = -\mathbb{E}_{x \sim \mathcal{D}, (y_w, y_l) \sim \pi_\theta}\left[\log \sigma\left(\beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)}\right)\right]$$
+4. **Critic-Free Equivalence to Actor-Critic PPO:**
+   Taking the gradient of $\mathcal{L}_{\text{Online-DPO}}$ with respect to $\theta$:
+   $$\nabla_\theta \mathcal{L} = -\mathbb{E}\left[\sigma\left(\hat{r}_l - \hat{r}_w\right) \left(\nabla_\theta \log \pi_\theta(y_w \mid x) - \nabla_\theta \log \pi_\theta(y_l \mid x)\right)\right]$$
+   The scalar weight $\sigma(\hat{r}_l - \hat{r}_w)$ functions identically to a clipped advantage estimator $A(x, y)$ in PPO. Online DPO optimizes the identical on-policy RLHF objective while **completely eliminating the Value Network (critic)**, saving $50\%$ GPU memory and removing generalized advantage estimation (GAE) hyperparameter instability.
+5. **Empirical Results:** Matches or exceeds PPO and GRPO win rates across GSM8K, MATH, and AlpacaEval 2.0 while running at $2\times$ the training throughput of PPO.
+
+---
+
+## 262. Testing with Concept Activation Vectors (TCAV) & Linear Artificial Tomography (LAT)
+
+### 262.1 Concept Vector Extraction & Sensitivity Probing Topology
+```mermaid
+flowchart LR
+    subgraph Concepts["Concept Dataset Construction"]
+        EX_POS["Positive Concept Examples (e.g., Factual Honesty / Toxicity)"] --> ACT_P["Activations at Layer l"]
+        EX_NEG["Random Negative Examples"] --> ACT_N["Activations at Layer l"]
+        ACT_P & ACT_N --> CAV_PROBE["Linear Classifier: v_C = Normal Vector to Separating Hyperplane"]
+    end
+    subgraph LAT["Linear Artificial Tomography (LAT) / TCAV Inference"]
+        TEST_X["Unseen Test Prompt x"] --> ACT_TEST["Layer l Representation h_l(x)"]
+        ACT_TEST & CAV_PROBE --> DIR_DERIV["Directional Derivative: S_{C, l}(x) = ∇_{h_l} P(y | x) · v_C"]
+        DIR_DERIV --> TCAV_SCORE["TCAV Score: Fraction of Inputs Positively Influenced by Concept C"]
+    end
+```
+
+### 262.2 Mathematical Formalism of TCAV in Transformers
+1. **Concept Activation Vectors (CAVs):** Given user-defined high-level concept $\mathcal{C}$ (e.g., "mathematical rigor", "sycophancy", "medical factuality") represented by positive activations $\mathcal{H}_l^+$ and neutral baseline activations $\mathcal{H}_l^-$ at transformer layer $l$, a linear classifier learns a separating hyperplane:
+   $$w^\top h + b = 0 \implies v_C^l \triangleq \frac{w}{\|w\|_2} \in \mathbb{R}^{d_{\text{model}}}$$
+2. **Directional Derivative of Model Predictions:**
+   To measure how sensitive the model's output logit $f_k(x)$ is to concept $v_C^l$ at layer $l$:
+   $$\nabla_{v_C^l} f_k(x) = \lim_{\epsilon \to 0} \frac{f_k\left(h_l(x) + \epsilon v_C^l\right) - f_k\left(h_l(x)\right)}{\epsilon} = \left\langle \nabla_{h_l} f_k(x), \; v_C^l \right\rangle$$
+3. **TCAV Metric (Quantitative Concept Importance):**
+   The relative importance of concept $\mathcal{C}$ for class or task $k$ across a dataset $\mathcal{X}$ is evaluated as:
+   $$\text{TCAV}_{k, l}^C = \frac{\left|\left\{x \in \mathcal{X}_k \;\middle|\; \nabla_{v_C^l} f_k(x) > 0\right\}\right|}{|\mathcal{X}_k|}$$
+4. **Linear Artificial Tomography (LAT) Steering Interventions:**
+   Linear representation steering uses CAVs not merely for post-hoc interpretability, but as causal intervention vectors:
+   $$h_l'(x) = h_l(x) + \alpha \cdot v_C^l$$
+   By scaling steering coefficient $\alpha \in [-5, +5]$, practitioners dynamically amplify or suppress abstract semantic concepts across reasoning chains with closed-form attribution guarantees.
+
+---
+
+## 263. H2O: Heavy Hitter Oracle & The Power-Law Attention Economy
+
+### 263.1 Cumulative Attention Profiling & Heavy-Hitter Eviction
+```mermaid
+flowchart TD
+    subgraph PowerLaw["Power-Law Distribution in Self-Attention (Zhang et al., NeurIPS 2023)"]
+        ATTN_SCORES["Self-Attention Matrix A ∈ R^{T × T}"] --> ACCUM["Cumulative Attention Score: α_j = \sum_{t=j}^T \sum_h A_{t, h, j}"]
+        ACCUM --> SKEW["Heavy Hitter Skew: ~5% of Tokens ('Heavy Hitters' H_2) Receive >80% of Cumulative Attention"]
+    end
+    subgraph Eviction["H2O Dynamic Bounded Cache Buffer"]
+        TOKENS["All Candidate Tokens"] --> PARTITION["Partition into Three Tiers:"]
+        PARTITION --> SINK_TOK["1. Attention Sinks (Initial k = 4 Tokens)"]
+        PARTITION --> H2_TOK["2. Heavy Hitters (Top-H Tokens with Highest α_j)"]
+        PARTITION --> LOCAL_TOK["3. Local Context (Most Recent W Tokens)"]
+        SINK_TOK & H2_TOK & LOCAL_TOK --> CACHE["Bounded Cache Size: M = k + H + W Tokens"]
+        PARTITION --> DROP["Discard Remaining Tokens (Zero Perplexity Penalty)"]
+    end
+```
+
+### 263.2 Mathematical Formulation of H2O
+1. **Combinatorial KV Cache Minimization:** Let $V_t$ denote the full set of key-value tokens at decoding step $t$. Under memory budget $B \ll t$, the optimal eviction policy minimizes attention approximation error:
+   $$\min_{\mathcal{S} \subset V_t, |\mathcal{S}| \le B} \left\|\text{Attn}(q_t, K_{V_t}, V_{V_t}) - \text{Attn}(q_t, K_{\mathcal{S}}, V_{\mathcal{S}})\right\|_2$$
+2. **Cumulative Score Approximation:** Zhang et al. (NeurIPS 2023) prove that the greedy choice tracking cumulative incoming attention mass provides a bounded approximation to the combinatorial optimum. For each token $j \le t$:
+   $$\alpha_j^{(t)} = \sum_{\tau=j}^t \sum_{h=1}^H A_{\tau, h, j}$$
+   where $A_{\tau, h, j} = \text{Softmax}\left(\frac{q_{\tau, h}^\top k_{j, h}}{\sqrt{d}}\right)$ is the attention weight query $\tau$ placed on token $j$.
+3. **Tri-Tier Cache Maintenance Policy:**
+   At each decoding step, the active KV cache $\mathcal{M}_t$ of size $B$ is maintained via:
+   $$\mathcal{M}_t = \mathcal{M}_{\text{sink}} \cup \text{Top-H}\left(\{\alpha_j^{(t)}\}_{j=k+1}^{t-W}, H\right) \cup \{t-W+1, \dots, t\}$$
+   where $B = k + H + W$.
+4. **Systems Acceleration & Memory Scaling:**
+   - **Compression Factor:** Reduces KV-cache memory consumption by up to **$5\times\text{--}8\times$** on long sequences (32k+ tokens).
+   - **Throughput Multipliers:** Delivers up to **$3\times$ higher generation throughput** and $2.8\times$ latency reductions on OPT-66B and LLaMA-2-70B under fixed hardware footprints.
+   - **Task Retention:** Outperforms static windowing and random eviction, preserving accuracy within $0.5\%$ of full-cache baselines on CodeX, WikiText, and multi-turn conversational benchmarks.
+
 
 
