@@ -7,11 +7,13 @@
 </p>
 
 <p align="center">
+  <a href="https://hammadshakeelai.github.io/prompt-mastery-app/"><img src="https://img.shields.io/badge/Live%20Web%20App-GitHub%20Pages-success.svg?style=for-the-badge&logo=github" alt="Live App"></a>
+  <a href="https://github.com/hammadshakeelai/prompt-mastery-app/releases/latest"><img src="https://img.shields.io/badge/Download-Android%20APK-blue.svg?style=for-the-badge&logo=android" alt="Download APK"></a>
   <a href="#table-of-contents"><img src="https://img.shields.io/badge/Status-Active_Research_Brain-blue.svg?style=for-the-badge" alt="Status"></a>
   <a href="#license"><img src="https://img.shields.io/badge/License-MIT-emerald.svg?style=for-the-badge" alt="License"></a>
   <a href="https://github.com/hammadshakeelai"><img src="https://img.shields.io/badge/Author-hammadshakeelai-purple.svg?style=for-the-badge" alt="Author"></a>
-  <img src="https://img.shields.io/badge/Focus-Reasoning_%7C_DSPy_%7C_Security_%7C_Abliteration-coral.svg?style=for-the-badge" alt="Focus">
 </p>
+
 
 ---
 
@@ -22,6 +24,23 @@
 From tokenization mechanics and in-context learning theory to frontier test-time reasoning models (`o1`, `DeepSeek-R1`), programmatic optimization frameworks (`DSPy v2.5`, `TextGrad`), and adversarial security hardening (Many-Shot, Crescendo, Abliteration) — this repository serves as your architectural reference and autonomous research engine.
 
 ---
+
+## 📱 Interactive Web Companion & Android App
+
+Experience the entire 738-module curriculum through the dedicated client application:
+
+* 🌐 **Live Web Application (GitHub Pages)**: [hammadshakeelai.github.io/prompt-mastery-app](https://hammadshakeelai.github.io/prompt-mastery-app/)
+* 📦 **Native Android APK Release**: [Download `PromptMastery-v1.0.0.apk`](https://github.com/hammadshakeelai/prompt-mastery-app/releases/latest)
+* 💻 **Client Source Repository**: [github.com/hammadshakeelai/prompt-mastery-app](https://github.com/hammadshakeelai/prompt-mastery-app)
+
+**Key Features**:
+* **100% Offline Capability**: Runs locally on mobile and desktop browsers via Workbox Service Worker or standalone Android APK.
+* **In-Memory AI Tutor**: Instant Socratic explanations (< 2ms) without external API dependencies.
+* **Audio Lecture Player**: Background audio synthesis for study on the go.
+* **Zero Layout Collisions**: Screen-optimized for Samsung Galaxy S23 Ultra and all mobile viewports.
+
+---
+
 
 ## 🧠 The Obsidian Vault (`obsidian_vault/`)
 
